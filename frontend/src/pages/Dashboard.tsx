@@ -126,7 +126,22 @@ export default function Dashboard() {
     }, 1600)
   }, [])
 
+  const getGroupKey = useCallback((dateValue: string) => {
+    const date = new Date(dateValue)
+    const now = new Date()
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const dayOfWeek = (startOfToday.getDay() + 6) % 7
+    const startOfWeek = new Date(startOfToday)
+    startOfWeek.setDate(startOfToday.getDate() - dayOfWeek)
+
+    if (date >= startOfToday) return 'today'
+    if (date >= startOfWeek) return 'week'
+    return 'earlier'
+  }, [])
+
   const handleRead = useCallback(async (email: Email, shouldScroll = false, scrollDetail = false) => {
+    const groupKey = getGroupKey(email.date)
+    setCollapsedGroups(prev => (prev[groupKey] ? { ...prev, [groupKey]: false } : prev))
     if (!email.is_read) {
       await emailApi.markAsRead(email.id)
       setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
@@ -141,7 +156,7 @@ export default function Dashboard() {
     if (scrollDetail && detailScrollRef.current) {
       detailScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' })
     }
-  }, [])
+  }, [getGroupKey])
 
   const handleMarkAsUnread = useCallback(async (email: Email) => {
     if (!email.is_read) return
@@ -230,18 +245,6 @@ export default function Dashboard() {
     return true
   })
 
-  const getGroupKey = (dateValue: string) => {
-    const date = new Date(dateValue)
-    const now = new Date()
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const dayOfWeek = (startOfToday.getDay() + 6) % 7
-    const startOfWeek = new Date(startOfToday)
-    startOfWeek.setDate(startOfToday.getDate() - dayOfWeek)
-
-    if (date >= startOfToday) return 'today'
-    if (date >= startOfWeek) return 'week'
-    return 'earlier'
-  }
 
   const sortedFilteredEmails = [...filteredEmails].sort((a, b) =>
     new Date(b.date).getTime() - new Date(a.date).getTime(),
@@ -293,6 +296,11 @@ export default function Dashboard() {
   }, [collapsedGroups])
 
   useEffect(() => {
+    const expandGroupForEmail = (email: Email) => {
+      const key = getGroupKey(email.date)
+      setCollapsedGroups(prev => (prev[key] ? { ...prev, [key]: false } : prev))
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (contextMenu) return
       const target = event.target as HTMLElement | null
@@ -305,6 +313,7 @@ export default function Dashboard() {
         const index = sortedFilteredEmails.findIndex(email => email.id === selectedEmail?.id)
         const nextEmail = sortedFilteredEmails[index + 1] || sortedFilteredEmails[0]
         if (nextEmail) {
+          expandGroupForEmail(nextEmail)
           handleRead(nextEmail, true)
         }
       }
@@ -314,6 +323,7 @@ export default function Dashboard() {
         const index = sortedFilteredEmails.findIndex(email => email.id === selectedEmail?.id)
         const prevEmail = index <= 0 ? sortedFilteredEmails[sortedFilteredEmails.length - 1] : sortedFilteredEmails[index - 1]
         if (prevEmail) {
+          expandGroupForEmail(prevEmail)
           handleRead(prevEmail, true)
         }
       }
@@ -322,6 +332,7 @@ export default function Dashboard() {
         event.preventDefault()
         const target = selectedEmail || sortedFilteredEmails[0]
         if (target) {
+          expandGroupForEmail(target)
           handleRead(target, true, true)
         }
       }
@@ -334,7 +345,7 @@ export default function Dashboard() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [loadEmails, handleRead, selectedEmail, sortedFilteredEmails, contextMenu])
+  }, [loadEmails, handleRead, selectedEmail, sortedFilteredEmails, contextMenu, getGroupKey])
 
   const contextMenuItems = useMemo(() => {
     if (!contextMenu) return []
@@ -483,24 +494,26 @@ export default function Dashboard() {
               <div className="mb-2 text-xs text-slate-500">账户</div>
               {(() => {
                 const renderAllButton = (isSelected: boolean) => (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedAccountId(null)}
-                    className={`flex flex-col items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
-                      isSelected
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <span className={`flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-semibold ${
-                      isSelected ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'
-                    }`}>
-                      <Mail className="w-3.5 h-3.5" />
-                    </span>
-                    <span className={`leading-tight ${isSelected ? 'text-blue-100' : 'text-slate-600'}`}>
-                      全部
-                    </span>
-                  </button>
+                  <Tooltip key="all" content="全部账户">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedAccountId(null)}
+                      className={`flex flex-col items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
+                        isSelected
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <span className={`flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-semibold ${
+                        isSelected ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'
+                      }`}>
+                        <Mail className="w-3.5 h-3.5" />
+                      </span>
+                      <span className={`leading-tight ${isSelected ? 'text-blue-100' : 'text-slate-600'}`}>
+                        全部
+                      </span>
+                    </button>
+                  </Tooltip>
                 )
 
                 const getProviderShort = (value: string) => {
@@ -528,9 +541,8 @@ export default function Dashboard() {
                   const statusText = account.status === 'active' ? '已连接' : '未连接'
                   const tip = `${account.email} · ${providerText} · ${statusText} · ${formatSyncTime(account.last_sync_time)}`
                   return (
-                    <Tooltip content={tip}>
+                    <Tooltip key={account.id} content={tip}>
                       <button
-                        key={account.id}
                         type="button"
                         onClick={() => setSelectedAccountId(account.id)}
                         className={`flex flex-col items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
