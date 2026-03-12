@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { emailApi, accountApi } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
+import { defaultCollapsedGroups } from '../config/inbox'
 import type { Email, EmailAccount } from '../api'
-import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff, Plug } from 'lucide-react'
+import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff } from 'lucide-react'
 
 const providers = [
   { value: 'gmail', label: 'Gmail' },
@@ -13,6 +14,7 @@ const providers = [
   { value: '163', label: '163邮箱' },
   { value: 'custom', label: '自定义' },
 ]
+
 
 export default function Dashboard() {
   const [emails, setEmails] = useState<Email[]>([])
@@ -40,6 +42,8 @@ export default function Dashboard() {
   const emailItemRefs = useRef<Record<number, HTMLDivElement | null>>({})
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ email: Email } | null>(null)
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
+  const hasLoadedGroupPrefs = useRef(false)
 
   const formatSyncTime = (value?: string) => {
     if (!value) return '未同步'
@@ -256,6 +260,38 @@ export default function Dashboard() {
     { key: 'earlier', label: '更早' },
   ]
 
+  const toggleGroup = useCallback((key: string) => {
+    setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }))
+  }, [])
+
+  useEffect(() => {
+    if (hasLoadedGroupPrefs.current) return
+    try {
+      const stored = localStorage.getItem('inbox.collapsedGroups')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (parsed && typeof parsed === 'object') {
+          setCollapsedGroups(parsed)
+          return
+        }
+      }
+      setCollapsedGroups(defaultCollapsedGroups)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      hasLoadedGroupPrefs.current = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hasLoadedGroupPrefs.current) return
+    try {
+      localStorage.setItem('inbox.collapsedGroups', JSON.stringify(collapsedGroups))
+    } catch (e) {
+      console.error(e)
+    }
+  }, [collapsedGroups])
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (contextMenu) return
@@ -450,13 +486,13 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={() => setSelectedAccountId(null)}
-                    className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-all w-20 ${
+                    className={`flex flex-col items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
                       isSelected
                         ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
                         : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-semibold ${
+                    <span className={`flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-semibold ${
                       isSelected ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'
                     }`}>
                       <Mail className="w-3.5 h-3.5" />
@@ -467,8 +503,28 @@ export default function Dashboard() {
                   </button>
                 )
 
+                const getProviderShort = (value: string) => {
+                  switch (value) {
+                    case 'gmail':
+                      return 'Gmail'
+                    case 'qq':
+                      return 'QQ'
+                    case 'outlook':
+                      return 'Outlk'
+                    case 'qq-work':
+                      return 'QQ企邮'
+                    case '163':
+                      return '163'
+                    case 'custom':
+                      return '自定义'
+                    default:
+                      return value.slice(0, 4)
+                  }
+                }
+
                 const renderAccountButton = (account: EmailAccount, isSelected: boolean) => {
                   const providerText = providers.find(p => p.value === account.provider)?.label || account.provider
+                  const providerShort = getProviderShort(account.provider)
                   const statusText = account.status === 'active' ? '已连接' : '未连接'
                   const tip = `${account.email} · ${providerText} · ${statusText} · ${formatSyncTime(account.last_sync_time)}`
                   return (
@@ -477,19 +533,19 @@ export default function Dashboard() {
                         key={account.id}
                         type="button"
                         onClick={() => setSelectedAccountId(account.id)}
-                        className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-all w-20 ${
+                        className={`flex flex-col items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
                           isSelected
                             ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
                             : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                         }`}
                       >
-                        <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-semibold ${
+                        <span className={`flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-semibold ${
                           isSelected ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'
                         }`}>
                           {account.email?.[0]?.toUpperCase() || '?'}
                         </span>
                         <span className={`leading-tight ${isSelected ? 'text-blue-100' : 'text-slate-600'}`}>
-                          {providerText}
+                          {providerShort}
                         </span>
                       </button>
                     </Tooltip>
@@ -502,45 +558,51 @@ export default function Dashboard() {
                   </div>
                 )
               })()}
-              <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-400">
-                <Plug className="w-3.5 h-3.5" />
-                点击账户卡片切换，双向同步仍适用于全部账户
-              </div>
             </div>
           )}
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setFilter('all')}
+                className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                  filter === 'all'
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700'
+                }`}
+              >
+                全部
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilter('unread')}
+                className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                  filter === 'unread'
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700'
+                }`}
+              >
+                未读
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilter('attachments')}
+                className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                  filter === 'attachments'
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700'
+                }`}
+              >
+                附件
+              </button>
+            </div>
             <button
-              type="button"
-              onClick={() => setFilter('all')}
-              className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
-                filter === 'all'
-                  ? 'bg-slate-900 text-white border-slate-900'
-                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-              }`}
+              onClick={handleSync}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-full border border-blue-200 text-blue-600 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
             >
-              全部
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilter('unread')}
-              className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
-                filter === 'unread'
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-              }`}
-            >
-              未读
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilter('attachments')}
-              className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
-                filter === 'attachments'
-                  ? 'bg-emerald-600 text-white border-emerald-600'
-                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-              }`}
-            >
-              附件
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              同步
             </button>
           </div>
           <div className="mb-3 text-[11px] text-slate-400">
@@ -557,14 +619,6 @@ export default function Dashboard() {
               className="w-full pl-10 pr-4 py-2.5 border border-slate-200/80 rounded-xl bg-white/90 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
             />
           </div>
-          <button
-            onClick={handleSync}
-            disabled={loading}
-            className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 shadow-sm"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            同步邮件
-          </button>
         </div>
         <div className="flex-1 overflow-auto bg-slate-50">
           {filteredEmails.length === 0 ? (
@@ -578,10 +632,17 @@ export default function Dashboard() {
               {groupOrder.map(group => (
                 groupedEmails[group.key]?.length ? (
                   <div key={group.key}>
-                    <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(group.key)}
+                      className="w-full px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center justify-between hover:text-slate-700"
+                    >
                       {group.label}
-                    </div>
-                    {groupedEmails[group.key].map(email => (
+                      <span className="text-[10px] text-slate-400">
+                        {collapsedGroups[group.key] ? '展开' : '收起'}
+                      </span>
+                    </button>
+                    {!collapsedGroups[group.key] && groupedEmails[group.key].map(email => (
                       <div
                         key={email.id}
                         ref={(node) => {
