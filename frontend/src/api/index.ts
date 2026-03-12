@@ -7,10 +7,27 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
   if (token) {
-    config.headers.Authorization = token
+    config.headers.Authorization = `Bearer ${token}`
   }
   return config
 })
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token')
+      window.location.href = '/login'
+    }
+    return Promise.reject(error)
+  }
+)
+
+export interface User {
+  id: number
+  username: string
+  email: string
+}
 
 export interface EmailAccount {
   id: number
@@ -34,6 +51,19 @@ export interface Email {
   has_attachment: boolean
   is_read: boolean
   folder: string
+}
+
+export interface AuthResponse {
+  token: string
+  user: User
+}
+
+export const authApi = {
+  login: (data: { username: string; password: string }) =>
+    api.post<AuthResponse>('/auth/login', data).then(r => r.data),
+  register: (data: { username: string; password: string; email: string }) =>
+    api.post<AuthResponse>('/auth/register', data).then(r => r.data),
+  me: () => api.get<{ data: User }>('/auth/me').then(r => r.data),
 }
 
 export const accountApi = {

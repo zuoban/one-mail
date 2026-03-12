@@ -26,10 +26,19 @@ func main() {
 
 	accountHandler := handlers.NewAccountHandler()
 	emailHandler := handlers.NewEmailHandler()
+	authHandler := handlers.NewAuthHandler()
+
+	auth := r.Group("/api/auth")
+	{
+		auth.POST("/register", authHandler.Register)
+		auth.POST("/login", authHandler.Login)
+	}
 
 	api := r.Group("/api")
 	api.Use(middleware.AuthMiddleware())
 	{
+		api.GET("/auth/me", authHandler.Me)
+
 		api.GET("/accounts", accountHandler.ListAccounts)
 		api.POST("/accounts", accountHandler.AddAccount)
 		api.DELETE("/accounts/:id", accountHandler.DeleteAccount)
