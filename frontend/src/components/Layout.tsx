@@ -16,9 +16,7 @@ export default function Layout() {
       <aside className="w-64 bg-[var(--bg-primary)] border-r border-[var(--border-light)] flex flex-col">
         <div className="p-5 border-b border-[var(--border-light)]">
           <h1 className="text-xl font-semibold flex items-center gap-3 text-[var(--text-primary)]">
-            <div className="w-9 h-9 rounded-lg bg-[var(--primary-600)] flex items-center justify-center">
-              <Mail className="w-5 h-5 text-white" />
-            </div>
+            <img src="/logo.svg" alt="One-Mail" className="w-9 h-9 rounded-lg" />
             One-Mail
           </h1>
         </div>

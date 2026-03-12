@@ -35,7 +35,7 @@ export default function Login() {
       <div className="w-full max-w-md p-8 mx-4 card">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[var(--primary-100)] mb-4">
-            <Mail className="w-8 h-8 text-[var(--primary-600)]" />
+            <img src="/logo.svg" alt="One-Mail" className="w-10 h-10" />
           </div>
           <h1 className="text-2xl font-semibold text-[var(--text-primary)] mb-2">登录 One-Mail</h1>
           <p className="text-[var(--text-secondary)]">欢迎回来</p>
