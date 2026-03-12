@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import axios from 'axios'
 import { authApi } from '../api'
-import { useAuth } from '../context/AuthContext'
+import useAuth from '../context/useAuth'
 import { Mail, Lock, LogIn } from 'lucide-react'
 
 export default function Login() {
@@ -21,8 +22,9 @@ export default function Login() {
       const res = await authApi.login({ username, password })
       login(res.token, res.user)
       navigate('/inbox')
-    } catch (err: any) {
-      setError(err.response?.data?.error || '登录失败')
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      setError(message || '登录失败')
     } finally {
       setLoading(false)
     }

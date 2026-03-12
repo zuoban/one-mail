@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import axios from 'axios'
 import { accountApi } from '../api'
 import type { EmailAccount } from '../api'
 import { Plus, Trash2, RefreshCw, Check, X, Mail } from 'lucide-react'
@@ -46,8 +47,9 @@ export default function Accounts() {
       setShowModal(false)
       setForm({ email: '', provider: 'gmail', username: '', password: '' })
       loadAccounts()
-    } catch (err: any) {
-      setError(err.response?.data?.error || '添加失败')
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      setError(message || '添加失败')
     } finally {
       setLoading(false)
     }
@@ -64,8 +66,9 @@ export default function Accounts() {
     try {
       await accountApi.sync(id)
       alert('同步成功')
-    } catch (err: any) {
-      alert(err.response?.data?.error || '同步失败')
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      alert(message || '同步失败')
     } finally {
       setLoading(false)
     }
@@ -75,8 +78,9 @@ export default function Accounts() {
     try {
       await accountApi.test(id)
       alert('连接成功')
-    } catch (err: any) {
-      alert(err.response?.data?.error || '连接失败')
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      alert(message || '连接失败')
     }
   }
 

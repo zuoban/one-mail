@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import axios from 'axios'
 import { authApi } from '../api'
-import { useAuth } from '../context/AuthContext'
+import useAuth from '../context/useAuth'
 import { Mail, Lock, User, UserPlus } from 'lucide-react'
 
 export default function Register() {
@@ -34,8 +35,9 @@ export default function Register() {
       const res = await authApi.register({ username, email, password })
       login(res.token, res.user)
       navigate('/inbox')
-    } catch (err: any) {
-      setError(err.response?.data?.error || '注册失败')
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      setError(message || '注册失败')
     } finally {
       setLoading(false)
     }
