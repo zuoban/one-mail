@@ -12,6 +12,11 @@ export default function Dashboard() {
   const [filter, setFilter] = useState<'all' | 'unread' | 'attachments'>('all')
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const toastTimer = useRef<number | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    email: Email
+    x: number
+    y: number
+  } | null>(null)
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -84,6 +89,8 @@ export default function Dashboard() {
   }, [selectedEmail, showToast])
 
   const handleDeleteEmail = useCallback(async (email: Email) => {
+    const confirmed = window.confirm('确定要删除这封邮件吗？')
+    if (!confirmed) return
     try {
       await emailApi.delete(email.id)
       setEmails(prev => prev.filter(e => e.id !== email.id))
@@ -96,6 +103,10 @@ export default function Dashboard() {
       showToast('删除失败', 'error')
     }
   }, [selectedEmail, showToast])
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null)
+  }, [])
 
   const filteredEmails = emails.filter(email => {
     if (filter === 'unread') return !email.is_read
@@ -175,6 +186,24 @@ export default function Dashboard() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [loadEmails, handleRead, selectedEmail, sortedFilteredEmails])
 
+  useEffect(() => {
+    if (!contextMenu) return
+    const handleClick = () => setContextMenu(null)
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setContextMenu(null)
+      }
+    }
+    window.addEventListener('click', handleClick)
+    window.addEventListener('contextmenu', handleClick)
+    window.addEventListener('keydown', handleEsc)
+    return () => {
+      window.removeEventListener('click', handleClick)
+      window.removeEventListener('contextmenu', handleClick)
+      window.removeEventListener('keydown', handleEsc)
+    }
+  }, [contextMenu])
+
   return (
     <div className="h-full flex bg-slate-50">
       {toast && (
@@ -182,6 +211,45 @@ export default function Dashboard() {
           <div className={`px-4 py-2 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
             {toast.message}
           </div>
+        </div>
+      )}
+      {contextMenu && (
+        <div
+          className="fixed z-50 w-48 rounded-lg border border-slate-200 bg-white shadow-xl py-1 text-sm text-slate-700"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={closeContextMenu}
+        >
+          <button
+            type="button"
+            onClick={() => handleRead(contextMenu.email)}
+            className="w-full text-left px-3 py-2 hover:bg-slate-50"
+          >
+            打开
+          </button>
+          {contextMenu.email.is_read ? (
+            <button
+              type="button"
+              onClick={() => handleMarkAsUnread(contextMenu.email)}
+              className="w-full text-left px-3 py-2 hover:bg-slate-50"
+            >
+              标记为未读
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => handleRead(contextMenu.email)}
+              className="w-full text-left px-3 py-2 hover:bg-slate-50"
+            >
+              标记为已读
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => handleDeleteEmail(contextMenu.email)}
+            className="w-full text-left px-3 py-2 hover:bg-rose-50 text-rose-600"
+          >
+            删除
+          </button>
         </div>
       )}
       <div className="w-96 border-r border-slate-200/70 bg-white flex flex-col">
@@ -230,6 +298,9 @@ export default function Dashboard() {
               附件
             </button>
           </div>
+          <div className="mb-3 text-[11px] text-slate-400">
+            快捷键：j/k 上下，o 打开，r 刷新
+          </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
@@ -269,6 +340,21 @@ export default function Dashboard() {
                       <div
                         key={email.id}
                         onClick={() => handleRead(email)}
+                        onContextMenu={(event) => {
+                          event.preventDefault()
+                          const menuWidth = 192
+                          const menuHeight = 132
+                          const padding = 8
+                          const maxX = window.innerWidth - menuWidth - padding
+                          const maxY = window.innerHeight - menuHeight - padding
+                          const x = Math.min(event.clientX, maxX)
+                          const y = Math.min(event.clientY, maxY)
+                          setContextMenu({
+                            email,
+                            x: Math.max(padding, x),
+                            y: Math.max(padding, y),
+                          })
+                        }}
                         className={`group mx-3 my-2 px-4 py-3 rounded-xl border cursor-pointer transition-all ${
                           selectedEmail?.id === email.id ? 'bg-blue-50/70 border-blue-100 ring-1 ring-blue-200' : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-sm'
                         } ${!email.is_read ? 'border-blue-100/80' : ''}`}
@@ -347,19 +433,39 @@ export default function Dashboard() {
         <div className="flex-1 bg-white">
           {selectedEmail ? (
             <div className="h-full flex flex-col">
-              <div className="p-6 border-b border-slate-200/70 bg-gradient-to-b from-white to-slate-50/60">
-                <h2 className="text-xl font-semibold text-slate-900">{selectedEmail.subject || '(无主题)'}</h2>
-                <div className="flex items-center gap-3 mt-3">
-                <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-semibold">
-                  {selectedEmail.from_name?.[0] || '?'}
-                </div>
+            <div className="p-6 border-b border-slate-200/70 bg-gradient-to-b from-white to-slate-50/60">
+              <div className="flex items-start gap-4">
                 <div>
-                  <p className="font-medium text-slate-900">{selectedEmail.from_name || selectedEmail.from}</p>
-                  <p className="text-sm text-slate-500">{selectedEmail.from}</p>
+                  <h2 className="text-xl font-semibold text-slate-900">{selectedEmail.subject || '(无主题)'}</h2>
+                  <div className="flex items-center gap-3 mt-3">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-semibold">
+                      {selectedEmail.from_name?.[0] || '?'}
+                    </div>
+                    <div>
+                      <p className="font-medium text-slate-900">{selectedEmail.from_name || selectedEmail.from}</p>
+                      <p className="text-sm text-slate-500">{selectedEmail.from}</p>
+                    </div>
+                  </div>
                 </div>
-                <span className="ml-auto text-sm text-slate-400">
-                  {new Date(selectedEmail.date).toLocaleString('zh-CN')}
-                </span>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleMarkAsUnread(selectedEmail)}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                  >
+                    标记未读
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteEmail(selectedEmail)}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 text-sm text-slate-400">
+                {new Date(selectedEmail.date).toLocaleString('zh-CN')}
               </div>
             </div>
             <div className="flex-1 p-6 overflow-auto text-slate-800 leading-relaxed">
