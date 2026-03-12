@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { emailApi, accountApi } from '../api'
 import type { Email, EmailAccount } from '../api'
-import { Search, RefreshCw, Mail, Paperclip } from 'lucide-react'
+import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff } from 'lucide-react'
 
 export default function Dashboard() {
   const [emails, setEmails] = useState<Email[]>([])
@@ -10,6 +10,8 @@ export default function Dashboard() {
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'unread' | 'attachments'>('all')
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const toastTimer = useRef<number | null>(null)
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -48,13 +50,52 @@ export default function Dashboard() {
     loadEmails()
   }
 
-  const handleRead = async (email: Email) => {
+  const showToast = useCallback((message: string, type: 'success' | 'error') => {
+    setToast({ message, type })
+    if (toastTimer.current) {
+      window.clearTimeout(toastTimer.current)
+    }
+    toastTimer.current = window.setTimeout(() => {
+      setToast(null)
+    }, 1600)
+  }, [])
+
+  const handleRead = useCallback(async (email: Email) => {
     if (!email.is_read) {
       await emailApi.markAsRead(email.id)
-      setEmails(emails.map(e => e.id === email.id ? { ...e, is_read: true } : e))
+      setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
     }
     setSelectedEmail(email)
-  }
+  }, [])
+
+  const handleMarkAsUnread = useCallback(async (email: Email) => {
+    if (!email.is_read) return
+    try {
+      await emailApi.markAsUnread(email.id)
+      setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: false } : e))
+      if (selectedEmail?.id === email.id) {
+        setSelectedEmail({ ...email, is_read: false })
+      }
+      showToast('已标记为未读', 'success')
+    } catch (e) {
+      console.error(e)
+      showToast('标记未读失败', 'error')
+    }
+  }, [selectedEmail, showToast])
+
+  const handleDeleteEmail = useCallback(async (email: Email) => {
+    try {
+      await emailApi.delete(email.id)
+      setEmails(prev => prev.filter(e => e.id !== email.id))
+      if (selectedEmail?.id === email.id) {
+        setSelectedEmail(null)
+      }
+      showToast('已删除邮件', 'success')
+    } catch (e) {
+      console.error(e)
+      showToast('删除失败', 'error')
+    }
+  }, [selectedEmail, showToast])
 
   const filteredEmails = emails.filter(email => {
     if (filter === 'unread') return !email.is_read
@@ -92,8 +133,57 @@ export default function Dashboard() {
     { key: 'earlier', label: '更早' },
   ]
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+
+      if (event.key === 'j') {
+        event.preventDefault()
+        const index = sortedFilteredEmails.findIndex(email => email.id === selectedEmail?.id)
+        const nextEmail = sortedFilteredEmails[index + 1] || sortedFilteredEmails[0]
+        if (nextEmail) {
+          handleRead(nextEmail)
+        }
+      }
+
+      if (event.key === 'k') {
+        event.preventDefault()
+        const index = sortedFilteredEmails.findIndex(email => email.id === selectedEmail?.id)
+        const prevEmail = index <= 0 ? sortedFilteredEmails[sortedFilteredEmails.length - 1] : sortedFilteredEmails[index - 1]
+        if (prevEmail) {
+          handleRead(prevEmail)
+        }
+      }
+
+      if (event.key === 'o') {
+        event.preventDefault()
+        if (selectedEmail) {
+          handleRead(selectedEmail)
+        }
+      }
+
+      if (event.key === 'r') {
+        event.preventDefault()
+        loadEmails()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [loadEmails, handleRead, selectedEmail, sortedFilteredEmails])
+
   return (
     <div className="h-full flex bg-slate-50">
+      {toast && (
+        <div className="fixed top-4 right-4 z-50">
+          <div className={`px-4 py-2 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+            {toast.message}
+          </div>
+        </div>
+      )}
       <div className="w-96 border-r border-slate-200/70 bg-white flex flex-col">
         <div className="p-4 border-b border-slate-200/70 bg-gradient-to-b from-slate-50/80 to-white">
           <div className="flex items-center justify-between mb-3">
@@ -205,6 +295,44 @@ export default function Dashboard() {
                             <p className={`text-sm truncate ${!email.is_read ? 'text-slate-900 font-semibold' : 'text-slate-500'}`}>
                               {email.subject || '(无主题)'}
                             </p>
+                          </div>
+                          <div className="flex items-center gap-1 opacity-0 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition">
+                            {email.is_read ? (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleMarkAsUnread(email)
+                                }}
+                                className="p-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                                title="标记为未读"
+                              >
+                                <EyeOff className="w-4 h-4" />
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleRead(email)
+                                }}
+                                className="p-1.5 rounded-md text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                title="标记为已读"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleDeleteEmail(email)
+                              }}
+                              className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50"
+                              title="删除"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
                         </div>
                       </div>

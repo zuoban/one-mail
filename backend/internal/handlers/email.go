@@ -131,6 +131,45 @@ func (h *EmailHandler) MarkAsRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "marked as read"})
 }
 
+func (h *EmailHandler) MarkAsUnread(c *gin.Context) {
+	id := c.Param("id")
+	userID := c.GetUint("user_id")
+
+	var email models.Email
+	if err := database.GetDB().
+		Joins("JOIN email_accounts ON email_accounts.id = emails.account_id").
+		Where("emails.id = ? AND email_accounts.user_id = ?", id, userID).
+		First(&email).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "email not found"})
+		return
+	}
+
+	database.GetDB().Model(&email).Update("is_read", false)
+
+	c.JSON(http.StatusOK, gin.H{"message": "marked as unread"})
+}
+
+func (h *EmailHandler) DeleteEmail(c *gin.Context) {
+	id := c.Param("id")
+	userID := c.GetUint("user_id")
+
+	var email models.Email
+	if err := database.GetDB().
+		Joins("JOIN email_accounts ON email_accounts.id = emails.account_id").
+		Where("emails.id = ? AND email_accounts.user_id = ?", id, userID).
+		First(&email).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "email not found"})
+		return
+	}
+
+	if err := database.GetDB().Delete(&email).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+}
+
 func (h *EmailHandler) SyncEmails(c *gin.Context) {
 	accountID := c.Param("id")
 	userID := c.GetUint("user_id")

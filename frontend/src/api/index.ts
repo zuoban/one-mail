@@ -80,6 +80,8 @@ export const emailApi = {
     api.get<{ data: Email[]; total: number }>('/emails', { params }).then(r => r.data),
   get: (id: number) => api.get<{ data: Email }>(`/emails/${id}`).then(r => r.data),
   markAsRead: (id: number) => api.post(`/emails/${id}/read`),
+  markAsUnread: (id: number) => api.post(`/emails/${id}/unread`),
+  delete: (id: number) => api.delete(`/emails/${id}`),
 }
 
 export default api

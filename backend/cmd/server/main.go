@@ -47,6 +47,8 @@ func main() {
 		api.GET("/emails", emailHandler.ListEmails)
 		api.GET("/emails/:id", emailHandler.GetEmail)
 		api.POST("/emails/:id/read", emailHandler.MarkAsRead)
+		api.POST("/emails/:id/unread", emailHandler.MarkAsUnread)
+		api.DELETE("/emails/:id", emailHandler.DeleteEmail)
 		api.POST("/accounts/:id/sync", emailHandler.SyncEmails)
 	}
 
