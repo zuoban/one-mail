@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { accountApi } from '../api'
 import type { EmailAccount } from '../api'
-import { Plus, Trash2, X, Mail, Plug, X as CloseIcon, Mail as MailIcon, User, Lock, Palette, Pencil } from 'lucide-react'
+import { Plus, Trash2, X, Mail, Plug, Pencil } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 const providers = [
@@ -188,27 +188,19 @@ export default function Accounts() {
               <div className="flex items-center gap-5">
 
                 {/* 头像 */}
-                <div className="relative flex-shrink-0">
+                <div className="flex-shrink-0">
                   <div
                     className="w-12 h-12 rounded-xl flex items-center justify-center text-lg font-bold text-white"
                     style={{ backgroundColor: account.color || '#6366f1' }}
                   >
                     {account.email[0].toUpperCase()}
                   </div>
-                  {/* 状态点 */}
-                  <div
-                    className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white dark:border-[var(--bg-primary)] ${account.status === 'active' ? 'bg-[var(--success-500)]' : 'bg-[var(--text-tertiary)]'}`}
-                  />
                 </div>
 
                 {/* 账户信息 */}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="mb-1">
                     <p className="font-medium text-[var(--text-primary)] truncate">{account.email}</p>
-                    <div
-                      className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: account.color || '#6366f1' }}
-                    />
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-[var(--text-tertiary)]">
@@ -272,7 +264,7 @@ export default function Accounts() {
                     ? 'bg-gradient-to-br from-[var(--warning-500)] to-[var(--warning-600)] shadow-[var(--warning-500)]/25'
                     : 'bg-gradient-to-br from-[var(--primary-500)] to-[var(--primary-600)] shadow-[var(--primary-500)]/25'
                 }`}>
-                  <MailIcon className="w-5 h-5 text-white" />
+                  <Mail className="w-5 h-5 text-white" />
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold text-[var(--text-primary)]">
@@ -291,7 +283,7 @@ export default function Accounts() {
                 }}
                 className="p-2 rounded-lg hover:bg-[var(--bg-secondary)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
               >
-                <CloseIcon className="w-5 h-5" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 

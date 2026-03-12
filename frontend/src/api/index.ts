@@ -39,6 +39,17 @@ export interface EmailAccount {
   status: string
   last_sync_time: string
   color: string
+  sync_interval: number
+  sync_folders: string
+  enable_auto_sync: boolean
+}
+
+export interface SyncStatus {
+  account_id: number
+  running: boolean
+  last_sync_time: string
+  error: string
+  new_count: number
 }
 
 export interface Email {
@@ -78,6 +89,16 @@ export const accountApi = {
   delete: (id: number) => api.delete(`/accounts/${id}`),
   test: (id: number) => api.post(`/accounts/${id}/test`),
   sync: (id: number) => api.post(`/accounts/${id}/sync`),
+  updateSyncConfig: (id: number, data: { sync_interval?: number; sync_folders?: string; enable_auto_sync?: boolean }) =>
+    api.put(`/accounts/${id}/sync/config`, data),
+}
+
+export const syncApi = {
+  getStatus: (id: number) => api.get<{ data: SyncStatus }>(`/sync/status/${id}`).then(r => r.data),
+  getAllStatuses: () => api.get<{ data: Record<string, SyncStatus> }>('/sync/status').then(r => r.data),
+  getSchedulerStatus: () => api.get<{ running: boolean; workers: number }>('/sync').then(r => r.data),
+  start: () => api.post('/sync/start'),
+  stop: () => api.post('/sync/stop'),
 }
 
 export const emailApi = {

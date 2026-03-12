@@ -42,6 +42,7 @@ func InitDatabase() error {
 		&models.User{},
 		&models.EmailAccount{},
 		&models.Email{},
+		&models.SyncState{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}

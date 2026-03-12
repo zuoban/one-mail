@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { emailApi, accountApi } from '../api'
+import { emailApi, accountApi, syncApi } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 import { defaultCollapsedGroups } from '../config/inbox'
-import type { Email, EmailAccount } from '../api'
-import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff } from 'lucide-react'
+import type { Email, EmailAccount, SyncStatus } from '../api'
+import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff, Loader2 } from 'lucide-react'
 
 const providers = [
   { value: 'gmail', label: 'Gmail' },
@@ -24,6 +24,7 @@ export default function Dashboard() {
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'unread'>('all')
+  const [syncStatuses, setSyncStatuses] = useState<Record<string, SyncStatus>>({})
   const [toast, setToast] = useState<{
     message: string
     type: 'success' | 'error'
@@ -76,6 +77,15 @@ export default function Dashboard() {
     }
   }, [])
 
+  const loadSyncStatuses = useCallback(async () => {
+    try {
+      const res = await syncApi.getAllStatuses()
+      setSyncStatuses(res.data)
+    } catch (e) {
+      console.error(e)
+    }
+  }, [])
+
   const loadEmails = useCallback(async () => {
     setLoading(true)
     try {
@@ -96,7 +106,8 @@ export default function Dashboard() {
   useEffect(() => {
     loadAccounts()
     loadEmails()
-  }, [loadAccounts, loadEmails])
+    loadSyncStatuses()
+  }, [loadAccounts, loadEmails, loadSyncStatuses])
 
   const handleSync = async () => {
     if (loading) return
@@ -532,7 +543,10 @@ export default function Dashboard() {
                 {accounts.map(account => {
                   const providerText = providers.find(p => p.value === account.provider)?.label || account.provider
                   const statusText = account.status === 'active' ? '已连接' : '未连接'
-                  const tip = `${account.email} · ${providerText} · ${statusText} · ${formatSyncTime(account.last_sync_time)}`
+                  const syncStatus = syncStatuses[String(account.id)]
+                  const isSyncing = syncStatus?.running === true
+                  const syncInfo = isSyncing ? '正在同步...' : formatSyncTime(account.last_sync_time)
+                  const tip = `${account.email} · ${providerText} · ${statusText} · ${syncInfo}`
                   const isSelected = selectedAccountId === account.id
                   const accountColor = account.color || '#6366f1'
                   return (
@@ -551,7 +565,11 @@ export default function Dashboard() {
                           className="flex items-center justify-center w-5 h-5 rounded-full font-semibold text-white"
                           style={{ backgroundColor: accountColor }}
                         >
-                          {account.email?.[0]?.toUpperCase() || '?'}
+                          {isSyncing ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            account.email?.[0]?.toUpperCase() || '?'
+                          )}
                         </span>
                         <span className="leading-tight text-[var(--text-secondary)]">
                           {account.provider.slice(0, 4)}
@@ -587,7 +605,11 @@ export default function Dashboard() {
               disabled={loading}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--bg-primary)] text-[var(--primary-600)] border border-[var(--primary-200)] hover:bg-[var(--primary-50)] hover:border-[var(--primary-300)] hover:text-[var(--primary-700)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5" />
+              )}
               <span>{loading ? '同步中' : '同步'}</span>
             </button>
           </div>

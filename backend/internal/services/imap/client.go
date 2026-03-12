@@ -134,6 +134,8 @@ type EmailSummary struct {
 	BodyText      string
 	BodyHTML      string
 	HasAttachment bool
+	IsRead        bool
+	IsStarred     bool
 	UID           uint
 }
 
@@ -181,6 +183,31 @@ func parseMessageBody(raw []byte) (bodyText string, bodyHTML string) {
 	}
 
 	return bodyText, bodyHTML
+}
+
+type FolderInfo struct {
+	Name string
+}
+
+func (c *Client) ListFolders() ([]FolderInfo, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	mailboxes, err := c.client.List("", "*", nil).Collect()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []FolderInfo
+	for _, mbox := range mailboxes {
+		info := FolderInfo{
+			Name: mbox.Mailbox,
+		}
+		result = append(result, info)
+	}
+
+	return result, nil
 }
 
 func (c *Client) FetchEmails(folder string, since time.Time, limit int) ([]*EmailSummary, error) {
@@ -286,6 +313,130 @@ func (c *Client) FetchEmails(folder string, since time.Time, limit int) ([]*Emai
 	}
 
 	return results, nil
+}
+
+func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) ([]*EmailSummary, uint, error) {
+	if c.client == nil {
+		return nil, 0, fmt.Errorf("not connected")
+	}
+
+	selectedMbox, err := c.client.Select(folder, nil).Wait()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to select mailbox: %w", err)
+	}
+
+	if selectedMbox.NumMessages == 0 {
+		return []*EmailSummary{}, 0, nil
+	}
+
+	uidSet := imap.UIDSet{}
+	if lastUID > 0 {
+		uidSet.AddRange(imap.UID(lastUID)+1, 0)
+	} else {
+		uidSet.AddRange(1, 0)
+	}
+
+	criteria := imap.SearchCriteria{}
+	criteria.UID = []imap.UIDSet{uidSet}
+
+	data, err := c.client.Search(&criteria, nil).Wait()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	uids := data.AllUIDs()
+	if len(uids) == 0 {
+		return []*EmailSummary{}, lastUID, nil
+	}
+
+	if limit > 0 && len(uids) > limit {
+		uids = uids[len(uids)-limit:]
+	}
+
+	fetchUIDSet := imap.UIDSet{}
+	for _, uid := range uids {
+		fetchUIDSet.AddNum(uid)
+	}
+
+	bodySection := &imap.FetchItemBodySection{Peek: true}
+	fetchOptions := &imap.FetchOptions{
+		Envelope: true,
+		Flags:    true,
+		UID:      true,
+		BodySection: []*imap.FetchItemBodySection{
+			bodySection,
+		},
+	}
+
+	messages, err := c.client.Fetch(fetchUIDSet, fetchOptions).Collect()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to fetch messages: %w", err)
+	}
+
+	var results []*EmailSummary
+	var maxUID uint
+
+	for _, msg := range messages {
+		email := &EmailSummary{
+			UID: uint(msg.UID),
+		}
+
+		if uint(msg.UID) > maxUID {
+			maxUID = uint(msg.UID)
+		}
+
+		if msg.Envelope != nil {
+			email.Subject = msg.Envelope.Subject
+			email.Date = msg.Envelope.Date
+
+			if len(msg.Envelope.From) > 0 {
+				from := msg.Envelope.From[0]
+				if from.Mailbox != "" && from.Host != "" {
+					email.From = fmt.Sprintf("%s@%s", from.Mailbox, from.Host)
+				}
+				if from.Name != "" {
+					email.FromName = from.Name
+				}
+			}
+
+			if len(msg.Envelope.To) > 0 {
+				to := msg.Envelope.To[0]
+				if to.Mailbox != "" && to.Host != "" {
+					email.To = fmt.Sprintf("%s@%s", to.Mailbox, to.Host)
+				}
+			}
+
+			if msg.Envelope.MessageID != "" {
+				email.MessageID = msg.Envelope.MessageID
+			} else {
+				email.MessageID = fmt.Sprintf("%d", msg.UID)
+			}
+		}
+
+		if msg.Flags != nil {
+			for _, flag := range msg.Flags {
+				if flag == imap.FlagSeen {
+					email.IsRead = true
+				}
+				if flag == imap.FlagFlagged {
+					email.IsStarred = true
+				}
+			}
+		}
+
+		raw := msg.FindBodySection(bodySection)
+		if len(raw) > 0 {
+			email.BodyText, email.BodyHTML = parseMessageBody(raw)
+		}
+
+		results = append(results, email)
+	}
+
+	if maxUID == 0 {
+		maxUID = lastUID
+	}
+
+	return results, maxUID, nil
 }
 
 func (c *Client) MarkAsRead(uid uint, folder string) error {
