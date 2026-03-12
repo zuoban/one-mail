@@ -39,4 +39,5 @@ Thumbs.db
 # Database
 *.db
 *.sqlite
-*.sqlite3backend/server
+*.sqlite3
+backend/server
