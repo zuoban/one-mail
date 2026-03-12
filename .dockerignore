@@ -1,0 +1,61 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Node.js
+node_modules
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+dist
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+server
+*.test
+*.out
+vendor/
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+# Data
+data/
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Documentation
+README.md
+AGENTS.md
+*.md
+
+# Build artifacts
+backend/server
+frontend/dist

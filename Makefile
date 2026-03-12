@@ -1,4 +1,4 @@
-.PHONY: run build frontend backend clean
+.PHONY: run build frontend backend clean docker-build docker-run docker-stop docker-logs
 
 run: backend frontend
 
@@ -16,3 +16,20 @@ clean:
 	rm -rf backend/server
 	rm -rf frontend/dist
 	rm -rf backend/data
+
+# Docker 单镜像方案
+docker-build:
+	./docker-build.sh
+
+docker-run:
+	./docker-run.sh
+
+docker-stop:
+	docker stop one-mail || true
+	docker rm one-mail || true
+
+docker-logs:
+	docker logs -f one-mail
+
+# 便捷别名
+docker-start: docker-run

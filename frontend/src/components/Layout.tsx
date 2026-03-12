@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Mail, Users, Inbox, LogOut } from 'lucide-react'
+import { Users, Inbox, LogOut } from 'lucide-react'
 import useAuth from '../context/useAuth'
 
 export default function Layout() {
