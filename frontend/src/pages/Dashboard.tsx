@@ -4,7 +4,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 import { defaultCollapsedGroups } from '../config/inbox'
 import type { Email, EmailAccount, SyncStatus } from '../api'
-import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff, Loader2 } from 'lucide-react'
+import { Search, Mail, Paperclip, Trash2, Eye, EyeOff, Loader2 } from 'lucide-react'
 
 const providers = [
   { value: 'gmail', label: 'Gmail' },
@@ -583,35 +583,21 @@ export default function Dashboard() {
           )}
 
           {/* Filter Buttons */}
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              {(['all', 'unread'] as const).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setFilter(f)}
-                  className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
-                    filter === f
-                      ? 'bg-[var(--primary-600)] text-white border-[var(--primary-600)]'
-                      : 'bg-[var(--bg-primary)] text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:text-[var(--text-secondary)]'
-                  }`}
-                >
-                  {f === 'all' ? '全部' : '未读'}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={handleSync}
-              disabled={loading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--bg-primary)] text-[var(--primary-600)] border border-[var(--primary-200)] hover:bg-[var(--primary-50)] hover:border-[var(--primary-300)] hover:text-[var(--primary-700)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="w-3.5 h-3.5" />
-              )}
-              <span>{loading ? '同步中' : '同步'}</span>
-            </button>
+          <div className="flex items-center gap-2 mb-3">
+            {(['all', 'unread'] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFilter(f)}
+                className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                  filter === f
+                    ? 'bg-[var(--primary-600)] text-white border-[var(--primary-600)]'
+                    : 'bg-[var(--bg-primary)] text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:text-[var(--text-secondary)]'
+                }`}
+              >
+                {f === 'all' ? '全部' : '未读'}
+              </button>
+            ))}
           </div>
 
           {/* Search Input */}

@@ -34,7 +34,7 @@ type EmailAccount struct {
 	LastSyncTime   time.Time      `json:"last_sync_time"`
 	Status         string         `gorm:"default:'active'" json:"status"`
 	Color          string         `gorm:"default:'#6366f1'" json:"color"`
-	SyncInterval   int            `gorm:"default:5" json:"sync_interval"`
+	SyncInterval   int            `gorm:"default:1" json:"sync_interval"`
 	SyncFolders    string         `gorm:"default:'INBOX'" json:"sync_folders"`
 	EnableAutoSync bool           `gorm:"default:true" json:"enable_auto_sync"`
 	Emails         []Email        `gorm:"foreignKey:AccountID" json:"emails,omitempty"`
@@ -51,6 +51,18 @@ type SyncState struct {
 	LastSyncTime time.Time `json:"last_sync_time"`
 	IsSyncing    bool      `gorm:"default:false" json:"is_syncing"`
 	Error        string    `gorm:"type:text" json:"error"`
+}
+
+type SyncLog struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	CreatedAt  time.Time `json:"created_at"`
+	AccountID  uint      `gorm:"not null;index" json:"account_id"`
+	StartTime  time.Time `json:"start_time"`
+	EndTime    time.Time `json:"end_time"`
+	Status     string    `gorm:"not null" json:"status"`
+	NewCount   int       `gorm:"default:0" json:"new_count"`
+	Error      string    `gorm:"type:text" json:"error"`
+	DurationMs int64     `json:"duration_ms"`
 }
 
 type Email struct {

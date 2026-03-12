@@ -64,6 +64,9 @@ func main() {
 		api.POST("/sync/start", syncHandler.StartScheduler)
 		api.POST("/sync/stop", syncHandler.StopScheduler)
 		api.GET("/sync", syncHandler.GetSchedulerStatus)
+		api.GET("/sync/logs", syncHandler.GetSyncLogs)
+		api.GET("/sync/logs/:account_id", syncHandler.GetSyncLogs)
+		api.DELETE("/sync/logs/:account_id", syncHandler.ClearSyncLogs)
 	}
 
 	r.GET("/health", func(c *gin.Context) {

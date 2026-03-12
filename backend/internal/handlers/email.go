@@ -101,7 +101,37 @@ func (h *EmailHandler) GetEmail(c *gin.Context) {
 		database.GetDB().Model(&email).Update("is_read", true)
 	}
 
+	if email.BodyText == "" && email.BodyHTML == "" {
+		h.fetchAndCacheBody(&email)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": email})
+}
+
+func (h *EmailHandler) fetchAndCacheBody(email *models.Email) {
+	var account models.EmailAccount
+	if err := database.GetDB().First(&account, email.AccountID).Error; err != nil {
+		return
+	}
+
+	imapClient := imap.NewClient(&account)
+	if err := imapClient.Connect(); err != nil {
+		return
+	}
+	defer imapClient.Disconnect()
+
+	bodyText, bodyHTML, err := imapClient.FetchEmailBody(email.Folder, email.UID)
+	if err != nil {
+		return
+	}
+
+	database.GetDB().Model(email).Updates(map[string]interface{}{
+		"body_text": bodyText,
+		"body_html": bodyHTML,
+	})
+
+	email.BodyText = bodyText
+	email.BodyHTML = bodyHTML
 }
 
 func (h *EmailHandler) MarkAsRead(c *gin.Context) {

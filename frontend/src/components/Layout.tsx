@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Users, Inbox, LogOut } from 'lucide-react'
+import { Users, Inbox, LogOut, FileText } from 'lucide-react'
 import useAuth from '../context/useAuth'
 
 export default function Layout() {
@@ -9,6 +9,7 @@ export default function Layout() {
   const navItems = [
     { path: '/inbox', label: '收件箱', icon: Inbox },
     { path: '/accounts', label: '邮箱账户', icon: Users },
+    { path: '/sync-logs', label: '同步日志', icon: FileText },
   ]
 
   return (
@@ -58,10 +59,8 @@ export default function Layout() {
           </div>
         </div>
       </aside>
-      <main className="flex-1 min-h-0 overflow-hidden">
-        <div className="h-full">
-          <Outlet />
-        </div>
+      <main className="flex-1 min-h-0 overflow-auto">
+        <Outlet />
       </main>
     </div>
   )

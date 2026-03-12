@@ -98,35 +98,59 @@ func (w *Worker) doSync() {
 	w.status.Error = ""
 	w.mu.Unlock()
 
+	startTime := time.Now()
+	syncLog := models.SyncLog{
+		AccountID: w.accountID,
+		StartTime: startTime,
+		Status:    "running",
+	}
+	database.GetDB().Create(&syncLog)
+
 	defer func() {
 		w.mu.Lock()
 		w.status.Running = false
 		w.mu.Unlock()
 	}()
 
-	err := SyncAccount(w.accountID)
+	newCount, err := SyncAccount(w.accountID)
+
+	endTime := time.Now()
+	durationMs := endTime.Sub(startTime).Milliseconds()
 
 	w.mu.Lock()
 	if err != nil {
 		w.status.Error = err.Error()
 		log.Printf("Sync failed for account %d: %v", w.accountID, err)
+		database.GetDB().Model(&syncLog).Updates(map[string]interface{}{
+			"end_time":    endTime,
+			"status":      "failed",
+			"error":       err.Error(),
+			"duration_ms": durationMs,
+		})
 	} else {
 		w.status.LastSyncTime = time.Now()
+		w.status.NewCount = newCount
+		database.GetDB().Model(&syncLog).Updates(map[string]interface{}{
+			"end_time":    endTime,
+			"status":      "success",
+			"new_count":   newCount,
+			"duration_ms": durationMs,
+		})
 	}
 	w.mu.Unlock()
 }
 
-func SyncAccount(accountID uint) error {
+func SyncAccount(accountID uint) (int, error) {
 	db := database.GetDB()
 
 	var account models.EmailAccount
 	if err := db.First(&account, accountID).Error; err != nil {
-		return err
+		return 0, err
 	}
 
 	client := imap.NewClient(&account)
 	if err := client.Connect(); err != nil {
-		return err
+		return 0, err
 	}
 	defer client.Disconnect()
 
@@ -153,7 +177,7 @@ func SyncAccount(accountID uint) error {
 	db.Model(&account).Update("last_sync_time", time.Now())
 
 	log.Printf("Synced account %d, %d new emails", accountID, totalNew)
-	return nil
+	return totalNew, nil
 }
 
 func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, folder string) (int, error) {
@@ -186,11 +210,24 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 		return 0, nil
 	}
 
+	messageIDs := make([]string, 0, len(emails))
+	for _, e := range emails {
+		messageIDs = append(messageIDs, e.MessageID)
+	}
+
+	var existingEmails []models.Email
+	db.Where("account_id = ? AND message_id IN ?", account.ID, messageIDs).
+		Select("message_id").
+		Find(&existingEmails)
+
+	existingSet := make(map[string]bool)
+	for _, e := range existingEmails {
+		existingSet[e.MessageID] = true
+	}
+
 	var newEmails []models.Email
 	for _, e := range emails {
-		var existing models.Email
-		result := db.Where("account_id = ? AND message_id = ?", account.ID, e.MessageID).First(&existing)
-		if result.Error == nil {
+		if existingSet[e.MessageID] {
 			continue
 		}
 
@@ -202,8 +239,6 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 			To:            e.To,
 			Subject:       e.Subject,
 			Date:          e.Date,
-			BodyText:      e.BodyText,
-			BodyHTML:      e.BodyHTML,
 			HasAttachment: e.HasAttachment,
 			IsRead:        e.IsRead,
 			IsStarred:     e.IsStarred,

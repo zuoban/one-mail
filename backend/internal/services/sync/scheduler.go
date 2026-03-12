@@ -57,7 +57,33 @@ func (s *Scheduler) Start() {
 		}
 	}
 
+	go s.startLogCleanup()
+
 	log.Printf("Sync scheduler started with %d workers", len(s.workers))
+}
+
+func (s *Scheduler) startLogCleanup() {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.cleanupOldLogs()
+		}
+	}
+}
+
+func (s *Scheduler) cleanupOldLogs() {
+	cutoff := time.Now().AddDate(0, 0, -30)
+	result := database.GetDB().Where("created_at < ?", cutoff).Delete(&models.SyncLog{})
+	if result.Error != nil {
+		log.Printf("Failed to cleanup old sync logs: %v", result.Error)
+	} else if result.RowsAffected > 0 {
+		log.Printf("Cleaned up %d old sync logs", result.RowsAffected)
+	}
 }
 
 func (s *Scheduler) Stop() {
@@ -115,7 +141,8 @@ func (s *Scheduler) TriggerSync(accountID uint) error {
 		return worker.TriggerSync()
 	}
 
-	return SyncAccount(accountID)
+	_, err := SyncAccount(accountID)
+	return err
 }
 
 func (s *Scheduler) GetStatus(accountID uint) *SyncStatus {

@@ -3,6 +3,7 @@ import { AuthProvider } from './context/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Dashboard from './pages/Dashboard'
 import Accounts from './pages/Accounts'
+import SyncLogs from './pages/SyncLogs'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Layout from './components/Layout'
@@ -26,6 +27,7 @@ function App() {
             <Route index element={<Navigate to="/inbox" replace />} />
             <Route path="inbox" element={<Dashboard />} />
             <Route path="accounts" element={<Accounts />} />
+            <Route path="sync-logs" element={<SyncLogs />} />
           </Route>
         </Routes>
       </BrowserRouter>

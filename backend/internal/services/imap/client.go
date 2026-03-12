@@ -358,14 +358,10 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 		fetchUIDSet.AddNum(uid)
 	}
 
-	bodySection := &imap.FetchItemBodySection{Peek: true}
 	fetchOptions := &imap.FetchOptions{
 		Envelope: true,
 		Flags:    true,
 		UID:      true,
-		BodySection: []*imap.FetchItemBodySection{
-			bodySection,
-		},
 	}
 
 	messages, err := c.client.Fetch(fetchUIDSet, fetchOptions).Collect()
@@ -424,11 +420,6 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 			}
 		}
 
-		raw := msg.FindBodySection(bodySection)
-		if len(raw) > 0 {
-			email.BodyText, email.BodyHTML = parseMessageBody(raw)
-		}
-
 		results = append(results, email)
 	}
 
@@ -437,6 +428,39 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 	}
 
 	return results, maxUID, nil
+}
+
+func (c *Client) FetchEmailBody(folder string, uid uint) (bodyText string, bodyHTML string, err error) {
+	if c.client == nil {
+		return "", "", fmt.Errorf("not connected")
+	}
+
+	_, err = c.client.Select(folder, nil).Wait()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to select mailbox: %w", err)
+	}
+
+	uidSet := imap.UIDSetNum(imap.UID(uid))
+	bodySection := &imap.FetchItemBodySection{Peek: true}
+	fetchOptions := &imap.FetchOptions{
+		BodySection: []*imap.FetchItemBodySection{bodySection},
+	}
+
+	messages, err := c.client.Fetch(uidSet, fetchOptions).Collect()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to fetch message body: %w", err)
+	}
+
+	if len(messages) == 0 {
+		return "", "", fmt.Errorf("message not found")
+	}
+
+	raw := messages[0].FindBodySection(bodySection)
+	if len(raw) > 0 {
+		bodyText, bodyHTML = parseMessageBody(raw)
+	}
+
+	return bodyText, bodyHTML, nil
 }
 
 func (c *Client) MarkAsRead(uid uint, folder string) error {

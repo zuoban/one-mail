@@ -52,6 +52,18 @@ export interface SyncStatus {
   new_count: number
 }
 
+export interface SyncLog {
+  id: number
+  created_at: string
+  account_id: number
+  start_time: string
+  end_time: string
+  status: string
+  new_count: number
+  error: string
+  duration_ms: number
+}
+
 export interface Email {
   id: number
   account_id: number
@@ -99,6 +111,11 @@ export const syncApi = {
   getSchedulerStatus: () => api.get<{ running: boolean; workers: number }>('/sync').then(r => r.data),
   start: () => api.post('/sync/start'),
   stop: () => api.post('/sync/stop'),
+  getLogs: (params?: { account_id?: number; page?: number; page_size?: number }) =>
+    api.get<{ data: SyncLog[]; total: number; page: number; page_size: number }>('/sync/logs', { params }).then(r => r.data),
+  getLogsByAccount: (accountId: number, params?: { page?: number; page_size?: number }) =>
+    api.get<{ data: SyncLog[]; total: number; page: number; page_size: number }>(`/sync/logs/${accountId}`, { params }).then(r => r.data),
+  clearLogs: (accountId: number) => api.delete(`/sync/logs/${accountId}`),
 }
 
 export const emailApi = {

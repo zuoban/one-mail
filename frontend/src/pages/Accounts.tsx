@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { accountApi } from '../api'
 import type { EmailAccount } from '../api'
-import { Plus, Trash2, X, Mail, Plug, Pencil } from 'lucide-react'
+import { Plus, Trash2, X, Mail, Plug, Pencil, FileText } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 const providers = [
@@ -28,6 +29,7 @@ const accountColors = [
 ]
 
 export default function Accounts() {
+  const navigate = useNavigate()
   const [accounts, setAccounts] = useState<EmailAccount[]>([])
   const [loading, setLoading] = useState(false)
   const [showModal, setShowModal] = useState(false)
@@ -215,6 +217,13 @@ export default function Accounts() {
 
                 {/* 操作按钮 */}
                 <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => navigate(`/sync-logs?account_id=${account.id}`)}
+                    className="p-2 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors"
+                    title="同步日志"
+                  >
+                    <FileText className="w-4 h-4" />
+                  </button>
                   <button
                     onClick={() => handleTest(account.id)}
                     className="p-2 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors"
