@@ -1,8 +1,18 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { emailApi, accountApi } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog'
+import Tooltip from '../components/Tooltip'
 import type { Email, EmailAccount } from '../api'
-import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff } from 'lucide-react'
+import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff, Plug } from 'lucide-react'
+
+const providers = [
+  { value: 'gmail', label: 'Gmail' },
+  { value: 'qq', label: 'QQ邮箱' },
+  { value: 'outlook', label: 'Outlook' },
+  { value: 'qq-work', label: 'QQ企业邮' },
+  { value: '163', label: '163邮箱' },
+  { value: 'custom', label: '自定义' },
+]
 
 export default function Dashboard() {
   const [emails, setEmails] = useState<Email[]>([])
@@ -30,6 +40,23 @@ export default function Dashboard() {
   const emailItemRefs = useRef<Record<number, HTMLDivElement | null>>({})
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ email: Email } | null>(null)
+
+  const formatSyncTime = (value?: string) => {
+    if (!value) return '未同步'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '未同步'
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMinutes = Math.floor(diffMs / (1000 * 60))
+    if (diffMinutes < 1) return '刚刚同步'
+    if (diffMinutes < 60) return `${diffMinutes} 分钟前`
+    const diffHours = Math.floor(diffMinutes / 60)
+    if (diffHours < 24) return `${diffHours} 小时前`
+    const diffDays = Math.floor(diffHours / 24)
+    if (diffDays < 7) return `${diffDays} 天前`
+    return date.toLocaleDateString('zh-CN')
+  }
+
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -415,20 +442,70 @@ export default function Dashboard() {
               {filteredEmails.length}
             </span>
           </div>
-          {accounts.length > 1 && (
-            <div className="mb-3">
-              <select
-                value={selectedAccountId || ''}
-                onChange={(e) => setSelectedAccountId(e.target.value ? Number(e.target.value) : null)}
-                className="w-full px-3 py-2 text-sm border border-slate-200/80 rounded-lg bg-white/90 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
-              >
-                <option value="">全部账户</option>
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.email}
-                  </option>
-                ))}
-              </select>
+          {accounts.length > 0 && (
+            <div className="mb-4">
+              <div className="mb-2 text-xs text-slate-500">账户</div>
+              {(() => {
+                const renderAllButton = (isSelected: boolean) => (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAccountId(null)}
+                    className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-all w-20 ${
+                      isSelected
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-semibold ${
+                      isSelected ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'
+                    }`}>
+                      <Mail className="w-3.5 h-3.5" />
+                    </span>
+                    <span className={`leading-tight ${isSelected ? 'text-blue-100' : 'text-slate-600'}`}>
+                      全部
+                    </span>
+                  </button>
+                )
+
+                const renderAccountButton = (account: EmailAccount, isSelected: boolean) => {
+                  const providerText = providers.find(p => p.value === account.provider)?.label || account.provider
+                  const statusText = account.status === 'active' ? '已连接' : '未连接'
+                  const tip = `${account.email} · ${providerText} · ${statusText} · ${formatSyncTime(account.last_sync_time)}`
+                  return (
+                    <Tooltip content={tip}>
+                      <button
+                        key={account.id}
+                        type="button"
+                        onClick={() => setSelectedAccountId(account.id)}
+                        className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-all w-20 ${
+                          isSelected
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-semibold ${
+                          isSelected ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'
+                        }`}>
+                          {account.email?.[0]?.toUpperCase() || '?'}
+                        </span>
+                        <span className={`leading-tight ${isSelected ? 'text-blue-100' : 'text-slate-600'}`}>
+                          {providerText}
+                        </span>
+                      </button>
+                    </Tooltip>
+                  )
+                }
+                return (
+                  <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto pr-1 thin-scrollbar">
+                    {renderAllButton(selectedAccountId === null)}
+                    {accounts.map(account => renderAccountButton(account, selectedAccountId === account.id))}
+                  </div>
+                )
+              })()}
+              <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-400">
+                <Plug className="w-3.5 h-3.5" />
+                点击账户卡片切换，双向同步仍适用于全部账户
+              </div>
             </div>
           )}
           <div className="flex items-center gap-2 mb-3">
