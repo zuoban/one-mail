@@ -25,6 +25,7 @@ export default function Dashboard() {
     y: number
   } | null>(null)
   const [contextMenuIndex, setContextMenuIndex] = useState(0)
+  const emailItemRefs = useRef<Record<number, HTMLDivElement | null>>({})
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -78,12 +79,18 @@ export default function Dashboard() {
     }, 1600)
   }, [])
 
-  const handleRead = useCallback(async (email: Email) => {
+  const handleRead = useCallback(async (email: Email, shouldScroll = false) => {
     if (!email.is_read) {
       await emailApi.markAsRead(email.id)
       setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
     }
     setSelectedEmail(email)
+    if (shouldScroll) {
+      const node = emailItemRefs.current[email.id]
+      if (node) {
+        node.scrollIntoView({ block: 'nearest' })
+      }
+    }
   }, [])
 
   const handleMarkAsUnread = useCallback(async (email: Email) => {
@@ -204,7 +211,7 @@ export default function Dashboard() {
         const index = sortedFilteredEmails.findIndex(email => email.id === selectedEmail?.id)
         const nextEmail = sortedFilteredEmails[index + 1] || sortedFilteredEmails[0]
         if (nextEmail) {
-          handleRead(nextEmail)
+          handleRead(nextEmail, true)
         }
       }
 
@@ -213,14 +220,14 @@ export default function Dashboard() {
         const index = sortedFilteredEmails.findIndex(email => email.id === selectedEmail?.id)
         const prevEmail = index <= 0 ? sortedFilteredEmails[sortedFilteredEmails.length - 1] : sortedFilteredEmails[index - 1]
         if (prevEmail) {
-          handleRead(prevEmail)
+          handleRead(prevEmail, true)
         }
       }
 
       if (event.key === 'o') {
         event.preventDefault()
         if (selectedEmail) {
-          handleRead(selectedEmail)
+          handleRead(selectedEmail, true)
         }
       }
 
@@ -247,6 +254,19 @@ export default function Dashboard() {
     items.push({ label: '删除', action: () => handleDeleteEmail(contextMenu.email), danger: true })
     return items
   }, [contextMenu, handleDeleteEmail, handleMarkAsUnread, handleRead])
+
+  const sanitizedHtml = useMemo(() => {
+    if (!selectedEmail?.body_html) return ''
+    try {
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(selectedEmail.body_html, 'text/html')
+      doc.querySelectorAll('style, link[rel="stylesheet"], script').forEach(node => node.remove())
+      return doc.body?.innerHTML || ''
+    } catch (e) {
+      console.error(e)
+      return ''
+    }
+  }, [selectedEmail?.body_html])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -430,6 +450,9 @@ export default function Dashboard() {
                     {groupedEmails[group.key].map(email => (
                       <div
                         key={email.id}
+                        ref={(node) => {
+                          emailItemRefs.current[email.id] = node
+                        }}
                         onClick={() => handleRead(email)}
                         onContextMenu={(event) => {
                           event.preventDefault()
@@ -561,13 +584,15 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="flex-1 p-6 overflow-auto text-slate-800 leading-relaxed">
-              {selectedEmail.body_html ? (
-                <div dangerouslySetInnerHTML={{ __html: selectedEmail.body_html }} />
-              ) : selectedEmail.body_text ? (
-                <pre className="whitespace-pre-wrap text-slate-800 leading-relaxed">{selectedEmail.body_text}</pre>
-              ) : (
-                <p className="text-slate-500">无邮件内容</p>
-              )}
+              <div className="max-w-3xl mx-auto">
+                {selectedEmail.body_html ? (
+                  <div className="prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+                ) : selectedEmail.body_text ? (
+                  <pre className="whitespace-pre-wrap text-slate-800 leading-relaxed">{selectedEmail.body_text}</pre>
+                ) : (
+                  <p className="text-slate-500">无邮件内容</p>
+                )}
+              </div>
             </div>
           </div>
         ) : (
