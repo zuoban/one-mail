@@ -26,6 +26,7 @@ export default function Dashboard() {
   } | null>(null)
   const [contextMenuIndex, setContextMenuIndex] = useState(0)
   const emailItemRefs = useRef<Record<number, HTMLDivElement | null>>({})
+  const detailScrollRef = useRef<HTMLDivElement | null>(null)
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -54,14 +55,21 @@ export default function Dashboard() {
   }, [loadAccounts, loadEmails])
 
   const handleSync = async () => {
+    let failed = 0
     for (const account of accounts) {
       try {
         await accountApi.sync(account.id)
       } catch (e) {
         console.error(e)
+        failed += 1
       }
     }
     loadEmails()
+    if (failed > 0) {
+      showToast(`同步完成，失败 ${failed} 个账户`, 'error')
+    } else {
+      showToast('同步完成', 'success')
+    }
   }
 
   const showToast = useCallback((
@@ -79,7 +87,7 @@ export default function Dashboard() {
     }, 1600)
   }, [])
 
-  const handleRead = useCallback(async (email: Email, shouldScroll = false) => {
+  const handleRead = useCallback(async (email: Email, shouldScroll = false, scrollDetail = false) => {
     if (!email.is_read) {
       await emailApi.markAsRead(email.id)
       setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
@@ -90,6 +98,9 @@ export default function Dashboard() {
       if (node) {
         node.scrollIntoView({ block: 'nearest' })
       }
+    }
+    if (scrollDetail && detailScrollRef.current) {
+      detailScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' })
     }
   }, [])
 
@@ -224,16 +235,17 @@ export default function Dashboard() {
         }
       }
 
-      if (event.key === 'o') {
+      if (event.key === 'o' || event.key === 'O') {
         event.preventDefault()
-        if (selectedEmail) {
-          handleRead(selectedEmail, true)
+        const target = selectedEmail || sortedFilteredEmails[0]
+        if (target) {
+          handleRead(target, true, true)
         }
       }
 
-      if (event.key === 'r') {
+      if (event.key === 'r' || event.key === 'R') {
         event.preventDefault()
-        loadEmails()
+        handleSync()
       }
     }
 
@@ -585,7 +597,7 @@ export default function Dashboard() {
                 {new Date(selectedEmail.date).toLocaleString('zh-CN')}
               </div>
             </div>
-            <div className="flex-1 p-6 overflow-auto text-slate-800 leading-relaxed">
+            <div ref={detailScrollRef} className="flex-1 p-6 overflow-auto text-slate-800 leading-relaxed">
               <div className="max-w-3xl mx-auto">
                 {selectedEmail.body_html ? (
                   <div className="prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
