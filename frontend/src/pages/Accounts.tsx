@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { accountApi } from '../api'
 import type { EmailAccount } from '../api'
-import { Plus, Trash2, RefreshCw, Check, X, Mail } from 'lucide-react'
+import { Plus, Trash2, RefreshCw, Check, X, Mail, Plug } from 'lucide-react'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 const providers = [
   { value: 'gmail', label: 'Gmail' },
@@ -17,6 +18,8 @@ export default function Accounts() {
   const [accounts, setAccounts] = useState<EmailAccount[]>([])
   const [loading, setLoading] = useState(false)
   const [showModal, setShowModal] = useState(false)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<EmailAccount | null>(null)
   const [form, setForm] = useState({
     email: '',
     provider: 'gmail',
@@ -55,37 +58,65 @@ export default function Accounts() {
     }
   }
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('确定要删除这个邮箱账户吗？')) return
-    await accountApi.delete(id)
+  const requestDelete = (account: EmailAccount) => {
+    setConfirmDelete(account)
+  }
+
+  const confirmDeleteAccount = async () => {
+    if (!confirmDelete) return
+    await accountApi.delete(confirmDelete.id)
+    setConfirmDelete(null)
     loadAccounts()
+  }
+
+  const cancelDeleteAccount = () => {
+    setConfirmDelete(null)
   }
 
   const handleSync = async (id: number) => {
     setLoading(true)
     try {
       await accountApi.sync(id)
-      alert('同步成功')
+      setToast({ message: '同步成功', type: 'success' })
     } catch (err: unknown) {
       const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
-      alert(message || '同步失败')
+      setToast({ message: message || '同步失败', type: 'error' })
     } finally {
       setLoading(false)
+      setTimeout(() => setToast(null), 1600)
     }
   }
 
   const handleTest = async (id: number) => {
     try {
       await accountApi.test(id)
-      alert('连接成功')
+      setToast({ message: '连接成功', type: 'success' })
     } catch (err: unknown) {
       const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
-      alert(message || '连接失败')
+      setToast({ message: message || '连接失败', type: 'error' })
+    } finally {
+      setTimeout(() => setToast(null), 1600)
     }
   }
 
   return (
     <div className="p-6">
+      <ConfirmDialog
+        open={Boolean(confirmDelete)}
+        title="确认删除"
+        message={confirmDelete ? `确定要删除 ${confirmDelete.email} 吗？` : '确定要删除该账户吗？'}
+        confirmLabel="删除"
+        cancelLabel="取消"
+        onConfirm={confirmDeleteAccount}
+        onCancel={cancelDeleteAccount}
+      />
+      {toast && (
+        <div className="fixed top-4 right-4 z-50">
+          <div className={`px-4 py-2 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+            {toast.message}
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-gray-800">邮箱账户</h2>
         <button
@@ -124,7 +155,7 @@ export default function Accounts() {
                   className="p-2 text-gray-400 hover:text-gray-600"
                   title="测试连接"
                 >
-                  <RefreshCw className="w-4 h-4" />
+                  <Plug className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => handleSync(account.id)}
@@ -134,7 +165,7 @@ export default function Accounts() {
                   <RefreshCw className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => handleDelete(account.id)}
+                  onClick={() => requestDelete(account)}
                   className="p-2 text-gray-400 hover:text-red-600"
                   title="删除"
                 >

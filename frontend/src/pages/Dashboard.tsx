@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { emailApi, accountApi } from '../api'
+import ConfirmDialog from '../components/ConfirmDialog'
 import type { Email, EmailAccount } from '../api'
 import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff } from 'lucide-react'
 
@@ -27,6 +28,7 @@ export default function Dashboard() {
   const [contextMenuIndex, setContextMenuIndex] = useState(0)
   const emailItemRefs = useRef<Record<number, HTMLDivElement | null>>({})
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ email: Email } | null>(null)
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -120,8 +122,6 @@ export default function Dashboard() {
   }, [selectedEmail, showToast])
 
   const handleDeleteEmail = useCallback(async (email: Email) => {
-    const confirmed = window.confirm('确定要删除这封邮件吗？')
-    if (!confirmed) return
     if (deleteTimers.current[email.id]) return
     setPendingDeletes(prev => ({ ...prev, [email.id]: email }))
     setEmails(prev => prev.filter(e => e.id !== email.id))
@@ -167,6 +167,20 @@ export default function Dashboard() {
       showToast('已撤销删除', 'success')
     })
   }, [selectedEmail, showToast])
+
+  const requestDeleteEmail = useCallback((email: Email) => {
+    setConfirmDelete({ email })
+  }, [])
+
+  const confirmDeleteEmail = useCallback(() => {
+    if (!confirmDelete) return
+    handleDeleteEmail(confirmDelete.email)
+    setConfirmDelete(null)
+  }, [confirmDelete, handleDeleteEmail])
+
+  const cancelDeleteEmail = useCallback(() => {
+    setConfirmDelete(null)
+  }, [])
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
@@ -263,9 +277,9 @@ export default function Dashboard() {
     } else {
       items.push({ label: '标记为已读', action: () => handleRead(contextMenu.email) })
     }
-    items.push({ label: '删除', action: () => handleDeleteEmail(contextMenu.email), danger: true })
+    items.push({ label: '删除', action: () => requestDeleteEmail(contextMenu.email), danger: true })
     return items
-  }, [contextMenu, handleDeleteEmail, handleMarkAsUnread, handleRead])
+  }, [contextMenu, requestDeleteEmail, handleMarkAsUnread, handleRead])
 
   const sanitizedHtml = useMemo(() => {
     if (!selectedEmail?.body_html) return ''
@@ -355,6 +369,15 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(confirmDelete)}
+        title="确认删除"
+        message="确定要删除这封邮件吗？"
+        confirmLabel="删除"
+        cancelLabel="取消"
+        onConfirm={confirmDeleteEmail}
+        onCancel={cancelDeleteEmail}
+      />
       {contextMenu && (
         <div
           className="fixed z-50 w-48 rounded-lg border border-slate-200 bg-white shadow-xl py-1 text-sm text-slate-700"
@@ -539,7 +562,7 @@ export default function Dashboard() {
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation()
-                                handleDeleteEmail(email)
+                                requestDeleteEmail(email)
                               }}
                               className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50"
                               title="删除"
@@ -586,7 +609,7 @@ export default function Dashboard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDeleteEmail(selectedEmail)}
+                  onClick={() => requestDeleteEmail(selectedEmail)}
                   className="p-2 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
                   title="删除"
                 >
