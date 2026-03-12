@@ -44,6 +44,8 @@ func main() {
 	api.Use(middleware.AuthMiddleware())
 	{
 		api.GET("/auth/me", authHandler.Me)
+		api.PUT("/auth/profile", authHandler.UpdateProfile)
+		api.PUT("/auth/password", authHandler.ChangePassword)
 
 		api.GET("/accounts", accountHandler.ListAccounts)
 		api.POST("/accounts", accountHandler.AddAccount)

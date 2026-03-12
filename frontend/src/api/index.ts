@@ -90,6 +90,10 @@ export const authApi = {
   register: (data: { username: string; password: string; email: string }) =>
     api.post<AuthResponse>('/auth/register', data).then(r => r.data),
   me: () => api.get<{ data: User }>('/auth/me').then(r => r.data),
+  updateProfile: (data: { username?: string; email?: string }) =>
+    api.put<{ data: User }>('/auth/profile', data).then(r => r.data),
+  changePassword: (data: { old_password: string; new_password: string }) =>
+    api.put<{ message: string }>('/auth/password', data).then(r => r.data),
 }
 
 export const accountApi = {
