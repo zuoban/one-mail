@@ -1,11 +1,16 @@
 package imap
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"strings"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	_ "github.com/emersion/go-message/charset"
+	"github.com/emersion/go-message/mail"
 
 	"one-mail/backend/internal/models"
 )
@@ -132,6 +137,52 @@ type EmailSummary struct {
 	UID           uint
 }
 
+func parseMessageBody(raw []byte) (bodyText string, bodyHTML string) {
+	mr, err := mail.CreateReader(bytes.NewReader(raw))
+	if mr == nil {
+		return "", ""
+	}
+	_ = err // CreateReader may return an error but still provide a usable Reader
+
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			break
+		}
+
+		switch h := p.Header.(type) {
+		case *mail.InlineHeader:
+			contentType, _, _ := h.ContentType()
+			b, readErr := io.ReadAll(p.Body)
+			if readErr != nil {
+				continue
+			}
+
+			if strings.HasPrefix(strings.ToLower(contentType), "text/html") {
+				if bodyHTML == "" {
+					bodyHTML = string(b)
+				}
+			} else if strings.HasPrefix(strings.ToLower(contentType), "text/plain") {
+				if bodyText == "" {
+					bodyText = string(b)
+				}
+			} else {
+				if bodyText == "" {
+					bodyText = string(b)
+				}
+			}
+		case *mail.AttachmentHeader:
+			// ignore attachments
+		default:
+			// ignore unknown parts
+		}
+	}
+
+	return bodyText, bodyHTML
+}
+
 func (c *Client) FetchEmails(folder string, since time.Time, limit int) ([]*EmailSummary, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("not connected")
@@ -177,10 +228,14 @@ func (c *Client) FetchEmails(folder string, since time.Time, limit int) ([]*Emai
 		numSet.AddNum(num)
 	}
 
+	bodySection := &imap.FetchItemBodySection{Peek: true}
 	fetchOptions := &imap.FetchOptions{
 		Envelope: true,
 		Flags:    true,
 		UID:      true,
+		BodySection: []*imap.FetchItemBodySection{
+			bodySection,
+		},
 	}
 
 	messages, err := c.client.Fetch(numSet, fetchOptions).Collect()
@@ -220,6 +275,11 @@ func (c *Client) FetchEmails(folder string, since time.Time, limit int) ([]*Emai
 			} else {
 				email.MessageID = fmt.Sprintf("%d", msg.UID)
 			}
+		}
+
+		raw := msg.FindBodySection(bodySection)
+		if len(raw) > 0 {
+			email.BodyText, email.BodyHTML = parseMessageBody(raw)
 		}
 
 		results = append(results, email)
