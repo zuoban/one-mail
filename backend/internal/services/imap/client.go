@@ -2,12 +2,19 @@ package imap
 
 import (
 	"fmt"
-	"one-mail/backend/internal/models"
 	"time"
+
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
+
+	"one-mail/backend/internal/models"
 )
 
 type Client struct {
-	account *models.EmailAccount
+	account  *models.EmailAccount
+	client   *imapclient.Client
+	username string
+	password string
 }
 
 var ProviderConfigs = map[string]struct {
@@ -56,20 +63,60 @@ var ProviderConfigs = map[string]struct {
 
 func NewClient(account *models.EmailAccount) *Client {
 	return &Client{
-		account: account,
+		account:  account,
+		username: account.Username,
+		password: account.Password,
 	}
 }
 
 func (c *Client) Connect() error {
+	host := fmt.Sprintf("%s:%d", c.account.IMAPHost, c.account.IMAPPort)
+
+	conn, err := imapclient.DialTLS(host, nil)
+	if err != nil {
+		return fmt.Errorf("failed to connect to IMAP server: %w", err)
+	}
+
+	if err := conn.Login(c.username, c.password).Wait(); err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to login: %w", err)
+	}
+
+	c.client = conn
 	return nil
 }
 
 func (c *Client) Disconnect() error {
+	if c.client == nil {
+		return nil
+	}
+
+	if err := c.client.Logout().Wait(); err != nil {
+		c.client.Close()
+		return err
+	}
+
+	c.client.Close()
+	c.client = nil
 	return nil
 }
 
 func (c *Client) ListMailboxes() ([]string, error) {
-	return []string{"INBOX", "Sent", "Drafts", "Trash"}, nil
+	if c.client == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	mailboxes, err := c.client.List("", "%", nil).Collect()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []string
+	for _, mbox := range mailboxes {
+		result = append(result, mbox.Mailbox)
+	}
+
+	return result, nil
 }
 
 type EmailSummary struct {
@@ -86,10 +133,113 @@ type EmailSummary struct {
 }
 
 func (c *Client) FetchEmails(folder string, since time.Time, limit int) ([]*EmailSummary, error) {
-	return []*EmailSummary{}, nil
+	if c.client == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	selectedMbox, err := c.client.Select(folder, nil).Wait()
+	if err != nil {
+		return nil, fmt.Errorf("failed to select mailbox: %w", err)
+	}
+
+	if selectedMbox.NumMessages == 0 {
+		return []*EmailSummary{}, nil
+	}
+
+	total := int(selectedMbox.NumMessages)
+	start := uint32(total) - uint32(limit) + 1
+	if start < 1 {
+		start = 1
+	}
+
+	seqSet := imap.SeqSet{}
+	seqSet.AddRange(start, uint32(total))
+
+	criteria := imap.SearchCriteria{}
+	criteria.SeqNum = []imap.SeqSet{seqSet}
+
+	data, err := c.client.Search(&criteria, nil).Wait()
+	if err != nil {
+		return nil, err
+	}
+
+	seqNums := data.AllSeqNums()
+	if len(seqNums) == 0 {
+		return []*EmailSummary{}, nil
+	}
+
+	if len(seqNums) > limit {
+		seqNums = seqNums[len(seqNums)-limit:]
+	}
+
+	numSet := imap.SeqSet{}
+	for _, num := range seqNums {
+		numSet.AddNum(num)
+	}
+
+	fetchOptions := &imap.FetchOptions{
+		Envelope: true,
+		Flags:    true,
+		UID:      true,
+	}
+
+	messages, err := c.client.Fetch(numSet, fetchOptions).Collect()
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch messages: %w", err)
+	}
+
+	var results []*EmailSummary
+	for _, msg := range messages {
+		email := &EmailSummary{
+			UID: uint(msg.UID),
+		}
+
+		if msg.Envelope != nil {
+			email.Subject = msg.Envelope.Subject
+			email.Date = msg.Envelope.Date
+
+			if len(msg.Envelope.From) > 0 {
+				from := msg.Envelope.From[0]
+				if from.Mailbox != "" && from.Host != "" {
+					email.From = fmt.Sprintf("%s@%s", from.Mailbox, from.Host)
+				}
+				if from.Name != "" {
+					email.FromName = from.Name
+				}
+			}
+
+			if len(msg.Envelope.To) > 0 {
+				to := msg.Envelope.To[0]
+				if to.Mailbox != "" && to.Host != "" {
+					email.To = fmt.Sprintf("%s@%s", to.Mailbox, to.Host)
+				}
+			}
+
+			if msg.Envelope.MessageID != "" {
+				email.MessageID = msg.Envelope.MessageID
+			} else {
+				email.MessageID = fmt.Sprintf("%d", msg.UID)
+			}
+		}
+
+		results = append(results, email)
+	}
+
+	return results, nil
 }
 
 func (c *Client) MarkAsRead(uid uint, folder string) error {
+	if c.client == nil {
+		return fmt.Errorf("not connected")
+	}
+
+	uidSet := imap.UIDSetNum(imap.UID(uid))
+	storeCmd := c.client.Store(uidSet, &imap.StoreFlags{
+		Op:    imap.StoreFlagsAdd,
+		Flags: []imap.Flag{imap.FlagSeen},
+	}, nil)
+
+	_ = storeCmd.Close()
 	return nil
 }
 
@@ -103,7 +253,19 @@ func (c *Client) TestConnection() error {
 		return fmt.Errorf("invalid configuration")
 	}
 
-	fmt.Printf("Testing connection to %s:%d with username %s\n", host, port, username)
+	conn, err := imapclient.DialTLS(fmt.Sprintf("%s:%d", host, port), nil)
+	if err != nil {
+		return fmt.Errorf("failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.Login(username, password).Wait(); err != nil {
+		return fmt.Errorf("failed to login: %v", err)
+	}
+
+	if err := conn.Logout().Wait(); err != nil {
+		return fmt.Errorf("failed to logout: %v", err)
+	}
 
 	return nil
 }
