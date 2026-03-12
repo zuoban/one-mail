@@ -12,7 +12,7 @@ export default function Layout() {
   ]
 
   return (
-    <div className="min-h-screen flex">
+    <div className="h-screen flex">
       <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
         <div className="p-4 border-b border-gray-200">
           <h1 className="text-xl font-bold flex items-center gap-2 text-gray-800">
@@ -53,8 +53,10 @@ export default function Layout() {
           </div>
         </div>
       </aside>
-      <main className="flex-1 overflow-auto">
-        <Outlet />
+      <main className="flex-1 min-h-0 overflow-hidden">
+        <div className="h-full">
+          <Outlet />
+        </div>
       </main>
     </div>
   )

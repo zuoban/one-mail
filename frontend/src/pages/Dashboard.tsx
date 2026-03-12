@@ -302,7 +302,7 @@ export default function Dashboard() {
   }, [contextMenu])
 
   return (
-    <div className="h-full flex bg-slate-50">
+    <div className="h-full flex bg-slate-50 overflow-hidden">
       {toast && (
         <div className="fixed top-4 right-4 z-50">
           <div className={`flex items-center gap-3 px-4 py-2 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
@@ -343,8 +343,8 @@ export default function Dashboard() {
           ))}
         </div>
       )}
-      <div className="w-96 border-r border-slate-200/70 bg-white flex flex-col">
-        <div className="p-4 border-b border-slate-200/70 bg-gradient-to-b from-slate-50/80 to-white">
+      <div className="w-96 border-r border-slate-200/70 bg-white flex flex-col min-h-0">
+        <div className="p-4 border-b border-slate-200/70 bg-gradient-to-b from-slate-50/80 to-white flex-shrink-0">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2 text-slate-900">
               <Mail className="w-4 h-4 text-slate-500" />
@@ -522,10 +522,10 @@ export default function Dashboard() {
           )}
         </div>
       </div>
-        <div className="flex-1 bg-white">
-          {selectedEmail ? (
-            <div className="h-full flex flex-col">
-            <div className="p-6 border-b border-slate-200/70 bg-gradient-to-b from-white to-slate-50/60">
+      <div className="flex-1 bg-white min-h-0">
+        {selectedEmail ? (
+          <div className="h-full flex flex-col">
+            <div className="p-6 border-b border-slate-200/70 bg-gradient-to-b from-white to-slate-50/60 flex-shrink-0">
               <div className="flex items-start gap-4">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">{selectedEmail.subject || '(无主题)'}</h2>
