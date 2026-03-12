@@ -44,34 +44,34 @@ export default function Register() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="max-w-md w-full p-8 bg-white rounded-xl shadow-lg">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--bg-secondary)]">
+      <div className="w-full max-w-md p-8 mx-4 card">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
-            <UserPlus className="w-8 h-8 text-green-600" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[var(--primary-100)] mb-4">
+            <UserPlus className="w-8 h-8 text-[var(--primary-600)]" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-800">注册 One-Mail</h1>
-          <p className="text-gray-500 mt-2">创建您的账号</p>
+          <h1 className="text-2xl font-semibold text-[var(--text-primary)] mb-2">注册 One-Mail</h1>
+          <p className="text-[var(--text-secondary)]">创建您的账号</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
+            <div className="alert alert-error">
               {error}
             </div>
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
               用户名
             </label>
             <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-tertiary)] pointer-events-none" />
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition"
+                style={{ paddingLeft: '44px' }}
                 placeholder="请输入用户名"
                 required
               />
@@ -79,16 +79,16 @@ export default function Register() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
               邮箱
             </label>
             <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-tertiary)] pointer-events-none" />
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition"
+                style={{ paddingLeft: '44px' }}
                 placeholder="请输入邮箱"
                 required
               />
@@ -96,16 +96,16 @@ export default function Register() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
               密码
             </label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-tertiary)] pointer-events-none" />
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition"
+                style={{ paddingLeft: '44px' }}
                 placeholder="请输入密码（至少6位）"
                 required
               />
@@ -113,16 +113,16 @@ export default function Register() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
               确认密码
             </label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-tertiary)] pointer-events-none" />
               <input
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition"
+                style={{ paddingLeft: '44px' }}
                 placeholder="请再次输入密码"
                 required
               />
@@ -132,22 +132,22 @@ export default function Register() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 focus:ring-4 focus:ring-green-200 transition disabled:opacity-50"
+            className="w-full btn btn-primary py-3"
           >
             {loading ? (
-              '注册中...'
+              <span>注册中...</span>
             ) : (
               <>
                 <UserPlus className="w-5 h-5" />
-                注册
+                <span>注册</span>
               </>
             )}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-gray-600">
+        <p className="mt-6 text-center text-[var(--text-secondary)]">
           已有账号？{' '}
-          <Link to="/login" className="text-green-600 hover:underline font-medium">
+          <Link to="/login" className="text-[var(--primary-600)] hover:text-[var(--primary-700)] font-medium">
             立即登录
           </Link>
         </p>

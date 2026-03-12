@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { accountApi } from '../api'
 import type { EmailAccount } from '../api'
-import { Plus, Trash2, RefreshCw, Check, X, Mail, Plug } from 'lucide-react'
+import { Plus, Trash2, Check, X, Mail, Plug } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 const providers = [
@@ -73,20 +73,6 @@ export default function Accounts() {
     setConfirmDelete(null)
   }
 
-  const handleSync = async (id: number) => {
-    setLoading(true)
-    try {
-      await accountApi.sync(id)
-      setToast({ message: '同步成功', type: 'success' })
-    } catch (err: unknown) {
-      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
-      setToast({ message: message || '同步失败', type: 'error' })
-    } finally {
-      setLoading(false)
-      setTimeout(() => setToast(null), 1600)
-    }
-  }
-
   const handleTest = async (id: number) => {
     try {
       await accountApi.test(id)
@@ -110,63 +96,61 @@ export default function Accounts() {
         onConfirm={confirmDeleteAccount}
         onCancel={cancelDeleteAccount}
       />
+
+      {/* Toast */}
       {toast && (
         <div className="fixed top-4 right-4 z-50">
-          <div className={`px-4 py-2 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+          <div className={`px-4 py-3 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-[var(--success-50)] text-[var(--success-600)] border-[var(--success-100)]' : 'bg-[var(--error-50)] text-[var(--error-600)] border-[var(--error-100)]'}`}>
             {toast.message}
           </div>
         </div>
       )}
+
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-gray-800">邮箱账户</h2>
+        <h2 className="text-2xl font-semibold text-[var(--text-primary)]">邮箱账户</h2>
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          className="btn btn-primary"
         >
           <Plus className="w-4 h-4" />
-          添加账户
+          <span>添加账户</span>
         </button>
       </div>
 
+      {/* Empty State */}
       {accounts.length === 0 ? (
-        <div className="text-center py-16 text-gray-500">
-          <Mail className="w-16 h-16 mx-auto mb-4 opacity-30" />
-          <p className="text-lg">暂无邮箱账户</p>
-          <p className="text-sm mt-2">点击"添加账户"来绑定你的邮箱</p>
+        <div className="empty-state">
+          <Mail className="empty-state-icon" />
+          <p className="text-lg text-[var(--text-secondary)]">暂无邮箱账户</p>
+          <p className="text-sm mt-2 text-[var(--text-tertiary)]">点击"添加账户"来绑定你的邮箱</p>
         </div>
       ) : (
         <div className="grid gap-4">
           {accounts.map(account => (
-            <div key={account.id} className="bg-white border border-gray-200 rounded-lg p-4 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
+            <div key={account.id} className="card-static p-4 flex items-center gap-4">
+              <div className="avatar">
                 {account.email[0].toUpperCase()}
               </div>
-              <div className="flex-1">
-                <p className="font-medium text-gray-900">{account.email}</p>
-                <p className="text-sm text-gray-500">{providers.find(p => p.value === account.provider)?.label}</p>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-[var(--text-primary)] truncate">{account.email}</p>
+                <p className="text-sm text-[var(--text-secondary)]">{providers.find(p => p.value === account.provider)?.label}</p>
               </div>
               <div className="flex items-center gap-2">
-                <span className={`flex items-center gap-1 text-sm ${account.status === 'active' ? 'text-green-600' : 'text-gray-400'}`}>
+                <span className={`flex items-center gap-1 text-sm ${account.status === 'active' ? 'text-[var(--success-600)]' : 'text-[var(--text-tertiary)]'}`}>
                   {account.status === 'active' ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}
                   {account.status === 'active' ? '已连接' : '未连接'}
                 </span>
                 <button
                   onClick={() => handleTest(account.id)}
-                  className="p-2 text-gray-400 hover:text-gray-600"
+                  className="btn btn-ghost p-2"
                   title="测试连接"
                 >
                   <Plug className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => handleSync(account.id)}
-                  className="p-2 text-gray-400 hover:text-blue-600"
-                  title="同步邮件"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                </button>
-                <button
                   onClick={() => requestDelete(account)}
-                  className="p-2 text-gray-400 hover:text-red-600"
+                  className="btn btn-ghost p-2 hover:text-[var(--error-600)] hover:bg-[var(--error-50)]"
                   title="删除"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -177,18 +161,18 @@ export default function Accounts() {
         </div>
       )}
 
+      {/* Add Account Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-lg font-semibold mb-4">添加邮箱账户</h3>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="card-static w-full max-w-md">
+            <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-4">添加邮箱账户</h3>
             <form onSubmit={handleSubmit}>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">邮箱类型</label>
+                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">邮箱类型</label>
                   <select
                     value={form.provider}
                     onChange={e => setForm({ ...form, provider: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     {providers.map(p => (
                       <option key={p.value} value={p.value}>{p.label}</option>
@@ -196,51 +180,48 @@ export default function Accounts() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">邮箱地址</label>
+                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">邮箱地址</label>
                   <input
                     type="email"
                     value={form.email}
                     onChange={e => setForm({ ...form, email: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">用户名</label>
                   <input
                     type="text"
                     value={form.username}
                     onChange={e => setForm({ ...form, username: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="通常是邮箱地址"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">密码/授权码</label>
+                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">密码/授权码</label>
                   <input
                     type="password"
                     value={form.password}
                     onChange={e => setForm({ ...form, password: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="应用专用密码或授权码"
                     required
                   />
                 </div>
-                {error && <p className="text-red-500 text-sm">{error}</p>}
+                {error && <p className="text-[var(--error-600)] text-sm">{error}</p>}
               </div>
               <div className="flex justify-end gap-3 mt-6">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                  className="btn btn-secondary"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  className="btn btn-primary"
                 >
                   {loading ? '添加中...' : '添加'}
                 </button>

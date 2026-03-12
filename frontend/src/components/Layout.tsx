@@ -12,11 +12,13 @@ export default function Layout() {
   ]
 
   return (
-    <div className="h-screen flex">
-      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
-        <div className="p-4 border-b border-gray-200">
-          <h1 className="text-xl font-bold flex items-center gap-2 text-gray-800">
-            <Mail className="w-6 h-6 text-blue-600" />
+    <div className="h-screen flex bg-[var(--bg-secondary)]">
+      <aside className="w-64 bg-[var(--bg-primary)] border-r border-[var(--border-light)] flex flex-col">
+        <div className="p-5 border-b border-[var(--border-light)]">
+          <h1 className="text-xl font-semibold flex items-center gap-3 text-[var(--text-primary)]">
+            <div className="w-9 h-9 rounded-lg bg-[var(--primary-600)] flex items-center justify-center">
+              <Mail className="w-5 h-5 text-white" />
+            </div>
             One-Mail
           </h1>
         </div>
@@ -28,10 +30,10 @@ export default function Layout() {
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg mb-2 transition-colors ${
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg mb-1 transition-colors ${
                   isActive
-                    ? 'bg-blue-50 text-blue-600'
-                    : 'text-gray-600 hover:bg-gray-50'
+                    ? 'bg-[var(--primary-50)] text-[var(--primary-700)]'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'
                 }`}
               >
                 <Icon className="w-5 h-5" />
@@ -40,15 +42,20 @@ export default function Layout() {
             )
           })}
         </nav>
-        <div className="p-4 border-t border-gray-200">
+        <div className="p-4 border-t border-[var(--border-light)]">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-600">{user?.username}</span>
+            <div className="flex items-center gap-3">
+              <div className="avatar avatar-sm">
+                {user?.username?.[0]?.toUpperCase() || '?'}
+              </div>
+              <span className="text-sm font-medium text-[var(--text-primary)]">{user?.username}</span>
+            </div>
             <button
               onClick={logout}
-              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              className="btn btn-ghost p-2"
+              title="退出登录"
             >
               <LogOut className="w-4 h-4" />
-              退出
             </button>
           </div>
         </div>

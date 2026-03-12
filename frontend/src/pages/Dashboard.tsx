@@ -94,6 +94,8 @@ export default function Dashboard() {
   }, [loadAccounts, loadEmails])
 
   const handleSync = async () => {
+    if (loading) return
+    setLoading(true)
     let failed = 0
     for (const account of accounts) {
       try {
@@ -103,12 +105,13 @@ export default function Dashboard() {
         failed += 1
       }
     }
-    loadEmails()
+    await loadEmails()
     if (failed > 0) {
       showToast(`同步完成，失败 ${failed} 个账户`, 'error')
     } else {
       showToast('同步完成', 'success')
     }
+    setLoading(false)
   }
 
   const showToast = useCallback((
@@ -349,7 +352,7 @@ export default function Dashboard() {
 
   const contextMenuItems = useMemo(() => {
     if (!contextMenu) return []
-    const items = [
+    const items: Array<{ label: string; action: () => void | Promise<void>; danger?: boolean }> = [
       { label: '打开', action: () => handleRead(contextMenu.email) },
     ]
     if (contextMenu.email.is_read) {
@@ -428,10 +431,11 @@ export default function Dashboard() {
   }, [contextMenu])
 
   return (
-    <div className="h-full flex bg-slate-50 overflow-hidden">
+    <div className="h-full flex bg-[var(--bg-secondary)] overflow-hidden">
+      {/* Toast Notification */}
       {toast && (
         <div className="fixed top-4 right-4 z-50">
-          <div className={`flex items-center gap-3 px-4 py-2 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-[var(--success-50)] text-[var(--success-600)] border-[var(--success-100)]' : 'bg-[var(--error-50)] text-[var(--error-600)] border-[var(--error-100)]'}`}>
             <span>{toast.message}</span>
             {toast.actionLabel && toast.onAction && (
               <button
@@ -439,9 +443,9 @@ export default function Dashboard() {
                 onClick={() => {
                   const action = toast.onAction
                   setToast(null)
-                  action()
+                  if (action) action()
                 }}
-                className="text-xs font-semibold text-slate-700 hover:text-slate-900"
+                className="text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               >
                 {toast.actionLabel}
               </button>
@@ -449,6 +453,7 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
       <ConfirmDialog
         open={Boolean(confirmDelete)}
         title="确认删除"
@@ -458,9 +463,11 @@ export default function Dashboard() {
         onConfirm={confirmDeleteEmail}
         onCancel={cancelDeleteEmail}
       />
+
+      {/* Context Menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 w-48 rounded-lg border border-slate-200 bg-white shadow-xl py-1 text-sm text-slate-700"
+          className="fixed z-50 w-48 rounded-lg border border-[var(--border-default)] bg-[var(--bg-primary)] shadow-xl py-1 text-sm text-[var(--text-secondary)]"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={closeContextMenu}
         >
@@ -469,175 +476,141 @@ export default function Dashboard() {
               key={`${item.label}-${index}`}
               type="button"
               onClick={item.action}
-              className={`w-full text-left px-3 py-2 ${
-                index === contextMenuIndex ? 'bg-slate-50' : 'hover:bg-slate-50'
-              } ${item.danger ? 'text-rose-600 hover:bg-rose-50' : ''}`}
+              className={`w-full text-left px-3 py-2 transition-colors ${
+                index === contextMenuIndex ? 'bg-[var(--bg-tertiary)]' : 'hover:bg-[var(--bg-tertiary)]'
+              } ${item.danger ? 'text-[var(--error-600)] hover:bg-[var(--error-50)]' : ''}`}
             >
               {item.label}
             </button>
           ))}
         </div>
       )}
-      <div className="w-96 border-r border-slate-200/70 bg-white flex flex-col min-h-0">
-        <div className="p-4 border-b border-slate-200/70 bg-gradient-to-b from-slate-50/80 to-white flex-shrink-0">
+
+      {/* Left Sidebar - Email List */}
+      <div className="w-96 border-r border-[var(--border-light)] bg-[var(--bg-primary)] flex flex-col min-h-0">
+        <div className="p-4 border-b border-[var(--border-light)] bg-[var(--bg-secondary)] flex-shrink-0">
           <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2 text-slate-900">
-              <Mail className="w-4 h-4 text-slate-500" />
+            <div className="flex items-center gap-2 text-[var(--text-primary)]">
+              <Mail className="w-4 h-4 text-[var(--text-tertiary)]" />
               <span className="text-sm font-semibold">收件箱</span>
             </div>
-            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+            <span className="badge badge-default">
               {filteredEmails.length}
             </span>
           </div>
+
           {accounts.length > 0 && (
             <div className="mb-4">
-              <div className="mb-2 text-xs text-slate-500">账户</div>
-              {(() => {
-                const renderAllButton = (isSelected: boolean) => (
-                  <Tooltip key="all" content="全部账户">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedAccountId(null)}
-                      className={`flex flex-col items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
-                        isSelected
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                      }`}
-                    >
-                      <span className={`flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-semibold ${
-                        isSelected ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'
-                      }`}>
-                        <Mail className="w-3.5 h-3.5" />
-                      </span>
-                      <span className={`leading-tight ${isSelected ? 'text-blue-100' : 'text-slate-600'}`}>
-                        全部
-                      </span>
-                    </button>
-                  </Tooltip>
-                )
+              <div className="mb-2 text-xs text-[var(--text-tertiary)]">账户</div>
+              <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto pr-1 thin-scrollbar">
+                {/* All Accounts Button */}
+                <Tooltip content="全部账户">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAccountId(null)}
+                    className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
+                      selectedAccountId === null
+                        ? 'bg-[var(--primary-600)] text-white border-[var(--primary-600)] shadow-sm'
+                        : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--border-hover)]'
+                    }`}
+                  >
+                    <span className={`flex items-center justify-center w-5 h-5 rounded-full ${
+                      selectedAccountId === null ? 'bg-white/20 text-white' : 'bg-[var(--primary-100)] text-[var(--primary-700)]'
+                    }`}>
+                      <Mail className="w-3.5 h-3.5" />
+                    </span>
+                    <span className={selectedAccountId === null ? 'text-[var(--primary-100)]' : 'text-[var(--text-secondary)]'}>
+                      全部
+                    </span>
+                  </button>
+                </Tooltip>
 
-                const getProviderShort = (value: string) => {
-                  switch (value) {
-                    case 'gmail':
-                      return 'Gmail'
-                    case 'qq':
-                      return 'QQ'
-                    case 'outlook':
-                      return 'Outlk'
-                    case 'qq-work':
-                      return 'QQ企邮'
-                    case '163':
-                      return '163'
-                    case 'custom':
-                      return '自定义'
-                    default:
-                      return value.slice(0, 4)
-                  }
-                }
-
-                const renderAccountButton = (account: EmailAccount, isSelected: boolean) => {
+                {/* Account Buttons */}
+                {accounts.map(account => {
                   const providerText = providers.find(p => p.value === account.provider)?.label || account.provider
-                  const providerShort = getProviderShort(account.provider)
                   const statusText = account.status === 'active' ? '已连接' : '未连接'
                   const tip = `${account.email} · ${providerText} · ${statusText} · ${formatSyncTime(account.last_sync_time)}`
+                  const isSelected = selectedAccountId === account.id
                   return (
                     <Tooltip key={account.id} content={tip}>
                       <button
                         type="button"
                         onClick={() => setSelectedAccountId(account.id)}
-                        className={`flex flex-col items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
+                        className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
                           isSelected
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                            : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                            ? 'bg-[var(--primary-600)] text-white border-[var(--primary-600)] shadow-sm'
+                            : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--border-hover)]'
                         }`}
                       >
-                        <span className={`flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-semibold ${
-                          isSelected ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'
+                        <span className={`flex items-center justify-center w-5 h-5 rounded-full font-semibold ${
+                          isSelected ? 'bg-white/20 text-white' : 'bg-[var(--primary-100)] text-[var(--primary-700)]'
                         }`}>
                           {account.email?.[0]?.toUpperCase() || '?'}
                         </span>
-                        <span className={`leading-tight ${isSelected ? 'text-blue-100' : 'text-slate-600'}`}>
-                          {providerShort}
+                        <span className={`leading-tight ${isSelected ? 'text-[var(--primary-100)]' : 'text-[var(--text-secondary)]'}`}>
+                          {account.provider.slice(0, 4)}
                         </span>
                       </button>
                     </Tooltip>
                   )
-                }
-                return (
-                  <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto pr-1 thin-scrollbar">
-                    {renderAllButton(selectedAccountId === null)}
-                    {accounts.map(account => renderAccountButton(account, selectedAccountId === account.id))}
-                  </div>
-                )
-              })()}
+                })}
+              </div>
             </div>
           )}
+
+          {/* Filter Buttons */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setFilter('all')}
-                className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
-                  filter === 'all'
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700'
-                }`}
-              >
-                全部
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilter('unread')}
-                className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
-                  filter === 'unread'
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700'
-                }`}
-              >
-                未读
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilter('attachments')}
-                className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
-                  filter === 'attachments'
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700'
-                }`}
-              >
-                附件
-              </button>
+              {(['all', 'unread', 'attachments'] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setFilter(f)}
+                  className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                    filter === f
+                      ? 'bg-[var(--primary-600)] text-white border-[var(--primary-600)]'
+                      : 'bg-[var(--bg-primary)] text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {f === 'all' ? '全部' : f === 'unread' ? '未读' : '附件'}
+                </button>
+              ))}
             </div>
             <button
               onClick={handleSync}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-full border border-blue-200 text-blue-600 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--bg-primary)] text-[var(--primary-600)] border border-[var(--primary-200)] hover:bg-[var(--primary-50)] hover:border-[var(--primary-300)] hover:text-[var(--primary-700)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              同步
+              <span>{loading ? '同步中' : '同步'}</span>
             </button>
           </div>
-          <div className="mb-3 text-[11px] text-slate-400">
-            快捷键：j/k 上下，o 打开，r 刷新
-          </div>
+
+          {/* Search Input */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-tertiary)] pointer-events-none" />
             <input
               type="text"
               placeholder="搜索邮件..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && loadEmails()}
-              className="w-full pl-10 pr-4 py-2.5 border border-slate-200/80 rounded-xl bg-white/90 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
+              style={{ paddingLeft: '36px' }}
             />
           </div>
+
+          <div className="mt-3 text-[11px] text-[var(--text-tertiary)]">
+            快捷键：j/k 上下，o 打开，r 刷新
+          </div>
         </div>
-        <div className="flex-1 overflow-auto bg-slate-50">
+
+        {/* Email List */}
+        <div className="flex-1 overflow-auto thin-scrollbar">
           {filteredEmails.length === 0 ? (
-            <div className="p-8 text-center text-slate-500">
-              <Mail className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>暂无邮件</p>
-              <p className="text-sm mt-1">请先添加邮箱账户</p>
+            <div className="empty-state">
+              <Mail className="empty-state-icon" />
+              <p className="text-[var(--text-secondary)]">暂无邮件</p>
+              <p className="text-sm mt-1 text-[var(--text-tertiary)]">请先添加邮箱账户</p>
             </div>
           ) : (
             <div className="pt-2 pb-4">
@@ -647,19 +620,17 @@ export default function Dashboard() {
                     <button
                       type="button"
                       onClick={() => toggleGroup(group.key)}
-                      className="w-full px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center justify-between hover:text-slate-700"
+                      className="w-full px-4 py-2 text-left text-xs font-semibold text-[var(--text-tertiary)] uppercase tracking-wide flex items-center justify-between hover:text-[var(--text-secondary)] transition-colors"
                     >
                       {group.label}
-                      <span className="text-[10px] text-slate-400">
+                      <span className="text-[10px]">
                         {collapsedGroups[group.key] ? '展开' : '收起'}
                       </span>
                     </button>
                     {!collapsedGroups[group.key] && groupedEmails[group.key].map(email => (
                       <div
                         key={email.id}
-                        ref={(node) => {
-                          emailItemRefs.current[email.id] = node
-                        }}
+                        ref={(node) => { emailItemRefs.current[email.id] = node }}
                         onClick={() => handleRead(email)}
                         onContextMenu={(event) => {
                           event.preventDefault()
@@ -677,34 +648,34 @@ export default function Dashboard() {
                           })
                           setContextMenuIndex(0)
                         }}
-                        className={`group mx-3 my-2 px-4 py-3 rounded-xl border cursor-pointer transition-all ${
-                          selectedEmail?.id === email.id ? 'bg-blue-50/70 border-blue-100 ring-1 ring-blue-200' : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-sm'
-                        } ${!email.is_read ? 'border-blue-100/80' : ''}`}
+                        className={`group mx-3 my-2 px-4 py-3 rounded-lg border cursor-pointer transition-all ${
+                          selectedEmail?.id === email.id 
+                            ? 'bg-[var(--primary-50)] border-[var(--primary-200)] ring-1 ring-[var(--primary-200)]' 
+                            : 'bg-[var(--bg-primary)] border-[var(--border-light)] hover:border-[var(--border-default)] hover:shadow-sm'
+                        } ${!email.is_read ? 'border-[var(--primary-100)]' : ''}`}
                       >
                         <div className="flex items-start gap-3">
-                          <div className={`relative w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold ${
-                            !email.is_read ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'
-                          }`}>
+                          <div className={`avatar ${!email.is_read ? 'bg-[var(--primary-100)] text-[var(--primary-700)]' : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)]'}`}>
                             {email.from_name?.[0] || email.from?.[0]?.toUpperCase() || '?'}
                             {!email.is_read && (
-                              <span className="absolute -right-1 -top-1 w-2.5 h-2.5 rounded-full bg-blue-500 ring-2 ring-white" />
+                              <span className="absolute -right-0.5 -top-0.5 w-2.5 h-2.5 rounded-full bg-[var(--primary-600)] ring-2 ring-white" />
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className={`font-medium truncate ${!email.is_read ? 'text-slate-900' : 'text-slate-700'}`}>
+                              <span className={`font-medium truncate ${!email.is_read ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}`}>
                                 {email.from_name || email.from}
                               </span>
-                              {email.has_attachment && <Paperclip className="w-4 h-4 text-slate-400 flex-shrink-0" />}
-                              <span className="ml-auto text-xs text-slate-400 group-hover:text-slate-500">
+                              {email.has_attachment && <Paperclip className="w-4 h-4 text-[var(--text-tertiary)] flex-shrink-0" />}
+                              <span className="ml-auto text-xs text-[var(--text-tertiary)] group-hover:text-[var(--text-secondary)]">
                                 {new Date(email.date).toLocaleDateString('zh-CN')}
                               </span>
                             </div>
-                            <p className={`text-sm truncate ${!email.is_read ? 'text-slate-900 font-semibold' : 'text-slate-500'}`}>
+                            <p className={`text-sm truncate ${!email.is_read ? 'text-[var(--text-primary)] font-semibold' : 'text-[var(--text-secondary)]'}`}>
                               {email.subject || '(无主题)'}
                             </p>
                           </div>
-                          <div className="flex items-center gap-1 opacity-0 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition">
+                          <div className="flex items-center gap-1 opacity-0 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all">
                             {email.is_read ? (
                               <button
                                 type="button"
@@ -712,7 +683,7 @@ export default function Dashboard() {
                                   event.stopPropagation()
                                   handleMarkAsUnread(email)
                                 }}
-                                className="p-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                                className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"
                                 title="标记为未读"
                               >
                                 <EyeOff className="w-4 h-4" />
@@ -724,7 +695,7 @@ export default function Dashboard() {
                                   event.stopPropagation()
                                   handleRead(email)
                                 }}
-                                className="p-1.5 rounded-md text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                className="p-1.5 rounded-md text-[var(--primary-600)] hover:text-[var(--primary-700)] hover:bg-[var(--primary-50)]"
                                 title="标记为已读"
                               >
                                 <Eye className="w-4 h-4" />
@@ -736,7 +707,7 @@ export default function Dashboard() {
                                 event.stopPropagation()
                                 requestDeleteEmail(email)
                               }}
-                              className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50"
+                              className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)]"
                               title="删除"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -752,20 +723,24 @@ export default function Dashboard() {
           )}
         </div>
       </div>
-      <div className="flex-1 bg-white min-h-0">
+
+      {/* Right Panel - Email Detail */}
+      <div className="flex-1 bg-[var(--bg-primary)] min-h-0">
         {selectedEmail ? (
           <div className="h-full flex flex-col">
-            <div className="p-6 border-b border-slate-200/70 bg-gradient-to-b from-white to-slate-50/60 flex-shrink-0 relative">
+            <div className="p-6 border-b border-[var(--border-light)] bg-[var(--bg-secondary)] flex-shrink-0 relative">
               <div className="flex items-start gap-4 pr-16">
-                <div className="min-w-0">
-                  <h2 className="text-xl font-semibold text-slate-900 truncate">{selectedEmail.subject || '(无主题)'}</h2>
-                  <div className="flex items-center gap-3 mt-3">
-                    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-semibold">
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-xl font-semibold text-[var(--text-primary)] truncate mb-3">
+                    {selectedEmail.subject || '(无主题)'}
+                  </h2>
+                  <div className="flex items-center gap-3">
+                    <div className="avatar">
                       {selectedEmail.from_name?.[0] || '?'}
                     </div>
                     <div>
-                      <p className="font-medium text-slate-900">{selectedEmail.from_name || selectedEmail.from}</p>
-                      <p className="text-sm text-slate-500">{selectedEmail.from}</p>
+                      <p className="font-medium text-[var(--text-primary)]">{selectedEmail.from_name || selectedEmail.from}</p>
+                      <p className="text-sm text-[var(--text-secondary)]">{selectedEmail.from}</p>
                     </div>
                   </div>
                 </div>
@@ -774,7 +749,7 @@ export default function Dashboard() {
                 <button
                   type="button"
                   onClick={() => handleMarkAsUnread(selectedEmail)}
-                  className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                  className="btn btn-secondary p-2"
                   title="标记未读"
                 >
                   <EyeOff className="w-4 h-4" />
@@ -782,30 +757,30 @@ export default function Dashboard() {
                 <button
                   type="button"
                   onClick={() => requestDeleteEmail(selectedEmail)}
-                  className="p-2 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
+                  className="btn btn-danger p-2"
                   title="删除"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
-              <div className="mt-3 text-sm text-slate-400">
+              <div className="mt-3 text-sm text-[var(--text-tertiary)]">
                 {new Date(selectedEmail.date).toLocaleString('zh-CN')}
               </div>
             </div>
-            <div ref={detailScrollRef} className="flex-1 p-6 overflow-auto text-slate-800 leading-relaxed">
+            <div ref={detailScrollRef} className="flex-1 p-6 overflow-auto thin-scrollbar text-[var(--text-primary)] leading-relaxed">
               <div className="max-w-3xl mx-auto">
                 {selectedEmail.body_html ? (
                   <div className="prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
                 ) : selectedEmail.body_text ? (
-                  <pre className="whitespace-pre-wrap text-slate-800 leading-relaxed">{selectedEmail.body_text}</pre>
+                  <pre className="whitespace-pre-wrap text-[var(--text-primary)] leading-relaxed font-sans">{selectedEmail.body_text}</pre>
                 ) : (
-                  <p className="text-slate-500">无邮件内容</p>
+                  <p className="text-[var(--text-tertiary)]">无邮件内容</p>
                 )}
               </div>
             </div>
           </div>
         ) : (
-          <div className="h-full flex items-center justify-center text-slate-400">
+          <div className="h-full flex items-center justify-center text-[var(--text-tertiary)]">
             <div className="text-center">
               <Mail className="w-16 h-16 mx-auto mb-3 opacity-30" />
               <p>选择一封邮件查看详情</p>
