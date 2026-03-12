@@ -20,7 +20,6 @@ export default function Dashboard() {
   const [emails, setEmails] = useState<Email[]>([])
   const [accounts, setAccounts] = useState<EmailAccount[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
-  const [loading, setLoading] = useState(false)
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'unread'>('all')
@@ -87,7 +86,6 @@ export default function Dashboard() {
   }, [])
 
   const loadEmails = useCallback(async () => {
-    setLoading(true)
     try {
       const res = await emailApi.list({ 
         page: 1, 
@@ -98,8 +96,6 @@ export default function Dashboard() {
       setEmails(res.data)
     } catch (e) {
       console.error(e)
-    } finally {
-      setLoading(false)
     }
   }, [search, selectedAccountId])
 
@@ -108,27 +104,6 @@ export default function Dashboard() {
     loadEmails()
     loadSyncStatuses()
   }, [loadAccounts, loadEmails, loadSyncStatuses])
-
-  const handleSync = async () => {
-    if (loading) return
-    setLoading(true)
-    let failed = 0
-    for (const account of accounts) {
-      try {
-        await accountApi.sync(account.id)
-      } catch (e) {
-        console.error(e)
-        failed += 1
-      }
-    }
-    await loadEmails()
-    if (failed > 0) {
-      showToast(`同步完成，失败 ${failed} 个账户`, 'error')
-    } else {
-      showToast('同步完成', 'success')
-    }
-    setLoading(false)
-  }
 
   const showToast = useCallback((
     message: string,
@@ -353,11 +328,6 @@ export default function Dashboard() {
           expandGroupForEmail(target)
           handleRead(target, true, true)
         }
-      }
-
-      if (event.key === 'r' || event.key === 'R') {
-        event.preventDefault()
-        handleSync()
       }
     }
 
