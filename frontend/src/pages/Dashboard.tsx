@@ -548,10 +548,10 @@ export default function Dashboard() {
       <div className="flex-1 bg-white min-h-0">
         {selectedEmail ? (
           <div className="h-full flex flex-col">
-            <div className="p-6 border-b border-slate-200/70 bg-gradient-to-b from-white to-slate-50/60 flex-shrink-0">
-              <div className="flex items-start gap-4">
-                <div>
-                  <h2 className="text-xl font-semibold text-slate-900">{selectedEmail.subject || '(无主题)'}</h2>
+            <div className="p-6 border-b border-slate-200/70 bg-gradient-to-b from-white to-slate-50/60 flex-shrink-0 relative">
+              <div className="flex items-start gap-4 pr-16">
+                <div className="min-w-0">
+                  <h2 className="text-xl font-semibold text-slate-900 truncate">{selectedEmail.subject || '(无主题)'}</h2>
                   <div className="flex items-center gap-3 mt-3">
                     <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-semibold">
                       {selectedEmail.from_name?.[0] || '?'}
@@ -562,22 +562,24 @@ export default function Dashboard() {
                     </div>
                   </div>
                 </div>
-                <div className="ml-auto flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleMarkAsUnread(selectedEmail)}
-                    className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
-                  >
-                    标记未读
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteEmail(selectedEmail)}
-                    className="px-3 py-1.5 text-xs rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
-                  >
-                    删除
-                  </button>
-                </div>
+              </div>
+              <div className="absolute top-5 right-6 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleMarkAsUnread(selectedEmail)}
+                  className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                  title="标记未读"
+                >
+                  <EyeOff className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteEmail(selectedEmail)}
+                  className="p-2 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
+                  title="删除"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
               <div className="mt-3 text-sm text-slate-400">
                 {new Date(selectedEmail.date).toLocaleString('zh-CN')}
