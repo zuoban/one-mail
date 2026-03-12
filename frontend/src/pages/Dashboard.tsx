@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { emailApi, accountApi } from '../api'
 import type { Email, EmailAccount } from '../api'
 import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff } from 'lucide-react'
@@ -10,13 +10,21 @@ export default function Dashboard() {
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'unread' | 'attachments'>('all')
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [toast, setToast] = useState<{
+    message: string
+    type: 'success' | 'error'
+    actionLabel?: string
+    onAction?: () => void
+  } | null>(null)
   const toastTimer = useRef<number | null>(null)
+  const deleteTimers = useRef<Record<number, number>>({})
+  const [pendingDeletes, setPendingDeletes] = useState<Record<number, Email>>({})
   const [contextMenu, setContextMenu] = useState<{
     email: Email
     x: number
     y: number
   } | null>(null)
+  const [contextMenuIndex, setContextMenuIndex] = useState(0)
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -55,8 +63,13 @@ export default function Dashboard() {
     loadEmails()
   }
 
-  const showToast = useCallback((message: string, type: 'success' | 'error') => {
-    setToast({ message, type })
+  const showToast = useCallback((
+    message: string,
+    type: 'success' | 'error',
+    actionLabel?: string,
+    onAction?: () => void,
+  ) => {
+    setToast({ message, type, actionLabel, onAction })
     if (toastTimer.current) {
       window.clearTimeout(toastTimer.current)
     }
@@ -91,21 +104,55 @@ export default function Dashboard() {
   const handleDeleteEmail = useCallback(async (email: Email) => {
     const confirmed = window.confirm('确定要删除这封邮件吗？')
     if (!confirmed) return
-    try {
-      await emailApi.delete(email.id)
-      setEmails(prev => prev.filter(e => e.id !== email.id))
-      if (selectedEmail?.id === email.id) {
-        setSelectedEmail(null)
-      }
-      showToast('已删除邮件', 'success')
-    } catch (e) {
-      console.error(e)
-      showToast('删除失败', 'error')
+    if (deleteTimers.current[email.id]) return
+    setPendingDeletes(prev => ({ ...prev, [email.id]: email }))
+    setEmails(prev => prev.filter(e => e.id !== email.id))
+    if (selectedEmail?.id === email.id) {
+      setSelectedEmail(null)
     }
+
+    const timerId = window.setTimeout(async () => {
+      try {
+        await emailApi.delete(email.id)
+        setPendingDeletes(prev => {
+          const next = { ...prev }
+          delete next[email.id]
+          return next
+        })
+      } catch (e) {
+        console.error(e)
+        setEmails(prev => [...prev, email])
+        setPendingDeletes(prev => {
+          const next = { ...prev }
+          delete next[email.id]
+          return next
+        })
+        showToast('删除失败', 'error')
+      } finally {
+        delete deleteTimers.current[email.id]
+      }
+    }, 2200)
+
+    deleteTimers.current[email.id] = timerId
+    showToast('已删除邮件', 'success', '撤销', () => {
+      const pending = pendingDeletes[email.id] || email
+      if (deleteTimers.current[email.id]) {
+        window.clearTimeout(deleteTimers.current[email.id])
+        delete deleteTimers.current[email.id]
+      }
+      setPendingDeletes(prev => {
+        const next = { ...prev }
+        delete next[email.id]
+        return next
+      })
+      setEmails(prev => [...prev, pending])
+      showToast('已撤销删除', 'success')
+    })
   }, [selectedEmail, showToast])
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
+    setContextMenuIndex(0)
   }, [])
 
   const filteredEmails = emails.filter(email => {
@@ -146,6 +193,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (contextMenu) return
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return
@@ -184,7 +232,56 @@ export default function Dashboard() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [loadEmails, handleRead, selectedEmail, sortedFilteredEmails])
+  }, [loadEmails, handleRead, selectedEmail, sortedFilteredEmails, contextMenu])
+
+  const contextMenuItems = useMemo(() => {
+    if (!contextMenu) return []
+    const items = [
+      { label: '打开', action: () => handleRead(contextMenu.email) },
+    ]
+    if (contextMenu.email.is_read) {
+      items.push({ label: '标记为未读', action: () => handleMarkAsUnread(contextMenu.email) })
+    } else {
+      items.push({ label: '标记为已读', action: () => handleRead(contextMenu.email) })
+    }
+    items.push({ label: '删除', action: () => handleDeleteEmail(contextMenu.email), danger: true })
+    return items
+  }, [contextMenu, handleDeleteEmail, handleMarkAsUnread, handleRead])
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const handleMenuKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setContextMenuIndex(prev => (prev + 1) % contextMenuItems.length)
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setContextMenuIndex(prev => (prev - 1 + contextMenuItems.length) % contextMenuItems.length)
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        const item = contextMenuItems[contextMenuIndex]
+        if (item) {
+          item.action()
+          closeContextMenu()
+        }
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeContextMenu()
+      }
+    }
+    window.addEventListener('keydown', handleMenuKeyDown)
+    return () => window.removeEventListener('keydown', handleMenuKeyDown)
+  }, [contextMenu, contextMenuIndex, contextMenuItems, closeContextMenu])
+
+  useEffect(() => {
+    return () => {
+      Object.values(deleteTimers.current).forEach(timer => window.clearTimeout(timer))
+      deleteTimers.current = {}
+    }
+  }, [])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -208,8 +305,21 @@ export default function Dashboard() {
     <div className="h-full flex bg-slate-50">
       {toast && (
         <div className="fixed top-4 right-4 z-50">
-          <div className={`px-4 py-2 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
-            {toast.message}
+          <div className={`flex items-center gap-3 px-4 py-2 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+            <span>{toast.message}</span>
+            {toast.actionLabel && toast.onAction && (
+              <button
+                type="button"
+                onClick={() => {
+                  const action = toast.onAction
+                  setToast(null)
+                  action()
+                }}
+                className="text-xs font-semibold text-slate-700 hover:text-slate-900"
+              >
+                {toast.actionLabel}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -219,37 +329,18 @@ export default function Dashboard() {
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={closeContextMenu}
         >
-          <button
-            type="button"
-            onClick={() => handleRead(contextMenu.email)}
-            className="w-full text-left px-3 py-2 hover:bg-slate-50"
-          >
-            打开
-          </button>
-          {contextMenu.email.is_read ? (
+          {contextMenuItems.map((item, index) => (
             <button
+              key={`${item.label}-${index}`}
               type="button"
-              onClick={() => handleMarkAsUnread(contextMenu.email)}
-              className="w-full text-left px-3 py-2 hover:bg-slate-50"
+              onClick={item.action}
+              className={`w-full text-left px-3 py-2 ${
+                index === contextMenuIndex ? 'bg-slate-50' : 'hover:bg-slate-50'
+              } ${item.danger ? 'text-rose-600 hover:bg-rose-50' : ''}`}
             >
-              标记为未读
+              {item.label}
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => handleRead(contextMenu.email)}
-              className="w-full text-left px-3 py-2 hover:bg-slate-50"
-            >
-              标记为已读
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => handleDeleteEmail(contextMenu.email)}
-            className="w-full text-left px-3 py-2 hover:bg-rose-50 text-rose-600"
-          >
-            删除
-          </button>
+          ))}
         </div>
       )}
       <div className="w-96 border-r border-slate-200/70 bg-white flex flex-col">
@@ -354,6 +445,7 @@ export default function Dashboard() {
                             x: Math.max(padding, x),
                             y: Math.max(padding, y),
                           })
+                          setContextMenuIndex(0)
                         }}
                         className={`group mx-3 my-2 px-4 py-3 rounded-xl border cursor-pointer transition-all ${
                           selectedEmail?.id === email.id ? 'bg-blue-50/70 border-blue-100 ring-1 ring-blue-200' : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-sm'
