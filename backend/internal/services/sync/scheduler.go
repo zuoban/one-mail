@@ -77,7 +77,7 @@ func (s *Scheduler) startLogCleanup() {
 }
 
 func (s *Scheduler) cleanupOldLogs() {
-	cutoff := time.Now().AddDate(0, 0, -30)
+	cutoff := time.Now().AddDate(0, 0, -2)
 	result := database.GetDB().Where("created_at < ?", cutoff).Delete(&models.SyncLog{})
 	if result.Error != nil {
 		log.Printf("Failed to cleanup old sync logs: %v", result.Error)
