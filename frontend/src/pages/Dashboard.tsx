@@ -7,6 +7,7 @@ import { Search, RefreshCw, Mail, Paperclip, Trash2, Eye, EyeOff } from 'lucide-
 export default function Dashboard() {
   const [emails, setEmails] = useState<Email[]>([])
   const [accounts, setAccounts] = useState<EmailAccount[]>([])
+  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
   const [search, setSearch] = useState('')
@@ -42,14 +43,19 @@ export default function Dashboard() {
   const loadEmails = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await emailApi.list({ page: 1, page_size: 50, search })
+      const res = await emailApi.list({ 
+        page: 1, 
+        page_size: 50, 
+        search,
+        account_id: selectedAccountId || undefined,
+      })
       setEmails(res.data)
     } catch (e) {
       console.error(e)
     } finally {
       setLoading(false)
     }
-  }, [search])
+  }, [search, selectedAccountId])
 
   useEffect(() => {
     loadAccounts()
@@ -409,6 +415,22 @@ export default function Dashboard() {
               {filteredEmails.length}
             </span>
           </div>
+          {accounts.length > 1 && (
+            <div className="mb-3">
+              <select
+                value={selectedAccountId || ''}
+                onChange={(e) => setSelectedAccountId(e.target.value ? Number(e.target.value) : null)}
+                className="w-full px-3 py-2 text-sm border border-slate-200/80 rounded-lg bg-white/90 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
+              >
+                <option value="">全部账户</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.email}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="flex items-center gap-2 mb-3">
             <button
               type="button"
