@@ -329,6 +329,11 @@ export default function Dashboard() {
           handleRead(target, true, true)
         }
       }
+
+      if (event.key === 'r' || event.key === 'R') {
+        event.preventDefault()
+        loadEmails().then(() => showToast('收件箱已刷新', 'success'))
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
