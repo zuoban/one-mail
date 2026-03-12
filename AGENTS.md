@@ -3,7 +3,7 @@
 ## Project Overview
 
 One-Mail is a full-stack email client application with:
-- **Backend**: Go 1.26+ with Gin web framework, GORM ORM, SQLite database
+- **Backend**: Go 1.25+ with Gin web framework, GORM ORM, SQLite database
 - **Frontend**: React 19 + TypeScript + Vite + TailwindCSS 4
 
 ## Build Commands
@@ -17,17 +17,23 @@ cd backend && go run ./cmd/server/main.go
 # Build backend binary
 cd backend && go build -o server ./cmd/server/main.go
 
-# Run tests (no tests exist yet - create in same directory as code)
+# Run all tests
 go test ./...
 
-# Run single test
+# Run tests with verbose output
+go test -v ./...
+
+# Run single test by name
 go test -v ./internal/handlers -run TestAuthHandler
 
-# Lint (install golangci-lint first)
-golangci-lint run
+# Run tests in specific package
+go test -v ./internal/models
 
 # Format code
 go fmt ./...
+
+# Lint (requires golangci-lint installation)
+golangci-lint run
 ```
 
 ### Frontend (TypeScript/React)
@@ -42,20 +48,20 @@ cd frontend && npm run dev
 # Build for production
 cd frontend && npm run build
 
+# Preview production build
+cd frontend && npm run preview
+
 # Lint code
 cd frontend && npm run lint
-
-# Run single test (if tests exist)
-npm test -- --run
 
 # Type check
 cd frontend && npx tsc -b
 ```
 
-### Full Stack
+### Full Stack (Makefile)
 
 ```bash
-# Run both backend and frontend
+# Run both backend and frontend (requires backend binary built)
 make run
 
 # Build everything
@@ -63,6 +69,12 @@ make build
 
 # Clean build artifacts
 make clean
+
+# Docker commands
+make docker-build    # Build Docker image
+make docker-run      # Run in Docker container
+make docker-stop     # Stop Docker container
+make docker-logs     # View Docker logs
 ```
 
 ## Code Style Guidelines
@@ -84,27 +96,25 @@ import (
 ```
 
 **Naming Conventions**:
-- Use PascalCase for types, functions, exported variables
-- Use camelCase for local variables, parameters
-- Use snake_case for database columns (via gorm tags)
-- Prefix interfaces with handler/service/repository names (e.g., `AuthHandler`)
+- PascalCase for types, functions, exported variables
+- camelCase for local variables, parameters
+- snake_case for database columns via gorm tags
 - Use meaningful names, avoid abbreviations except: `db`, `id`, `req`, `resp`, `cfg`
 
 **Types & Structs**:
-- Use struct tags for JSON/gorm serialization: `json:"field_name" gorm:"column:field_name"`
+- Use struct tags for JSON/gorm: `json:"field_name" gorm:"column:field_name"`
 - Use `gorm:"index"` for indexes, `gorm:"unique"` for unique constraints
-- Password fields should have `json:"-"` to exclude from JSON responses
+- Password fields should have `json:"-"` to exclude from JSON
 - Use `gorm.DeletedAt` for soft deletes
 
 **Error Handling**:
 - Return errors early, handle at handler level
-- Use `c.JSON(status, gin.H{"error": "message"})` for error responses
-- Log errors before returning when appropriate
+- Use `c.JSON(status, gin.H{"error": "message"})` for errors
 - Wrap errors with context: `fmt.Errorf("failed to X: %w", err)`
 
 **Handler Pattern**:
 ```go
-func (h *HandlerType) HandlerName(c *gin.Context) {
+func (h *AuthHandler) HandlerName(c *gin.Context) {
     var req RequestType
     if err := c.ShouldBindJSON(&req); err != nil {
         c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -116,24 +126,23 @@ func (h *HandlerType) HandlerName(c *gin.Context) {
 
 ### TypeScript Frontend
 
-**ESLint Configuration**: Uses flat config with React hooks, TypeScript, and Vite plugins
-
-**Imports**: Use absolute imports from `@/` for internal modules
+**Imports**: Use relative imports for internal modules
 ```typescript
 import { useState } from 'react'
 import axios from 'axios'
-import { authApi, accountApi } from '@/api'
+import { authApi } from '../api'
+import useAuth from '../context/useAuth'
 ```
 
 **Naming Conventions**:
-- Use PascalCase for components and types/interfaces
-- Use camelCase for variables, functions, hooks
-- Prefix custom hooks with `use` (e.g., `useAuth`, `useEmailList`)
+- PascalCase for components and types/interfaces
+- camelCase for variables, functions, hooks
+- Prefix custom hooks with `use` (e.g., `useAuth`)
 - Interface names should be noun-like (e.g., `User`, `EmailAccount`)
 
 **Types**:
 - Use TypeScript interfaces for API responses and data models
-- Use explicit return types for functions when complex
+- Use explicit return types for complex functions
 - Avoid `any`, use `unknown` when type is uncertain
 
 **Components**:
@@ -153,23 +162,27 @@ one-mail/
 ├── backend/
 │   ├── cmd/server/main.go      # Entry point
 │   ├── config/config.go        # Configuration
+│   ├── config.yaml             # Config file
 │   ├── database/database.go    # Database connection
 │   ├── internal/
 │   │   ├── handlers/           # HTTP handlers
 │   │   ├── middleware/         # Auth, CORS middleware
 │   │   ├── models/             # GORM models
-│   │   ├── services/           # Business logic
+│   │   ├── services/           # Business logic (IMAP)
 │   │   └── utils/              # JWT, password utilities
 │   └── go.mod
 ├── frontend/
 │   ├── src/
-│   │   ├── api/                # API client
+│   │   ├── api/                # API client (axios)
 │   │   ├── components/         # React components
+│   │   ├── context/            # React context (auth)
 │   │   ├── pages/              # Page components
-│   │   └── ...
+│   │   └── index.css           # Global styles
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── eslint.config.js
+├── docker/
+├── Dockerfile
 ├── Makefile
 └── AGENTS.md
 ```
@@ -177,13 +190,13 @@ one-mail/
 ## Testing
 
 - Tests should be placed in `*_test.go` files in the same package
-- Frontend tests use Vitest (if added) - place in `*.test.ts` or `*.spec.ts`
-- Run single test: `go test -v ./path -run TestName`
-- No test framework configured yet - consider adding testify for Go
+- No frontend test framework configured yet
+- Run single Go test: `go test -v ./path -run TestName`
 
 ## Database
 
-- Uses SQLite by default (configured in `config.yaml`)
+- Uses SQLite by default (configured in `backend/config.yaml`)
+- Database file stored in `backend/data/one-mail.db`
 - GORM for ORM with auto-migration
 - Models defined in `backend/internal/models/models.go`
 
