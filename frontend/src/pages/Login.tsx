@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import axios from 'axios'
 import { authApi } from '../api'
 import useAuth from '../context/useAuth'
-import { Mail, Lock, LogIn } from 'lucide-react'
+import { Mail, Lock, LogIn, AlertCircle } from 'lucide-react'
 
 export default function Login() {
   const [username, setUsername] = useState('')
@@ -24,7 +24,7 @@ export default function Login() {
       navigate('/inbox')
     } catch (err: unknown) {
       const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
-      setError(message || '登录失败')
+      setError(message || '用户名或密码错误，请重新输入')
     } finally {
       setLoading(false)
     }
@@ -43,8 +43,9 @@ export default function Login() {
 
         <form onSubmit={handleSubmit} className="space-y-6">
           {error && (
-            <div className="alert alert-error">
-              {error}
+            <div className="alert alert-error flex items-center gap-2 animate-pulse">
+              <AlertCircle className="w-5 h-5 flex-shrink-0" />
+              <span className="font-medium">{error}</span>
             </div>
           )}
 

@@ -328,8 +328,10 @@ textarea:disabled {
 
 .alert-error {
   background-color: var(--error-50);
-  border: 1px solid var(--error-100);
-  color: var(--error-600);
+  border: 2px solid var(--error-500);
+  color: var(--error-700);
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15);
 }
 
 .alert-success {
