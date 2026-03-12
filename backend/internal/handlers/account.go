@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"math/rand"
 	"net/http"
 
 	"one-mail/backend/database"
@@ -9,6 +10,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+var accountColors = []string{
+	"#6366f1", // indigo
+	"#8b5cf6", // violet
+	"#ec4899", // pink
+	"#f43f5e", // rose
+	"#f97316", // orange
+	"#eab308", // yellow
+	"#22c55e", // green
+	"#14b8a6", // teal
+	"#06b6d4", // cyan
+	"#3b82f6", // blue
+}
 
 type AccountHandler struct{}
 
@@ -37,6 +51,7 @@ type AddAccountRequest struct {
 	IMAPPort int    `json:"imap_port"`
 	SMTPHost string `json:"smtp_host"`
 	SMTPPort int    `json:"smtp_port"`
+	Color    string `json:"color"`
 }
 
 func (h *AccountHandler) AddAccount(c *gin.Context) {
@@ -77,6 +92,11 @@ func (h *AccountHandler) AddAccount(c *gin.Context) {
 		Username: req.Username,
 		Password: req.Password,
 		Status:   "active",
+		Color:    req.Color,
+	}
+
+	if account.Color == "" {
+		account.Color = accountColors[rand.Intn(len(accountColors))]
 	}
 
 	testClient := imap.NewClient(&account)
@@ -102,6 +122,55 @@ func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "account deleted"})
+}
+
+type UpdateAccountRequest struct {
+	Email    string `json:"email"`
+	Provider string `json:"provider"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Color    string `json:"color"`
+}
+
+func (h *AccountHandler) UpdateAccount(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	id := c.Param("id")
+
+	var account models.EmailAccount
+	if err := database.GetDB().Where("user_id = ?", userID).First(&account, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
+		return
+	}
+
+	var req UpdateAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 更新字段（如果提供）
+	if req.Email != "" {
+		account.Email = req.Email
+	}
+	if req.Provider != "" {
+		account.Provider = req.Provider
+	}
+	if req.Username != "" {
+		account.Username = req.Username
+	}
+	if req.Password != "" {
+		account.Password = req.Password
+	}
+	if req.Color != "" {
+		account.Color = req.Color
+	}
+
+	if err := database.GetDB().Save(&account).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": account})
 }
 
 func (h *AccountHandler) TestAccount(c *gin.Context) {

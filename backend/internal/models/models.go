@@ -33,6 +33,7 @@ type EmailAccount struct {
 	Password     string         `gorm:"not null" json:"-"`
 	LastSyncTime time.Time      `json:"last_sync_time"`
 	Status       string         `gorm:"default:'active'" json:"status"`
+	Color        string         `gorm:"default:'#6366f1'" json:"color"`
 	Emails       []Email        `gorm:"foreignKey:AccountID" json:"emails,omitempty"`
 }
 

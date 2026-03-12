@@ -23,7 +23,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false)
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<'all' | 'unread' | 'attachments'>('all')
+  const [filter, setFilter] = useState<'all' | 'unread'>('all')
   const [toast, setToast] = useState<{
     message: string
     type: 'success' | 'error'
@@ -59,6 +59,11 @@ export default function Dashboard() {
     const diffDays = Math.floor(diffHours / 24)
     if (diffDays < 7) return `${diffDays} 天前`
     return date.toLocaleDateString('zh-CN')
+  }
+
+  const getAccountColor = (accountId: number) => {
+    const account = accounts.find(a => a.id === accountId)
+    return account?.color || '#6366f1'
   }
 
 
@@ -244,7 +249,6 @@ export default function Dashboard() {
 
   const filteredEmails = emails.filter(email => {
     if (filter === 'unread') return !email.is_read
-    if (filter === 'attachments') return email.has_attachment
     return true
   })
 
@@ -508,18 +512,17 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={() => setSelectedAccountId(null)}
-                    className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
+                    className={`relative flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
                       selectedAccountId === null
-                        ? 'bg-[var(--primary-600)] text-white border-[var(--primary-600)] shadow-sm'
+                        ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] border-[var(--border-default)]'
                         : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--border-hover)]'
                     }`}
+                    style={selectedAccountId === null ? { borderBottomWidth: '2px', borderBottomColor: 'var(--primary-600)' } : undefined}
                   >
-                    <span className={`flex items-center justify-center w-5 h-5 rounded-full ${
-                      selectedAccountId === null ? 'bg-white/20 text-white' : 'bg-[var(--primary-100)] text-[var(--primary-700)]'
-                    }`}>
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--primary-100)] text-[var(--primary-700)]">
                       <Mail className="w-3.5 h-3.5" />
                     </span>
-                    <span className={selectedAccountId === null ? 'text-[var(--primary-100)]' : 'text-[var(--text-secondary)]'}>
+                    <span className="text-[var(--text-secondary)]">
                       全部
                     </span>
                   </button>
@@ -531,23 +534,26 @@ export default function Dashboard() {
                   const statusText = account.status === 'active' ? '已连接' : '未连接'
                   const tip = `${account.email} · ${providerText} · ${statusText} · ${formatSyncTime(account.last_sync_time)}`
                   const isSelected = selectedAccountId === account.id
+                  const accountColor = account.color || '#6366f1'
                   return (
                     <Tooltip key={account.id} content={tip}>
                       <button
                         type="button"
                         onClick={() => setSelectedAccountId(account.id)}
-                        className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
+                        className={`relative flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
                           isSelected
-                            ? 'bg-[var(--primary-600)] text-white border-[var(--primary-600)] shadow-sm'
+                            ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] border-[var(--border-default)]'
                             : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--border-hover)]'
                         }`}
+                        style={isSelected ? { borderBottomWidth: '2px', borderBottomColor: accountColor } : undefined}
                       >
-                        <span className={`flex items-center justify-center w-5 h-5 rounded-full font-semibold ${
-                          isSelected ? 'bg-white/20 text-white' : 'bg-[var(--primary-100)] text-[var(--primary-700)]'
-                        }`}>
+                        <span 
+                          className="flex items-center justify-center w-5 h-5 rounded-full font-semibold text-white"
+                          style={{ backgroundColor: accountColor }}
+                        >
                           {account.email?.[0]?.toUpperCase() || '?'}
                         </span>
-                        <span className={`leading-tight ${isSelected ? 'text-[var(--primary-100)]' : 'text-[var(--text-secondary)]'}`}>
+                        <span className="leading-tight text-[var(--text-secondary)]">
                           {account.provider.slice(0, 4)}
                         </span>
                       </button>
@@ -561,7 +567,7 @@ export default function Dashboard() {
           {/* Filter Buttons */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              {(['all', 'unread', 'attachments'] as const).map((f) => (
+              {(['all', 'unread'] as const).map((f) => (
                 <button
                   key={f}
                   type="button"
@@ -572,7 +578,7 @@ export default function Dashboard() {
                       : 'bg-[var(--bg-primary)] text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:text-[var(--text-secondary)]'
                   }`}
                 >
-                  {f === 'all' ? '全部' : f === 'unread' ? '未读' : '附件'}
+                  {f === 'all' ? '全部' : '未读'}
                 </button>
               ))}
             </div>
@@ -627,95 +633,116 @@ export default function Dashboard() {
                         {collapsedGroups[group.key] ? '展开' : '收起'}
                       </span>
                     </button>
-                    {!collapsedGroups[group.key] && groupedEmails[group.key].map(email => (
-                      <div
-                        key={email.id}
-                        ref={(node) => { emailItemRefs.current[email.id] = node }}
-                        onClick={() => handleRead(email)}
-                        onContextMenu={(event) => {
-                          event.preventDefault()
-                          const menuWidth = 192
-                          const menuHeight = 132
-                          const padding = 8
-                          const maxX = window.innerWidth - menuWidth - padding
-                          const maxY = window.innerHeight - menuHeight - padding
-                          const x = Math.min(event.clientX, maxX)
-                          const y = Math.min(event.clientY, maxY)
-                          setContextMenu({
-                            email,
-                            x: Math.max(padding, x),
-                            y: Math.max(padding, y),
-                          })
-                          setContextMenuIndex(0)
-                        }}
-                        className={`group mx-3 my-2 px-4 py-3 rounded-lg border cursor-pointer transition-all ${
-                          selectedEmail?.id === email.id 
-                            ? 'bg-[var(--primary-50)] border-[var(--primary-200)] ring-1 ring-[var(--primary-200)]' 
-                            : 'bg-[var(--bg-primary)] border-[var(--border-light)] hover:border-[var(--border-default)] hover:shadow-sm'
-                        } ${!email.is_read ? 'border-[var(--primary-100)]' : ''}`}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className={`avatar ${!email.is_read ? 'bg-[var(--primary-100)] text-[var(--primary-700)]' : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)]'}`}>
-                            {email.from_name?.[0] || email.from?.[0]?.toUpperCase() || '?'}
-                            {!email.is_read && (
-                              <span className="absolute -right-0.5 -top-0.5 w-2.5 h-2.5 rounded-full bg-[var(--primary-600)] ring-2 ring-white" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className={`font-medium truncate ${!email.is_read ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}`}>
-                                {email.from_name || email.from}
-                              </span>
-                              {email.has_attachment && <Paperclip className="w-4 h-4 text-[var(--text-tertiary)] flex-shrink-0" />}
-                              <span className="ml-auto text-xs text-[var(--text-tertiary)] group-hover:text-[var(--text-secondary)]">
-                                {new Date(email.date).toLocaleDateString('zh-CN')}
-                              </span>
-                            </div>
-                            <p className={`text-sm truncate ${!email.is_read ? 'text-[var(--text-primary)] font-semibold' : 'text-[var(--text-secondary)]'}`}>
-                              {email.subject || '(无主题)'}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-1 opacity-0 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all">
-                            {email.is_read ? (
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  handleMarkAsUnread(email)
-                                }}
-                                className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"
-                                title="标记为未读"
-                              >
-                                <EyeOff className="w-4 h-4" />
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  handleRead(email)
-                                }}
-                                className="p-1.5 rounded-md text-[var(--primary-600)] hover:text-[var(--primary-700)] hover:bg-[var(--primary-50)]"
-                                title="标记为已读"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                requestDeleteEmail(email)
-                              }}
-                              className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)]"
-                              title="删除"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                    {!collapsedGroups[group.key] && groupedEmails[group.key].map(email => {
+  const accountColor = getAccountColor(email.account_id)
+  const isSelected = selectedEmail?.id === email.id
+  return (
+    <div
+      key={email.id}
+      ref={(node) => { emailItemRefs.current[email.id] = node }}
+      onClick={() => handleRead(email)}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        const menuWidth = 192
+        const menuHeight = 132
+        const padding = 8
+        const maxX = window.innerWidth - menuWidth - padding
+        const maxY = window.innerHeight - menuHeight - padding
+        const x = Math.min(event.clientX, maxX)
+        const y = Math.min(event.clientY, maxY)
+        setContextMenu({
+          email,
+          x: Math.max(padding, x),
+          y: Math.max(padding, y),
+        })
+        setContextMenuIndex(0)
+      }}
+      className={`group mx-3 my-1 rounded-xl border cursor-pointer transition-all duration-200 ${
+        isSelected
+          ? 'bg-gradient-to-r from-[var(--primary-50)] to-[var(--bg-primary)] border-[var(--primary-300)] shadow-md ring-1 ring-[var(--primary-200)]'
+          : 'bg-[var(--bg-primary)] border-[var(--border-light)] hover:border-[var(--border-default)] hover:shadow-md hover:-translate-y-0.5'
+      } ${!email.is_read ? 'shadow-sm' : ''}`}
+    >
+      <div className="px-3 py-2.5">
+        <div className="flex items-start gap-2.5">
+          {/* Avatar */}
+          <div 
+            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white flex-shrink-0 shadow-sm ${!email.is_read ? 'ring-2 ring-offset-1 ring-[var(--primary-200)]' : ''}`}
+            style={{ backgroundColor: accountColor }}
+          >
+            {(email.from_name || email.from)?.[0]?.toUpperCase() || '?'}
+          </div>
+          
+          {/* Content */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className={`text-sm truncate ${!email.is_read ? 'font-semibold text-[var(--text-primary)]' : 'font-medium text-[var(--text-secondary)]'}`}>
+                {email.from_name || email.from}
+              </span>
+              {!email.is_read && (
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--primary-500)] flex-shrink-0" title="未读" />
+              )}
+            </div>
+            <p className={`text-sm truncate ${!email.is_read ? 'text-[var(--text-primary)] font-medium' : 'text-[var(--text-secondary)]'}`}>
+              {email.subject || '(无主题)'}
+            </p>
+            {email.has_attachment && (
+              <div className="flex items-center gap-1 mt-0.5">
+                <Paperclip className="w-3 h-3 text-[var(--text-tertiary)]" />
+                <span className="text-[10px] text-[var(--text-tertiary)]">附件</span>
+              </div>
+            )}
+          </div>
+          
+          {/* Actions & Date */}
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-0.5 opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
+              {email.is_read ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    handleMarkAsUnread(email)
+                  }}
+                  className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors"
+                  title="标记为未读"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    handleRead(email)
+                  }}
+                  className="p-1.5 rounded-md text-[var(--primary-600)] hover:text-[var(--primary-700)] hover:bg-[var(--primary-50)] transition-colors"
+                  title="标记为已读"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  requestDeleteEmail(email)
+                }}
+                className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] transition-colors"
+                title="删除"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <span className="text-[10px] text-[var(--text-tertiary)] whitespace-nowrap">
+              {new Date(email.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+})}
                   </div>
                 ) : null
               ))}

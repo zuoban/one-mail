@@ -38,6 +38,7 @@ export interface EmailAccount {
   username: string
   status: string
   last_sync_time: string
+  color: string
 }
 
 export interface Email {
@@ -70,8 +71,10 @@ export const authApi = {
 
 export const accountApi = {
   list: () => api.get<{ data: EmailAccount[] }>('/accounts').then(r => r.data),
-  add: (data: { email: string; provider: string; username: string; password: string }) =>
+  add: (data: { email: string; provider: string; username: string; password: string; color?: string }) =>
     api.post<{ data: EmailAccount }>('/accounts', data).then(r => r.data),
+  update: (id: number, data: { email?: string; provider?: string; username?: string; password?: string; color?: string }) =>
+    api.put<{ data: EmailAccount }>(`/accounts/${id}`, data).then(r => r.data),
   delete: (id: number) => api.delete(`/accounts/${id}`),
   test: (id: number) => api.post(`/accounts/${id}/test`),
   sync: (id: number) => api.post(`/accounts/${id}/sync`),

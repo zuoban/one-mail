@@ -41,6 +41,7 @@ func main() {
 
 		api.GET("/accounts", accountHandler.ListAccounts)
 		api.POST("/accounts", accountHandler.AddAccount)
+		api.PUT("/accounts/:id", accountHandler.UpdateAccount)
 		api.DELETE("/accounts/:id", accountHandler.DeleteAccount)
 		api.POST("/accounts/:id/test", accountHandler.TestAccount)
 
