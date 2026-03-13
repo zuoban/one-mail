@@ -12,6 +12,34 @@ import (
 	"one-mail/backend/internal/services/imap"
 )
 
+func InitSyncCache() error {
+	db := database.GetDB()
+
+	var accounts []models.EmailAccount
+	if err := db.Find(&accounts).Error; err != nil {
+		return err
+	}
+
+	cache := GetSyncCache()
+
+	for _, account := range accounts {
+		var messageIDs []string
+		if err := db.Model(&models.Email{}).
+			Where("account_id = ?", account.ID).
+			Pluck("message_id", &messageIDs).Error; err != nil {
+			log.Printf("Failed to load message IDs for account %d: %v", account.ID, err)
+			continue
+		}
+
+		if len(messageIDs) > 0 {
+			cache.Rebuild(account.ID, messageIDs)
+			log.Printf("Loaded %d message IDs into cache for account %d", len(messageIDs), account.ID)
+		}
+	}
+
+	return nil
+}
+
 func SyncAccount(accountID uint) (int, error) {
 	db := database.GetDB()
 
@@ -83,8 +111,21 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 		return 0, nil
 	}
 
-	messageIDs := make([]string, 0, len(emails))
+	cache := GetSyncCache()
+
+	var needCheckEmails []*imap.EmailSummary
 	for _, e := range emails {
+		if !cache.MightContain(account.ID, e.MessageID) {
+			needCheckEmails = append(needCheckEmails, e)
+		}
+	}
+
+	if len(needCheckEmails) == 0 {
+		return 0, nil
+	}
+
+	messageIDs := make([]string, 0, len(needCheckEmails))
+	for _, e := range needCheckEmails {
 		messageIDs = append(messageIDs, e.MessageID)
 	}
 
@@ -96,10 +137,11 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 	existingSet := make(map[string]bool)
 	for _, e := range existingEmails {
 		existingSet[e.MessageID] = true
+		cache.Add(account.ID, e.MessageID)
 	}
 
 	var newEmails []models.Email
-	for _, e := range emails {
+	for _, e := range needCheckEmails {
 		if existingSet[e.MessageID] {
 			continue
 		}
@@ -119,6 +161,7 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 			UID:           e.UID,
 		}
 		newEmails = append(newEmails, email)
+		cache.Add(account.ID, e.MessageID)
 	}
 
 	if len(newEmails) > 0 {

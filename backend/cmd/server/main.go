@@ -22,6 +22,10 @@ func main() {
 		log.Fatalf("Failed to init database: %v", err)
 	}
 
+	if err := sync.InitSyncCache(); err != nil {
+		log.Printf("Warning: Failed to init sync cache: %v", err)
+	}
+
 	scheduler := sync.GetScheduler()
 	scheduler.Start()
 	log.Println("Sync scheduler started")
@@ -46,8 +50,6 @@ func main() {
 		api.GET("/auth/me", authHandler.Me)
 		api.PUT("/auth/profile", authHandler.UpdateProfile)
 		api.PUT("/auth/password", authHandler.ChangePassword)
-		api.GET("/auth/sync-policy", authHandler.GetSyncPolicy)
-		api.PUT("/auth/sync-policy", authHandler.UpdateSyncPolicy)
 
 		api.GET("/accounts", accountHandler.ListAccounts)
 		api.POST("/accounts", accountHandler.AddAccount)
@@ -71,7 +73,6 @@ func main() {
 		api.GET("/sync/logs", syncHandler.GetSyncLogs)
 		api.GET("/sync/logs/:account_id", syncHandler.GetSyncLogs)
 		api.DELETE("/sync/logs/:account_id", syncHandler.ClearSyncLogs)
-		api.POST("/sync/apply-to-all", syncHandler.ApplySyncPolicyToAll)
 	}
 
 	r.GET("/health", func(c *gin.Context) {

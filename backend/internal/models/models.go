@@ -7,17 +7,14 @@ import (
 )
 
 type User struct {
-	ID                    uint           `gorm:"primaryKey" json:"id"`
-	CreatedAt             time.Time      `json:"created_at"`
-	UpdatedAt             time.Time      `json:"updated_at"`
-	DeletedAt             gorm.DeletedAt `gorm:"index" json:"-"`
-	Username              string         `gorm:"unique;not null" json:"username"`
-	Password              string         `gorm:"not null" json:"-"`
-	Email                 string         `json:"email"`
-	DefaultSyncInterval   int            `gorm:"default:5" json:"default_sync_interval"`
-	DefaultSyncFolders    string         `gorm:"default:'INBOX'" json:"default_sync_folders"`
-	DefaultEnableAutoSync bool           `gorm:"default:true" json:"default_enable_auto_sync"`
-	Accounts              []EmailAccount `gorm:"foreignKey:UserID" json:"accounts,omitempty"`
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	Username  string         `gorm:"unique;not null" json:"username"`
+	Password  string         `gorm:"not null" json:"-"`
+	Email     string         `json:"email"`
+	Accounts  []EmailAccount `gorm:"foreignKey:UserID" json:"accounts,omitempty"`
 }
 
 type EmailAccount struct {
@@ -73,8 +70,8 @@ type Email struct {
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
-	AccountID     uint           `gorm:"not null" json:"account_id"`
-	MessageID     string         `gorm:"not null;index" json:"message_id"`
+	AccountID     uint           `gorm:"not null;index:idx_account_message,priority:1" json:"account_id"`
+	MessageID     string         `gorm:"not null;index:idx_account_message,priority:2" json:"message_id"`
 	From          string         `gorm:"not null" json:"from"`
 	FromName      string         `json:"from_name"`
 	To            string         `gorm:"not null" json:"to"`
@@ -83,8 +80,8 @@ type Email struct {
 	BodyText      string         `gorm:"type:text" json:"body_text"`
 	BodyHTML      string         `gorm:"type:text" json:"body_html"`
 	HasAttachment bool           `gorm:"default:false" json:"has_attachment"`
-	IsRead        bool           `gorm:"default:false" json:"is_read"`
-	IsStarred     bool           `gorm:"default:false" json:"is_starred"`
-	Folder        string         `gorm:"default:'INBOX'" json:"folder"`
-	UID           uint           `gorm:"not null" json:"uid"`
+	IsRead        bool           `gorm:"default:false;index" json:"is_read"`
+	IsStarred     bool           `gorm:"default:false;index" json:"is_starred"`
+	Folder        string         `gorm:"default:'INBOX';index" json:"folder"`
+	UID           uint           `gorm:"not null;index" json:"uid"`
 }
