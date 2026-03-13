@@ -1,10 +1,8 @@
 package sync
 
 import (
-	"context"
 	"log"
 	"strings"
-	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -13,132 +11,6 @@ import (
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
 )
-
-type SyncStatus struct {
-	AccountID    uint      `json:"account_id"`
-	Running      bool      `json:"running"`
-	LastSyncTime time.Time `json:"last_sync_time"`
-	Error        string    `json:"error"`
-	NewCount     int       `json:"new_count"`
-}
-
-type Worker struct {
-	accountID uint
-	interval  time.Duration
-	status    *SyncStatus
-	mu        sync.RWMutex
-	stopChan  chan struct{}
-	trigger   chan struct{}
-}
-
-func NewWorker(accountID uint, interval time.Duration) *Worker {
-	return &Worker{
-		accountID: accountID,
-		interval:  interval,
-		status: &SyncStatus{
-			AccountID: accountID,
-			Running:   false,
-		},
-		stopChan: make(chan struct{}),
-		trigger:  make(chan struct{}, 1),
-	}
-}
-
-func (w *Worker) Run(ctx context.Context) {
-	ticker := time.NewTicker(w.interval)
-	defer ticker.Stop()
-
-	w.doSync()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-w.stopChan:
-			return
-		case <-w.trigger:
-			w.doSync()
-		case <-ticker.C:
-			w.doSync()
-		}
-	}
-}
-
-func (w *Worker) Stop() {
-	close(w.stopChan)
-}
-
-func (w *Worker) TriggerSync() error {
-	select {
-	case w.trigger <- struct{}{}:
-	default:
-	}
-	return nil
-}
-
-func (w *Worker) UpdateInterval(interval time.Duration) {
-	w.mu.Lock()
-	w.interval = interval
-	w.mu.Unlock()
-}
-
-func (w *Worker) GetStatus() *SyncStatus {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	return w.status
-}
-
-func (w *Worker) doSync() {
-	w.mu.Lock()
-	if w.status.Running {
-		w.mu.Unlock()
-		return
-	}
-	w.status.Running = true
-	w.status.Error = ""
-	w.mu.Unlock()
-
-	startTime := time.Now()
-	syncLog := models.SyncLog{
-		AccountID: w.accountID,
-		StartTime: startTime,
-		Status:    "running",
-	}
-	database.GetDB().Create(&syncLog)
-
-	defer func() {
-		w.mu.Lock()
-		w.status.Running = false
-		w.mu.Unlock()
-	}()
-
-	newCount, err := SyncAccount(w.accountID)
-
-	endTime := time.Now()
-	durationMs := endTime.Sub(startTime).Milliseconds()
-
-	w.mu.Lock()
-	if err != nil {
-		w.status.Error = err.Error()
-		log.Printf("Sync failed for account %d: %v", w.accountID, err)
-		database.GetDB().Model(&syncLog).Updates(map[string]interface{}{
-			"end_time":    endTime,
-			"status":      "failed",
-			"error":       err.Error(),
-			"duration_ms": durationMs,
-		})
-	} else {
-		w.status.LastSyncTime = time.Now()
-		w.status.NewCount = newCount
-		database.GetDB().Model(&syncLog).Updates(map[string]interface{}{
-			"end_time":    endTime,
-			"status":      "success",
-			"new_count":   newCount,
-			"duration_ms": durationMs,
-		})
-	}
-	w.mu.Unlock()
-}
 
 func SyncAccount(accountID uint) (int, error) {
 	db := database.GetDB()

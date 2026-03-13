@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { syncApi, accountApi } from '../api'
-import type { SyncLog, EmailAccount } from '../api'
-import { CheckCircle, XCircle, Loader2, Trash2, FileText, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import type { SyncLog, EmailAccount, SchedulerStatus } from '../api'
+import { CheckCircle, XCircle, Loader2, Trash2, FileText, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Clock, RefreshCw, Timer } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 export default function SyncLogs() {
@@ -19,13 +19,20 @@ export default function SyncLogs() {
   const [pageSize] = useState(10)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [confirmClear, setConfirmClear] = useState(false)
+  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null)
 
   useEffect(() => {
     loadAccounts()
+    loadData()
   }, [])
 
   useEffect(() => {
-    loadLogs()
+    const interval = setInterval(loadData, 10000)
+    return () => clearInterval(interval)
+  }, [selectedAccountId, page])
+
+  useEffect(() => {
+    loadData()
   }, [selectedAccountId, page])
 
   const loadAccounts = async () => {
@@ -37,15 +44,13 @@ export default function SyncLogs() {
     }
   }
 
-  const loadLogs = async () => {
+  const loadData = async () => {
     setLoading(true)
     try {
-      const params = { page, page_size: pageSize }
-      const res = selectedAccountId
-        ? await syncApi.getLogsByAccount(selectedAccountId, params)
-        : await syncApi.getLogs(params)
-      setLogs(res.data)
-      setTotal(res.total)
+      const res = await syncApi.getSchedulerStatus({ page, page_size: pageSize })
+      setLogs(res.logs || [])
+      setTotal(res.total || 0)
+      setSchedulerStatus(res)
     } catch (e) {
       console.error(e)
     } finally {
@@ -69,7 +74,7 @@ export default function SyncLogs() {
     try {
       await syncApi.clearLogs(selectedAccountId)
       setToast({ message: '日志已清空', type: 'success' })
-      loadLogs()
+      loadData()
     } catch {
       setToast({ message: '清空失败', type: 'error' })
     } finally {
@@ -149,6 +154,61 @@ export default function SyncLogs() {
           )}
         </div>
       </div>
+
+      {/* 调度器状态卡片 */}
+      {schedulerStatus && (
+        <div className="mb-6 bg-[var(--bg-primary)] rounded-xl border border-[var(--border-light)] p-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-lg ${schedulerStatus.running ? 'bg-[var(--success-100)]' : 'bg-[var(--bg-tertiary)]'}`}>
+                <RefreshCw className={`w-5 h-5 ${schedulerStatus.running ? 'text-[var(--success-600)] animate-spin' : 'text-[var(--text-tertiary)]'}`} />
+              </div>
+              <div>
+                <p className="text-xs text-[var(--text-tertiary)]">调度器状态</p>
+                <p className={`text-sm font-medium ${schedulerStatus.running ? 'text-[var(--success-600)]' : 'text-[var(--text-secondary)]'}`}>
+                  {schedulerStatus.running ? '运行中' : '已停止'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-[var(--primary-100)]">
+                <Timer className="w-5 h-5 text-[var(--primary-600)]" />
+              </div>
+              <div>
+                <p className="text-xs text-[var(--text-tertiary)]">同步间隔</p>
+                <p className="text-sm font-medium text-[var(--text-primary)]">
+                  {schedulerStatus.interval} 分钟
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-[var(--bg-tertiary)]">
+                <Clock className="w-5 h-5 text-[var(--text-secondary)]" />
+              </div>
+              <div>
+                <p className="text-xs text-[var(--text-tertiary)]">上次同步</p>
+                <p className="text-sm font-medium text-[var(--text-primary)]">
+                  {schedulerStatus.last_sync_time ? formatTime(schedulerStatus.last_sync_time) : '从未同步'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-[var(--bg-tertiary)]">
+                <Clock className="w-5 h-5 text-[var(--text-secondary)]" />
+              </div>
+              <div>
+                <p className="text-xs text-[var(--text-tertiary)]">下次同步</p>
+                <p className="text-sm font-medium text-[var(--text-primary)]">
+                  {schedulerStatus.next_sync_time ? formatTime(schedulerStatus.next_sync_time) : '-'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-12">

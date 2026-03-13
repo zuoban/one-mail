@@ -7,14 +7,17 @@ import (
 )
 
 type User struct {
-	ID        uint           `gorm:"primaryKey" json:"id"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
-	Username  string         `gorm:"unique;not null" json:"username"`
-	Password  string         `gorm:"not null" json:"-"`
-	Email     string         `json:"email"`
-	Accounts  []EmailAccount `gorm:"foreignKey:UserID" json:"accounts,omitempty"`
+	ID                    uint           `gorm:"primaryKey" json:"id"`
+	CreatedAt             time.Time      `json:"created_at"`
+	UpdatedAt             time.Time      `json:"updated_at"`
+	DeletedAt             gorm.DeletedAt `gorm:"index" json:"-"`
+	Username              string         `gorm:"unique;not null" json:"username"`
+	Password              string         `gorm:"not null" json:"-"`
+	Email                 string         `json:"email"`
+	DefaultSyncInterval   int            `gorm:"default:5" json:"default_sync_interval"`
+	DefaultSyncFolders    string         `gorm:"default:'INBOX'" json:"default_sync_folders"`
+	DefaultEnableAutoSync bool           `gorm:"default:true" json:"default_enable_auto_sync"`
+	Accounts              []EmailAccount `gorm:"foreignKey:UserID" json:"accounts,omitempty"`
 }
 
 type EmailAccount struct {

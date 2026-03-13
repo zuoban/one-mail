@@ -15,6 +15,11 @@ import (
 
 type SyncHandler struct{}
 
+type SyncConfigRequest struct {
+	SyncFolders    string `json:"sync_folders"`
+	EnableAutoSync bool   `json:"enable_auto_sync"`
+}
+
 func NewSyncHandler() *SyncHandler {
 	return &SyncHandler{}
 }
@@ -38,7 +43,13 @@ func (h *SyncHandler) GetStatus(c *gin.Context) {
 		return
 	}
 
-	status := sync.GetScheduler().GetStatus(account.ID)
+	id, err := parseUint(accountID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid account id"})
+		return
+	}
+
+	status := sync.GetScheduler().GetStatus(id)
 
 	c.JSON(http.StatusOK, gin.H{"data": status})
 }
@@ -50,12 +61,6 @@ func (h *SyncHandler) GetAllStatuses(c *gin.Context) {
 		result[fmt.Sprintf("%d", id)] = status
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result})
-}
-
-type SyncConfigRequest struct {
-	SyncInterval   int    `json:"sync_interval"`
-	SyncFolders    string `json:"sync_folders"`
-	EnableAutoSync bool   `json:"enable_auto_sync"`
 }
 
 func (h *SyncHandler) UpdateConfig(c *gin.Context) {
@@ -77,7 +82,6 @@ func (h *SyncHandler) UpdateConfig(c *gin.Context) {
 	}
 
 	updates := map[string]interface{}{
-		"sync_interval":    req.SyncInterval,
 		"sync_folders":     req.SyncFolders,
 		"enable_auto_sync": req.EnableAutoSync,
 	}
@@ -85,13 +89,6 @@ func (h *SyncHandler) UpdateConfig(c *gin.Context) {
 	if err := database.GetDB().Model(&account).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-	}
-
-	scheduler := sync.GetScheduler()
-	if req.EnableAutoSync && req.SyncInterval > 0 {
-		scheduler.AddAccount(account.ID, time.Duration(req.SyncInterval)*time.Minute)
-	} else {
-		scheduler.RemoveAccount(account.ID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "config updated"})
@@ -135,11 +132,55 @@ func (h *SyncHandler) StopScheduler(c *gin.Context) {
 }
 
 func (h *SyncHandler) GetSchedulerStatus(c *gin.Context) {
+	userID := c.GetUint("user_id")
 	scheduler := sync.GetScheduler()
-	c.JSON(http.StatusOK, gin.H{
-		"running": scheduler.IsRunning(),
-		"workers": len(scheduler.GetAllStatuses()),
-	})
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	if page < 1 {
+		page = 1
+	}
+
+	var accounts []models.EmailAccount
+	if err := database.GetDB().Where("user_id = ?", userID).Find(&accounts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	accountIDs := make([]uint, 0, len(accounts))
+	for _, acc := range accounts {
+		accountIDs = append(accountIDs, acc.ID)
+	}
+
+	var logs []models.SyncLog
+	var total int64
+
+	if len(accountIDs) > 0 {
+		db := database.GetDB().Model(&models.SyncLog{}).Where("account_id IN ?", accountIDs)
+		db.Count(&total)
+
+		offset := (page - 1) * pageSize
+		if err := db.Order("created_at DESC").Limit(pageSize).Offset(offset).Find(&logs).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	response := gin.H{
+		"running":        scheduler.IsRunning(),
+		"interval":       scheduler.GetInterval().Minutes(),
+		"last_sync_time": scheduler.GetLastSyncTime(),
+		"next_sync_time": scheduler.GetNextSyncTime(),
+		"logs":           logs,
+		"total":          total,
+		"page":           page,
+		"page_size":      pageSize,
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *SyncHandler) GetSyncLogs(c *gin.Context) {
@@ -220,4 +261,61 @@ func (h *SyncHandler) ClearSyncLogs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "sync logs cleared"})
+}
+
+func (h *SyncHandler) ApplySyncPolicyToAll(c *gin.Context) {
+	userID := c.GetUint("user_id")
+
+	db := database.GetDB()
+
+	var user models.User
+	if err := db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	var accounts []models.EmailAccount
+	if err := db.Where("user_id = ?", userID).Find(&accounts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取账户失败"})
+		return
+	}
+
+	updates := map[string]interface{}{
+		"sync_folders":     user.DefaultSyncFolders,
+		"enable_auto_sync": user.DefaultEnableAutoSync,
+	}
+
+	var updateErrors []string
+	for _, account := range accounts {
+		if err := db.Model(&account).Updates(updates).Error; err != nil {
+			updateErrors = append(updateErrors, fmt.Sprintf("account %d: %v", account.ID, err))
+		}
+	}
+
+	if len(updateErrors) > 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":          "部分账户更新失败",
+			"failed_count":   len(updateErrors),
+			"total_count":    len(accounts),
+			"failed_details": updateErrors,
+		})
+		return
+	}
+
+	scheduler := sync.GetScheduler()
+	scheduler.UpdateInterval(time.Duration(user.DefaultSyncInterval) * time.Minute)
+	scheduler.TriggerAllSync()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "同步策略已应用到所有账户",
+		"updated_count": len(accounts),
+	})
+}
+
+func parseUint(s string) (uint, error) {
+	val, err := strconv.ParseUint(s, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return uint(val), nil
 }

@@ -29,6 +29,9 @@ export interface User {
   id: number
   username: string
   email: string
+  default_sync_interval: number
+  default_sync_folders: string
+  default_enable_auto_sync: boolean
 }
 
 export interface EmailAccount {
@@ -39,7 +42,6 @@ export interface EmailAccount {
   status: string
   last_sync_time: string
   color: string
-  sync_interval: number
   sync_folders: string
   enable_auto_sync: boolean
 }
@@ -62,6 +64,17 @@ export interface SyncLog {
   new_count: number
   error: string
   duration_ms: number
+}
+
+export interface SchedulerStatus {
+  running: boolean
+  interval: number
+  last_sync_time: string
+  next_sync_time: string
+  logs: SyncLog[]
+  total: number
+  page: number
+  page_size: number
 }
 
 export interface Email {
@@ -94,6 +107,10 @@ export const authApi = {
     api.put<{ data: User }>('/auth/profile', data).then(r => r.data),
   changePassword: (data: { old_password: string; new_password: string }) =>
     api.put<{ message: string }>('/auth/password', data).then(r => r.data),
+  getSyncPolicy: () =>
+    api.get<{ data: { default_sync_interval: number; default_sync_folders: string; default_enable_auto_sync: boolean } }>('/auth/sync-policy').then(r => r.data),
+  updateSyncPolicy: (data: { default_sync_interval: number; default_sync_folders: string; default_enable_auto_sync: boolean; apply_to_all?: boolean }) =>
+    api.put<{ data: { default_sync_interval: number; default_sync_folders: string; default_enable_auto_sync: boolean; updated_count: number } }>('/auth/sync-policy', data).then(r => r.data),
 }
 
 export const accountApi = {
@@ -112,7 +129,8 @@ export const accountApi = {
 export const syncApi = {
   getStatus: (id: number) => api.get<{ data: SyncStatus }>(`/sync/status/${id}`).then(r => r.data),
   getAllStatuses: () => api.get<{ data: Record<string, SyncStatus> }>('/sync/status').then(r => r.data),
-  getSchedulerStatus: () => api.get<{ running: boolean; workers: number }>('/sync').then(r => r.data),
+  getSchedulerStatus: (params?: { page?: number; page_size?: number }) =>
+    api.get<SchedulerStatus>('/sync', { params }).then(r => r.data),
   start: () => api.post('/sync/start'),
   stop: () => api.post('/sync/stop'),
   getLogs: (params?: { account_id?: number; page?: number; page_size?: number }) =>
@@ -120,6 +138,7 @@ export const syncApi = {
   getLogsByAccount: (accountId: number, params?: { page?: number; page_size?: number }) =>
     api.get<{ data: SyncLog[]; total: number; page: number; page_size: number }>(`/sync/logs/${accountId}`, { params }).then(r => r.data),
   clearLogs: (accountId: number) => api.delete(`/sync/logs/${accountId}`),
+  applyToAll: () => api.post<{ message: string; updated_count: number }>('/sync/apply-to-all').then(r => r.data),
 }
 
 export const emailApi = {
