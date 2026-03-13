@@ -132,7 +132,6 @@ func (h *SyncHandler) StopScheduler(c *gin.Context) {
 }
 
 func (h *SyncHandler) GetSchedulerStatus(c *gin.Context) {
-	userID := c.GetUint("user_id")
 	scheduler := sync.GetScheduler()
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -145,7 +144,7 @@ func (h *SyncHandler) GetSchedulerStatus(c *gin.Context) {
 	}
 
 	var accounts []models.EmailAccount
-	if err := database.GetDB().Where("user_id = ?", userID).Find(&accounts).Error; err != nil {
+	if err := database.GetDB().Find(&accounts).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -171,9 +170,7 @@ func (h *SyncHandler) GetSchedulerStatus(c *gin.Context) {
 
 	response := gin.H{
 		"running":        scheduler.IsRunning(),
-		"interval":       scheduler.GetInterval().Minutes(),
 		"last_sync_time": scheduler.GetLastSyncTime(),
-		"next_sync_time": scheduler.GetNextSyncTime(),
 		"logs":           logs,
 		"total":          total,
 		"page":           page,
@@ -261,55 +258,6 @@ func (h *SyncHandler) ClearSyncLogs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "sync logs cleared"})
-}
-
-func (h *SyncHandler) ApplySyncPolicyToAll(c *gin.Context) {
-	userID := c.GetUint("user_id")
-
-	db := database.GetDB()
-
-	var user models.User
-	if err := db.First(&user, userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
-		return
-	}
-
-	var accounts []models.EmailAccount
-	if err := db.Where("user_id = ?", userID).Find(&accounts).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取账户失败"})
-		return
-	}
-
-	updates := map[string]interface{}{
-		"sync_folders":     user.DefaultSyncFolders,
-		"enable_auto_sync": user.DefaultEnableAutoSync,
-	}
-
-	var updateErrors []string
-	for _, account := range accounts {
-		if err := db.Model(&account).Updates(updates).Error; err != nil {
-			updateErrors = append(updateErrors, fmt.Sprintf("account %d: %v", account.ID, err))
-		}
-	}
-
-	if len(updateErrors) > 0 {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":          "部分账户更新失败",
-			"failed_count":   len(updateErrors),
-			"total_count":    len(accounts),
-			"failed_details": updateErrors,
-		})
-		return
-	}
-
-	scheduler := sync.GetScheduler()
-	scheduler.UpdateInterval(time.Duration(user.DefaultSyncInterval) * time.Minute)
-	scheduler.TriggerAllSync()
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":       "同步策略已应用到所有账户",
-		"updated_count": len(accounts),
-	})
 }
 
 func parseUint(s string) (uint, error) {

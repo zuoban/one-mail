@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"one-mail/backend/database"
 	"one-mail/backend/internal/models"
 )
@@ -14,9 +16,8 @@ type Scheduler struct {
 	mu           sync.RWMutex
 	ctx          context.Context
 	cancel       context.CancelFunc
-	ticker       *time.Ticker
+	cron         *cron.Cron
 	running      bool
-	interval     time.Duration
 	statuses     map[uint]*SyncStatus
 	trigger      chan struct{}
 	lastSyncTime time.Time
@@ -56,103 +57,40 @@ func (s *Scheduler) Start() {
 		return
 	}
 
-	s.interval = s.getDefaultInterval()
-	if s.interval <= 0 {
-		s.interval = 5 * time.Minute
+	s.cron = cron.New()
+	_, err := s.cron.AddFunc("@every 1m", func() {
+		s.triggerSyncAll()
+	})
+	if err != nil {
+		log.Printf("Failed to add cron job: %v", err)
+		return
 	}
 
+	s.cron.Start()
 	s.running = true
 
-	go s.run()
+	go s.startTriggerListener()
 	go s.startLogCleanup()
 
-	log.Printf("Sync scheduler started with interval: %v", s.interval)
+	log.Println("Sync scheduler started with cron: @every 1m")
 }
 
-func (s *Scheduler) getDefaultInterval() time.Duration {
-	var user models.User
-	if err := database.GetDB().First(&user).Error; err != nil {
-		log.Printf("Failed to get user config, using default: %v", err)
-		return 5 * time.Minute
-	}
-	return time.Duration(user.DefaultSyncInterval) * time.Minute
-}
-
-func (s *Scheduler) run() {
-	// 等待到下一个整分钟
-	waitDuration := s.calculateWaitToNextMinute()
-	if waitDuration > 0 {
-		log.Printf("First sync scheduled at: %v", time.Now().Add(waitDuration).Format("15:04:05"))
-		time.Sleep(waitDuration)
-	}
-
-	s.syncAllAccounts()
-
-	// 创建对齐到整分钟的 ticker
-	ticker := s.createAlignedTicker()
-	s.mu.Lock()
-	s.ticker = ticker
-	s.mu.Unlock()
-
+func (s *Scheduler) startTriggerListener() {
 	for {
-		s.mu.RLock()
-		ticker := s.ticker
-		ctx := s.ctx
-		trigger := s.trigger
-		s.mu.RUnlock()
-
 		select {
-		case <-ctx.Done():
+		case <-s.ctx.Done():
 			return
-		case <-trigger:
-			s.syncAllAccounts()
-		case <-ticker.C:
+		case <-s.trigger:
 			s.syncAllAccounts()
 		}
 	}
 }
 
-func (s *Scheduler) calculateWaitToNextMinute() time.Duration {
-	s.mu.RLock()
-	interval := s.interval
-	s.mu.RUnlock()
-
-	if interval <= 0 {
-		return 0
+func (s *Scheduler) triggerSyncAll() {
+	select {
+	case s.trigger <- struct{}{}:
+	default:
 	}
-
-	now := time.Now()
-	minutes := int(interval.Minutes())
-
-	var nextTick time.Time
-	if minutes > 0 {
-		// 计算下一个同步点（对齐到 interval 分钟）
-		nextMinute := ((now.Minute() / minutes) + 1) * minutes
-		nextTick = time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, now.Location())
-
-		// 如果计算的时间已经过去，再加一个间隔
-		if nextTick.Before(now) || nextTick.Equal(now) {
-			nextTick = nextTick.Add(interval)
-		}
-	} else {
-		// 间隔小于1分钟，对齐到下一分钟
-		nextTick = now.Add(time.Minute)
-		nextTick = time.Date(nextTick.Year(), nextTick.Month(), nextTick.Day(), nextTick.Hour(), nextTick.Minute(), 0, 0, nextTick.Location())
-	}
-
-	return time.Until(nextTick)
-}
-
-func (s *Scheduler) createAlignedTicker() *time.Ticker {
-	s.mu.RLock()
-	interval := s.interval
-	s.mu.RUnlock()
-
-	if interval <= 0 {
-		return time.NewTicker(time.Minute)
-	}
-
-	return time.NewTicker(interval)
 }
 
 func (s *Scheduler) syncAllAccounts() {
@@ -163,7 +101,6 @@ func (s *Scheduler) syncAllAccounts() {
 	}
 
 	if len(accounts) == 0 {
-		log.Println("No accounts to sync")
 		return
 	}
 
@@ -183,9 +120,7 @@ func (s *Scheduler) syncAllAccounts() {
 
 			select {
 			case <-done:
-				// 正常完成
 			case <-time.After(5 * time.Minute):
-				// 超时，强制重置状态
 				log.Printf("Sync timeout for account %d (%s), force reset status", acc.ID, acc.Email)
 				s.forceResetAccountStatus(acc.ID)
 			}
@@ -197,7 +132,7 @@ func (s *Scheduler) syncAllAccounts() {
 	s.lastSyncTime = time.Now()
 	s.mu.Unlock()
 
-	log.Printf("Completed sync for all accounts, next sync in %v", s.interval)
+	log.Printf("Completed sync for all accounts")
 }
 
 func (s *Scheduler) forceResetAccountStatus(accountID uint) {
@@ -323,35 +258,13 @@ func (s *Scheduler) Stop() {
 	}
 
 	s.cancel()
-	if s.ticker != nil {
-		s.ticker.Stop()
+	if s.cron != nil {
+		s.cron.Stop()
 	}
 	s.running = false
 	s.statuses = make(map[uint]*SyncStatus)
 
 	log.Println("Sync scheduler stopped")
-}
-
-func (s *Scheduler) UpdateInterval(interval time.Duration) {
-	s.mu.Lock()
-	s.interval = interval
-
-	if s.running {
-		if s.ticker != nil {
-			s.ticker.Stop()
-		}
-		s.ticker = s.createAlignedTicker()
-		s.mu.Unlock()
-
-		log.Printf("Sync interval updated to: %v, next sync at: %v", interval, s.GetNextSyncTime().Format("15:04:05"))
-	} else {
-		s.mu.Unlock()
-	}
-
-	select {
-	case s.trigger <- struct{}{}:
-	default:
-	}
 }
 
 func (s *Scheduler) TriggerSync(accountID uint) error {
@@ -360,10 +273,7 @@ func (s *Scheduler) TriggerSync(accountID uint) error {
 }
 
 func (s *Scheduler) TriggerAllSync() {
-	select {
-	case s.trigger <- struct{}{}:
-	default:
-	}
+	s.triggerSyncAll()
 }
 
 func (s *Scheduler) GetStatus(accountID uint) *SyncStatus {
@@ -397,41 +307,8 @@ func (s *Scheduler) IsRunning() bool {
 	return s.running
 }
 
-func (s *Scheduler) GetInterval() time.Duration {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.interval
-}
-
 func (s *Scheduler) GetLastSyncTime() time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.lastSyncTime
-}
-
-func (s *Scheduler) GetNextSyncTime() time.Time {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if !s.running || s.interval <= 0 {
-		return time.Time{}
-	}
-
-	now := time.Now()
-	minutes := int(s.interval.Minutes())
-
-	var nextTick time.Time
-	if minutes > 0 {
-		nextMinute := ((now.Minute() / minutes) + 1) * minutes
-		nextTick = time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, now.Location())
-
-		if nextTick.Before(now) || nextTick.Equal(now) {
-			nextTick = nextTick.Add(s.interval)
-		}
-	} else {
-		nextTick = now.Add(time.Minute)
-		nextTick = time.Date(nextTick.Year(), nextTick.Month(), nextTick.Day(), nextTick.Hour(), nextTick.Minute(), 0, 0, nextTick.Location())
-	}
-
-	return nextTick
 }

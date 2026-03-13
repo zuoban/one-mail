@@ -107,10 +107,6 @@ export const authApi = {
     api.put<{ data: User }>('/auth/profile', data).then(r => r.data),
   changePassword: (data: { old_password: string; new_password: string }) =>
     api.put<{ message: string }>('/auth/password', data).then(r => r.data),
-  getSyncPolicy: () =>
-    api.get<{ data: { default_sync_interval: number; default_sync_folders: string; default_enable_auto_sync: boolean } }>('/auth/sync-policy').then(r => r.data),
-  updateSyncPolicy: (data: { default_sync_interval: number; default_sync_folders: string; default_enable_auto_sync: boolean; apply_to_all?: boolean }) =>
-    api.put<{ data: { default_sync_interval: number; default_sync_folders: string; default_enable_auto_sync: boolean; updated_count: number } }>('/auth/sync-policy', data).then(r => r.data),
 }
 
 export const accountApi = {

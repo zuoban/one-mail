@@ -12,6 +12,13 @@ import (
 	"one-mail/backend/internal/services/imap"
 )
 
+func getBatchSize(isFirstSync bool) int {
+	if isFirstSync {
+		return 500
+	}
+	return 100
+}
+
 func InitSyncCache() error {
 	db := database.GetDB()
 
