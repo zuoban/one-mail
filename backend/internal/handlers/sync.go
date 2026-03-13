@@ -131,55 +131,6 @@ func (h *SyncHandler) StopScheduler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "scheduler stopped"})
 }
 
-func (h *SyncHandler) GetSchedulerStatus(c *gin.Context) {
-	scheduler := sync.GetScheduler()
-
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if pageSize > 100 {
-		pageSize = 100
-	}
-	if page < 1 {
-		page = 1
-	}
-
-	var accounts []models.EmailAccount
-	if err := database.GetDB().Find(&accounts).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	accountIDs := make([]uint, 0, len(accounts))
-	for _, acc := range accounts {
-		accountIDs = append(accountIDs, acc.ID)
-	}
-
-	var logs []models.SyncLog
-	var total int64
-
-	if len(accountIDs) > 0 {
-		db := database.GetDB().Model(&models.SyncLog{}).Where("account_id IN ?", accountIDs)
-		db.Count(&total)
-
-		offset := (page - 1) * pageSize
-		if err := db.Order("created_at DESC").Limit(pageSize).Offset(offset).Find(&logs).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
-
-	response := gin.H{
-		"running":        scheduler.IsRunning(),
-		"last_sync_time": scheduler.GetLastSyncTime(),
-		"logs":           logs,
-		"total":          total,
-		"page":           page,
-		"page_size":      pageSize,
-	}
-
-	c.JSON(http.StatusOK, response)
-}
-
 func (h *SyncHandler) GetSyncLogs(c *gin.Context) {
 	userID := c.GetUint("user_id")
 	accountIDStr := c.Param("account_id")

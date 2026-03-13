@@ -66,17 +66,6 @@ export interface SyncLog {
   duration_ms: number
 }
 
-export interface SchedulerStatus {
-  running: boolean
-  interval: number
-  last_sync_time: string
-  next_sync_time: string
-  logs: SyncLog[]
-  total: number
-  page: number
-  page_size: number
-}
-
 export interface Email {
   id: number
   account_id: number
@@ -125,8 +114,6 @@ export const accountApi = {
 export const syncApi = {
   getStatus: (id: number) => api.get<{ data: SyncStatus }>(`/sync/status/${id}`).then(r => r.data),
   getAllStatuses: () => api.get<{ data: Record<string, SyncStatus> }>('/sync/status').then(r => r.data),
-  getSchedulerStatus: (params?: { page?: number; page_size?: number }) =>
-    api.get<SchedulerStatus>('/sync', { params }).then(r => r.data),
   start: () => api.post('/sync/start'),
   stop: () => api.post('/sync/stop'),
   getLogs: (params?: { account_id?: number; page?: number; page_size?: number }) =>
