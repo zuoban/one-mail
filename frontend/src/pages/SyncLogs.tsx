@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { syncApi, accountApi } from '../api'
 import type { SyncLog, EmailAccount } from '../api'
-import { CheckCircle, XCircle, Loader2, Trash2, FileText, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Trash2, FileText, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 export default function SyncLogs() {
@@ -143,6 +143,14 @@ export default function SyncLogs() {
               </option>
             ))}
           </select>
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg text-[var(--text-primary)] hover:text-white bg-[var(--bg-primary)] hover:bg-[var(--primary-500)] border border-[var(--border-light)] transition-all duration-200 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <span>刷新</span>
+          </button>
           {selectedAccountId && (
             <button
               onClick={() => setConfirmClear(true)}
