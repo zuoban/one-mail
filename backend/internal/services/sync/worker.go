@@ -20,11 +20,12 @@ func SyncAccount(accountID uint) (int, error) {
 		return 0, err
 	}
 
-	client := imap.NewClient(&account)
-	if err := client.Connect(); err != nil {
+	pool := imap.GetConnectionPool()
+	client, err := pool.GetConnection(&account)
+	if err != nil {
 		return 0, err
 	}
-	defer client.Disconnect()
+	defer pool.ReleaseConnection(account.ID)
 
 	folders := strings.Split(account.SyncFolders, ",")
 	if len(folders) == 0 {

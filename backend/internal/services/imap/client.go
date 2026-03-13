@@ -106,6 +106,10 @@ func (c *Client) Disconnect() error {
 	return nil
 }
 
+func (c *Client) IsConnected() bool {
+	return c.client != nil
+}
+
 func (c *Client) ListMailboxes() ([]string, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("not connected")
