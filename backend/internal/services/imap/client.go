@@ -3,6 +3,7 @@ package imap
 import (
 	"bytes"
 	"fmt"
+"math"
 	"io"
 	"strings"
 	"time"
@@ -335,9 +336,9 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 
 	uidSet := imap.UIDSet{}
 	if lastUID > 0 {
-		uidSet.AddRange(imap.UID(lastUID)+1, 0)
+		uidSet.AddRange(imap.UID(lastUID)+1, math.MaxUint32)
 	} else {
-		uidSet.AddRange(1, 0)
+		uidSet.AddRange(1, math.MaxUint32)
 	}
 
 	criteria := imap.SearchCriteria{}
