@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { accountApi } from '../api'
-import type { EmailAccount } from '../api'
+import type { EmailAccount, FolderStatus } from '../api'
 import { Plus, Trash2, X, Mail, Plug, Pencil, FileText, RefreshCw } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 
@@ -45,6 +45,10 @@ export default function Accounts() {
   })
   const [error, setError] = useState('')
   const [syncingAccountId, setSyncingAccountId] = useState<number | null>(null)
+  const [foldersAccount, setFoldersAccount] = useState<EmailAccount | null>(null)
+  const [foldersLoading, setFoldersLoading] = useState(false)
+  const [folders, setFolders] = useState<FolderStatus[]>([])
+  const [selectedFolders, setSelectedFolders] = useState<string[]>([])
 
   useEffect(() => {
     loadAccounts()
@@ -111,6 +115,62 @@ export default function Accounts() {
     })
     setError('')
     setShowModal(true)
+  }
+
+  const openFoldersModal = async (account: EmailAccount) => {
+    setFoldersAccount(account)
+    setFolders([])
+    setSelectedFolders([])
+    setFoldersLoading(true)
+    setError('')
+    try {
+      const res = await accountApi.listFolders(account.id)
+      setFolders(res.data)
+      if (account.sync_folders) {
+        const initial = account.sync_folders
+          .split(',')
+          .map(item => item.trim())
+          .filter(Boolean)
+        setSelectedFolders(initial)
+      }
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      setError(message || '获取文件夹失败')
+    } finally {
+      setFoldersLoading(false)
+    }
+  }
+
+  const toggleFolder = (folder: string) => {
+    setSelectedFolders(current => {
+      if (current.includes(folder)) {
+        return current.filter(item => item !== folder)
+      }
+      return [...current, folder]
+    })
+  }
+
+  const applyFolders = async () => {
+    if (!foldersAccount) return
+    if (selectedFolders.length === 0) {
+      setError('请选择至少一个文件夹')
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      const syncFolders = selectedFolders.join(',')
+      await accountApi.updateSyncConfig(foldersAccount.id, { sync_folders: syncFolders })
+      setToast({ message: '同步文件夹已更新', type: 'success' })
+      setFoldersAccount(null)
+      loadAccounts()
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      setError(message || '更新失败')
+    } finally {
+      setLoading(false)
+      setTimeout(() => setToast(null), 2000)
+    }
   }
 
   const requestDelete = (account: EmailAccount) => {
@@ -232,7 +292,14 @@ export default function Accounts() {
                 </div>
 
                 {/* 操作按钮 */}
-                <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => openFoldersModal(account)}
+                    className="p-2 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors"
+                    title="同步文件夹"
+                  >
+                    <Mail className="w-4 h-4" />
+                  </button>
                   <button
                     onClick={() => handleSync(account.id)}
                     disabled={syncingAccountId === account.id}
@@ -273,6 +340,88 @@ export default function Accounts() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Folders Modal */}
+      {foldersAccount && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={() => setFoldersAccount(null)}
+        >
+          <div
+            className="bg-white dark:bg-[var(--bg-primary)] rounded-2xl shadow-xl w-full max-w-lg"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-light)]">
+              <div>
+                <h3 className="text-lg font-semibold text-[var(--text-primary)]">同步文件夹</h3>
+                <p className="text-sm text-[var(--text-tertiary)]">{foldersAccount.email}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFoldersAccount(null)}
+                className="p-2 rounded-lg hover:bg-[var(--bg-secondary)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              {foldersLoading ? (
+                <div className="text-sm text-[var(--text-tertiary)]">正在加载文件夹...</div>
+              ) : folders.length === 0 ? (
+                <div className="text-sm text-[var(--text-tertiary)]">没有获取到文件夹</div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1">
+                  {folders.map(folder => (
+                    <button
+                      key={folder.name}
+                      type="button"
+                      onClick={() => toggleFolder(folder.name)}
+                      className={`px-3 py-2 rounded-lg text-sm border transition-colors ${
+                        selectedFolders.includes(folder.name)
+                          ? 'bg-[var(--primary-50)] text-[var(--primary-700)] border-[var(--primary-200)]'
+                          : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border-[var(--border-light)] hover:bg-[var(--bg-tertiary)]'
+                      }`}
+                    >
+                      <div className="flex flex-col items-start">
+                        <span className="truncate max-w-[180px]">{folder.name}</span>
+                        <span className="text-xs text-[var(--text-tertiary)]">
+                          {folder.messages} 封 · 未读 {folder.unseen}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {error && (
+                <div className="mt-4 flex items-center gap-2 p-3 rounded-lg bg-[var(--error-50)] border border-[var(--error-100)] text-[var(--error-600)] text-sm">
+                  <X className="w-4 h-4 flex-shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 px-6 pb-6">
+              <button
+                type="button"
+                onClick={() => setFoldersAccount(null)}
+                className="px-4 py-2 rounded-lg text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] transition-colors"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={applyFolders}
+                disabled={loading || foldersLoading}
+                className="px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-50 bg-[var(--primary-500)] hover:bg-[var(--primary-600)]"
+              >
+                应用
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

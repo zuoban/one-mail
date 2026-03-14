@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -68,6 +69,8 @@ func SyncAccount(accountID uint) (int, error) {
 	}
 
 	totalNew := 0
+	syncedFolders := 0
+	var folderErrors []error
 	for _, folder := range folders {
 		folder = strings.TrimSpace(folder)
 		if folder == "" {
@@ -77,12 +80,18 @@ func SyncAccount(accountID uint) (int, error) {
 		newCount, err := SyncFolder(db, &account, client, folder)
 		if err != nil {
 			log.Printf("Failed to sync folder %s for account %d: %v", folder, accountID, err)
+			folderErrors = append(folderErrors, err)
 			continue
 		}
+		syncedFolders++
 		totalNew += newCount
 	}
 
 	db.Model(&account).Update("last_sync_time", time.Now())
+
+	if syncedFolders == 0 && len(folderErrors) > 0 {
+		return totalNew, fmt.Errorf("sync failed for all folders (last error: %w)", folderErrors[len(folderErrors)-1])
+	}
 
 	log.Printf("Synced account %d, %d new emails", accountID, totalNew)
 	return totalNew, nil
@@ -102,7 +111,14 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 
 	var isSyncing models.SyncState
 	if err := db.Where("id = ?", syncState.ID).First(&isSyncing).Error; err == nil && isSyncing.IsSyncing {
-		return 0, nil
+		if time.Since(isSyncing.UpdatedAt) > 10*time.Minute {
+			db.Model(&syncState).Updates(map[string]interface{}{
+				"is_syncing": false,
+				"error":      "stale sync lock reset",
+			})
+		} else {
+			return 0, nil
+		}
 	}
 
 	db.Model(&syncState).Update("is_syncing", true)

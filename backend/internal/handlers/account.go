@@ -190,3 +190,28 @@ func (h *AccountHandler) TestAccount(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "connection successful"})
 }
+
+func (h *AccountHandler) ListFolders(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	id := c.Param("id")
+
+	var account models.EmailAccount
+	if err := database.GetDB().Where("user_id = ?", userID).First(&account, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
+		return
+	}
+
+	client := imap.NewClient(&account)
+	if err := client.Connect(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	defer client.Disconnect()
+
+	folders, err := client.ListFoldersWithStatus()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": folders})
+}

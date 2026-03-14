@@ -56,6 +56,7 @@ func main() {
 		api.PUT("/accounts/:id", accountHandler.UpdateAccount)
 		api.DELETE("/accounts/:id", accountHandler.DeleteAccount)
 		api.POST("/accounts/:id/test", accountHandler.TestAccount)
+		api.GET("/accounts/:id/folders", accountHandler.ListFolders)
 
 		api.GET("/emails", emailHandler.ListEmails)
 		api.GET("/emails/:id", emailHandler.GetEmail)
@@ -63,6 +64,7 @@ func main() {
 		api.POST("/emails/:id/unread", emailHandler.MarkAsUnread)
 		api.DELETE("/emails/:id", emailHandler.DeleteEmail)
 		api.POST("/accounts/:id/sync", syncHandler.TriggerSync)
+		api.GET("/accounts/:id/sync/preview", syncHandler.PreviewSync)
 
 		api.GET("/sync/status", syncHandler.GetAllStatuses)
 		api.GET("/sync/status/:id", syncHandler.GetStatus)

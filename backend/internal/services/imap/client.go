@@ -3,8 +3,8 @@ package imap
 import (
 	"bytes"
 	"fmt"
-"math"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -215,64 +215,147 @@ func (c *Client) ListFolders() ([]FolderInfo, error) {
 	return result, nil
 }
 
+type FolderStatus struct {
+	Name     string `json:"name"`
+	Messages uint32 `json:"messages"`
+	Unseen   uint32 `json:"unseen"`
+}
+
+func (c *Client) ListFoldersWithStatus() ([]FolderStatus, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	mailboxes, err := c.client.List("", "*", nil).Collect()
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]FolderStatus, 0, len(mailboxes))
+	for _, mbox := range mailboxes {
+		if mbox.Mailbox == "" {
+			continue
+		}
+
+		status, err := c.client.Status(mbox.Mailbox, &imap.StatusOptions{
+			NumMessages: true,
+			NumUnseen:   true,
+		}).Wait()
+		if err != nil {
+			result = append(result, FolderStatus{
+				Name:     mbox.Mailbox,
+				Messages: 0,
+				Unseen:   0,
+			})
+			continue
+		}
+
+		var messages uint32
+		var unseen uint32
+		if status.NumMessages != nil {
+			messages = *status.NumMessages
+		}
+		if status.NumUnseen != nil {
+			unseen = *status.NumUnseen
+		}
+
+		result = append(result, FolderStatus{
+			Name:     mbox.Mailbox,
+			Messages: messages,
+			Unseen:   unseen,
+		})
+	}
+
+	return result, nil
+}
+
+func (c *Client) Status(folder string) (*imap.StatusData, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	return c.client.Status(folder, &imap.StatusOptions{
+		NumMessages: true,
+		NumUnseen:   true,
+		UIDNext:     true,
+	}).Wait()
+}
+
 func (c *Client) FetchEmails(folder string, since time.Time, limit int) ([]*EmailSummary, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("not connected")
 	}
 
-	selectedMbox, err := c.client.Select(folder, nil).Wait()
-	if err != nil {
-		return nil, fmt.Errorf("failed to select mailbox: %w", err)
-	}
-
-	if selectedMbox.NumMessages == 0 {
-		return []*EmailSummary{}, nil
-	}
-
-	total := int(selectedMbox.NumMessages)
-	start := uint32(total) - uint32(limit) + 1
-	if start < 1 {
-		start = 1
-	}
-
-	seqSet := imap.SeqSet{}
-	seqSet.AddRange(start, uint32(total))
-
-	criteria := imap.SearchCriteria{}
-	criteria.SeqNum = []imap.SeqSet{seqSet}
-
-	data, err := c.client.Search(&criteria, nil).Wait()
-	if err != nil {
-		return nil, err
-	}
-
-	seqNums := data.AllSeqNums()
-	if len(seqNums) == 0 {
-		return []*EmailSummary{}, nil
-	}
-
-	if len(seqNums) > limit {
-		seqNums = seqNums[len(seqNums)-limit:]
-	}
-
-	numSet := imap.SeqSet{}
-	for _, num := range seqNums {
-		numSet.AddNum(num)
-	}
-
 	bodySection := &imap.FetchItemBodySection{Peek: true}
-	fetchOptions := &imap.FetchOptions{
-		Envelope: true,
-		Flags:    true,
-		UID:      true,
-		BodySection: []*imap.FetchItemBodySection{
-			bodySection,
-		},
-	}
+	var messages []*imapclient.FetchMessageBuffer
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Second * time.Duration(1<<uint(attempt-1)))
+		}
 
-	messages, err := c.client.Fetch(numSet, fetchOptions).Collect()
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch messages: %w", err)
+		selectedMbox, err := c.client.Select(folder, nil).Wait()
+		if err != nil {
+			if isTemporaryIMAPError(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to select mailbox: %w", err)
+		}
+
+		if selectedMbox.NumMessages == 0 {
+			return []*EmailSummary{}, nil
+		}
+
+		total := int(selectedMbox.NumMessages)
+		start := uint32(total) - uint32(limit) + 1
+		if start < 1 {
+			start = 1
+		}
+
+		seqSet := imap.SeqSet{}
+		seqSet.AddRange(start, uint32(total))
+
+		criteria := imap.SearchCriteria{}
+		criteria.SeqNum = []imap.SeqSet{seqSet}
+
+		data, err := c.client.Search(&criteria, nil).Wait()
+		if err != nil {
+			if isTemporaryIMAPError(err) {
+				continue
+			}
+			return nil, err
+		}
+
+		seqNums := data.AllSeqNums()
+		if len(seqNums) == 0 {
+			return []*EmailSummary{}, nil
+		}
+
+		if len(seqNums) > limit {
+			seqNums = seqNums[len(seqNums)-limit:]
+		}
+
+		numSet := imap.SeqSet{}
+		for _, num := range seqNums {
+			numSet.AddNum(num)
+		}
+
+		fetchOptions := &imap.FetchOptions{
+			Envelope: true,
+			Flags:    true,
+			UID:      true,
+			BodySection: []*imap.FetchItemBodySection{
+				bodySection,
+			},
+		}
+
+		messages, err = c.client.Fetch(numSet, fetchOptions).Collect()
+		if err != nil {
+			if isTemporaryIMAPError(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to fetch messages: %w", err)
+		}
+		break
 	}
 
 	var results []*EmailSummary
@@ -325,53 +408,129 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 		return nil, 0, fmt.Errorf("not connected")
 	}
 
-	selectedMbox, err := c.client.Select(folder, nil).Wait()
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to select mailbox: %w", err)
-	}
+	var messages []*imapclient.FetchMessageBuffer
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Second * time.Duration(1<<uint(attempt-1)))
+		}
 
-	if selectedMbox.NumMessages == 0 {
-		return []*EmailSummary{}, 0, nil
-	}
+		selectedMbox, err := c.client.Select(folder, nil).Wait()
+		if err != nil {
+			if isTemporaryIMAPError(err) {
+				continue
+			}
+			return nil, 0, fmt.Errorf("failed to select mailbox: %w", err)
+		}
+		mailboxMessages := selectedMbox.NumMessages
+		if mailboxMessages == 0 {
+			status, err := c.client.Status(folder, &imap.StatusOptions{
+				NumMessages: true,
+			}).Wait()
+			if err == nil && status.NumMessages != nil {
+				mailboxMessages = *status.NumMessages
+			}
+		}
 
-	uidSet := imap.UIDSet{}
-	if lastUID > 0 {
-		uidSet.AddRange(imap.UID(lastUID)+1, math.MaxUint32)
-	} else {
-		uidSet.AddRange(1, math.MaxUint32)
-	}
+		uidSet := imap.UIDSet{}
+		if lastUID > 0 {
+			uidSet.AddRange(imap.UID(lastUID)+1, math.MaxUint32)
+		} else {
+			uidSet.AddRange(1, math.MaxUint32)
+		}
 
-	criteria := imap.SearchCriteria{}
-	criteria.UID = []imap.UIDSet{uidSet}
+		criteria := imap.SearchCriteria{}
+		criteria.UID = []imap.UIDSet{uidSet}
 
-	data, err := c.client.Search(&criteria, nil).Wait()
-	if err != nil {
-		return nil, 0, err
-	}
+		data, err := c.client.Search(&criteria, nil).Wait()
+		if err != nil {
+			if isTemporaryIMAPError(err) {
+				continue
+			}
+			return nil, 0, err
+		}
 
-	uids := data.AllUIDs()
-	if len(uids) == 0 {
-		return []*EmailSummary{}, lastUID, nil
-	}
+		uids := data.AllUIDs()
+		if len(uids) == 0 {
+			if lastUID == 0 && mailboxMessages > 0 {
+				// Some servers return empty UID SEARCH; fallback to SEARCH ALL via header-less criteria.
+				allCriteria := imap.SearchCriteria{}
+				allData, allErr := c.client.Search(&allCriteria, nil).Wait()
+				if allErr == nil {
+					seqNums := allData.AllSeqNums()
+					if len(seqNums) > 0 {
+						if limit > 0 && len(seqNums) > limit {
+							seqNums = seqNums[len(seqNums)-limit:]
+						}
+						seqSet := imap.SeqSet{}
+						for _, num := range seqNums {
+							seqSet.AddNum(num)
+						}
+						fetchOptions := &imap.FetchOptions{
+							Envelope: true,
+							Flags:    true,
+							UID:      true,
+						}
+						messages, err = c.client.Fetch(seqSet, fetchOptions).Collect()
+						if err != nil {
+							if isTemporaryIMAPError(err) {
+								continue
+							}
+							return nil, 0, fmt.Errorf("failed to fetch messages: %w", err)
+						}
+						break
+					}
+				}
 
-	if limit > 0 && len(uids) > limit {
-		uids = uids[len(uids)-limit:]
-	}
+				total := int(mailboxMessages)
+				start := uint32(total) - uint32(limit) + 1
+				if start < 1 {
+					start = 1
+				}
 
-	fetchUIDSet := imap.UIDSet{}
-	for _, uid := range uids {
-		fetchUIDSet.AddNum(uid)
-	}
+				seqSet := imap.SeqSet{}
+				seqSet.AddRange(start, uint32(total))
 
-	fetchOptions := &imap.FetchOptions{
-		Envelope: true,
-		Flags:    true,
-		UID:      true,
-	}
+				fetchOptions := &imap.FetchOptions{
+					Envelope: true,
+					Flags:    true,
+					UID:      true,
+				}
 
-	messages, err := c.client.Fetch(fetchUIDSet, fetchOptions).Collect()
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to fetch messages: %w", err)
+				messages, err = c.client.Fetch(seqSet, fetchOptions).Collect()
+				if err != nil {
+					if isTemporaryIMAPError(err) {
+						continue
+					}
+					return nil, 0, fmt.Errorf("failed to fetch messages: %w", err)
+				}
+				break
+			}
+			return []*EmailSummary{}, lastUID, nil
+		}
+
+		if limit > 0 && len(uids) > limit {
+			uids = uids[len(uids)-limit:]
+		}
+
+		fetchUIDSet := imap.UIDSet{}
+		for _, uid := range uids {
+			fetchUIDSet.AddNum(uid)
+		}
+
+		fetchOptions := &imap.FetchOptions{
+			Envelope: true,
+			Flags:    true,
+			UID:      true,
+		}
+
+		messages, err = c.client.Fetch(fetchUIDSet, fetchOptions).Collect()
+		if err != nil {
+			if isTemporaryIMAPError(err) {
+				continue
+			}
+			return nil, 0, fmt.Errorf("failed to fetch messages: %w", err)
+		}
+		break
 	}
 
 	var results []*EmailSummary
@@ -433,6 +592,16 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 	}
 
 	return results, maxUID, nil
+}
+
+func isTemporaryIMAPError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "system busy") ||
+		strings.Contains(message, "temporarily unavailable") ||
+		strings.Contains(message, "try again")
 }
 
 func (c *Client) FetchEmailBody(folder string, uid uint) (bodyText string, bodyHTML string, err error) {

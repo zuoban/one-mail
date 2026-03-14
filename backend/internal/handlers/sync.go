@@ -8,6 +8,7 @@ import (
 
 	"one-mail/backend/database"
 	"one-mail/backend/internal/models"
+	"one-mail/backend/internal/services/imap"
 	"one-mail/backend/internal/services/sync"
 
 	"github.com/gin-gonic/gin"
@@ -112,6 +113,78 @@ func (h *SyncHandler) TriggerSync(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "sync triggered"})
+}
+
+func (h *SyncHandler) PreviewSync(c *gin.Context) {
+	accountID := c.Param("id")
+	userID := c.GetUint("user_id")
+	folder := c.DefaultQuery("folder", "INBOX")
+
+	var account models.EmailAccount
+	if err := database.GetDB().
+		Where("id = ? AND user_id = ?", accountID, userID).
+		First(&account).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
+		return
+	}
+
+	var syncState models.SyncState
+	database.GetDB().Where("account_id = ? AND folder = ?", account.ID, folder).First(&syncState)
+
+	client := imap.NewClient(&account)
+	if err := client.Connect(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	defer client.Disconnect()
+
+	status, statusErr := clientStatus(client, folder)
+	emails, maxUID, err := client.FetchEmailsIncremental(folder, syncState.LastUID, 20)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var firstUID uint
+	var lastFetchedUID uint
+	if len(emails) > 0 {
+		firstUID = emails[0].UID
+		lastFetchedUID = emails[len(emails)-1].UID
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"folder":        folder,
+			"last_uid":      syncState.LastUID,
+			"status":        status,
+			"status_error":  statusErr,
+			"fetched_count": len(emails),
+			"max_uid":       maxUID,
+			"first_uid":     firstUID,
+			"last_fetched":  lastFetchedUID,
+		},
+	})
+}
+
+func clientStatus(client *imap.Client, folder string) (map[string]interface{}, string) {
+	status, err := client.Status(folder)
+	if err != nil {
+		return nil, err.Error()
+	}
+
+	result := map[string]interface{}{
+		"mailbox": folder,
+	}
+	if status.NumMessages != nil {
+		result["messages"] = *status.NumMessages
+	}
+	if status.NumUnseen != nil {
+		result["unseen"] = *status.NumUnseen
+	}
+	if status.UIDNext > 0 {
+		result["uid_next"] = status.UIDNext
+	}
+	return result, ""
 }
 
 func (h *SyncHandler) StartScheduler(c *gin.Context) {

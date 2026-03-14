@@ -46,6 +46,12 @@ export interface EmailAccount {
   enable_auto_sync: boolean
 }
 
+export interface FolderStatus {
+  name: string
+  messages: number
+  unseen: number
+}
+
 export interface SyncStatus {
   account_id: number
   running: boolean
@@ -107,6 +113,7 @@ export const accountApi = {
   delete: (id: number) => api.delete(`/accounts/${id}`),
   test: (id: number) => api.post(`/accounts/${id}/test`),
   sync: (id: number) => api.post(`/accounts/${id}/sync`),
+  listFolders: (id: number) => api.get<{ data: FolderStatus[] }>(`/accounts/${id}/folders`).then(r => r.data),
   updateSyncConfig: (id: number, data: { sync_interval?: number; sync_folders?: string; enable_auto_sync?: boolean }) =>
     api.put(`/accounts/${id}/sync/config`, data),
 }
