@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { emailApi, accountApi, syncApi } from '../api'
+import axios from 'axios'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 import { defaultCollapsedGroups } from '../config/inbox'
@@ -140,7 +141,16 @@ export default function Dashboard() {
       await emailApi.markAsRead(email.id)
       setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
     }
-    setSelectedEmail(email)
+
+    // 获取邮件详情（包含正文内容）
+    try {
+      const detail = await emailApi.get(email.id)
+      setSelectedEmail(detail.data)
+    } catch (e) {
+      console.error('Failed to fetch email detail:', e)
+      setSelectedEmail(email)
+    }
+
     if (shouldScroll) {
       const node = emailItemRefs.current[email.id]
       if (node) {
@@ -356,10 +366,18 @@ export default function Dashboard() {
 
   const sanitizedHtml = useMemo(() => {
     if (!selectedEmail?.body_html) return ''
+    const baseURL = axios.defaults.baseURL || 'http://localhost:8080/api'
     try {
       const parser = new DOMParser()
       const doc = parser.parseFromString(selectedEmail.body_html, 'text/html')
       doc.querySelectorAll('style, link[rel="stylesheet"], script').forEach(node => node.remove())
+      doc.querySelectorAll('img').forEach(img => {
+        const src = img.getAttribute('src')
+        if (src && !src.startsWith('cid:') && !src.startsWith('data:')) {
+          const encodedUrl = encodeURIComponent(src)
+          img.setAttribute('src', `${baseURL}/proxy/image?url=${encodedUrl}`)
+        }
+      })
       return doc.body?.innerHTML || ''
     } catch (e) {
       console.error(e)

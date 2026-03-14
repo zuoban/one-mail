@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"one-mail/backend/config"
 	"one-mail/backend/database"
 	"one-mail/backend/internal/handlers"
@@ -32,6 +35,45 @@ func main() {
 
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware())
+
+	r.GET("/api/proxy/image", func(c *gin.Context) {
+		imgURL := c.Query("url")
+		if imgURL == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "url is required"})
+			return
+		}
+
+		parsedURL, err := url.Parse(imgURL)
+		if err != nil || parsedURL.Scheme == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url"})
+			return
+		}
+
+		req, err := http.NewRequest("GET", imgURL, nil)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to create request"})
+			return
+		}
+
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch image"})
+			return
+		}
+		defer resp.Body.Close()
+
+		contentType := resp.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = "image/jpeg"
+		}
+
+		c.Header("Content-Type", contentType)
+		c.Header("Cache-Control", "public, max-age=86400")
+		io.Copy(c.Writer, resp.Body)
+	})
 
 	accountHandler := handlers.NewAccountHandler()
 	emailHandler := handlers.NewEmailHandler()
