@@ -376,6 +376,7 @@ export default function Dashboard() {
         if (src && !src.startsWith('cid:') && !src.startsWith('data:')) {
           const encodedUrl = encodeURIComponent(src)
           img.setAttribute('src', `${baseURL}/proxy/image?url=${encodedUrl}`)
+          img.setAttribute('loading', 'lazy')
         }
       })
       return doc.body?.innerHTML || ''
