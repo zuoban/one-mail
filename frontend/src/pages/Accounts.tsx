@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { accountApi } from '../api'
 import type { EmailAccount } from '../api'
-import { Plus, Trash2, X, Mail, Plug, Pencil, FileText } from 'lucide-react'
+import { Plus, Trash2, X, Mail, Plug, Pencil, FileText, RefreshCw } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 const providers = [
@@ -44,6 +44,7 @@ export default function Accounts() {
     color: '',
   })
   const [error, setError] = useState('')
+  const [syncingAccountId, setSyncingAccountId] = useState<number | null>(null)
 
   useEffect(() => {
     loadAccounts()
@@ -139,6 +140,21 @@ export default function Accounts() {
     }
   }
 
+  const handleSync = async (id: number) => {
+    if (syncingAccountId === id) return
+    setSyncingAccountId(id)
+    try {
+      await accountApi.sync(id)
+      setToast({ message: '同步已启动', type: 'success' })
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      setToast({ message: message || '同步失败', type: 'error' })
+    } finally {
+      setTimeout(() => setSyncingAccountId(null), 2000)
+      setTimeout(() => setToast(null), 1600)
+    }
+  }
+
   return (
     <div className="p-6">
       <ConfirmDialog
@@ -217,6 +233,14 @@ export default function Accounts() {
 
                 {/* 操作按钮 */}
                 <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleSync(account.id)}
+                    disabled={syncingAccountId === account.id}
+                    className="p-2 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors disabled:opacity-50"
+                    title="手动同步"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${syncingAccountId === account.id ? 'animate-spin' : ''}`} />
+                  </button>
                   <button
                     onClick={() => navigate(`/sync-logs?account_id=${account.id}`)}
                     className="p-2 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors"
