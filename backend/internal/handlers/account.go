@@ -43,15 +43,16 @@ func (h *AccountHandler) ListAccounts(c *gin.Context) {
 }
 
 type AddAccountRequest struct {
-	Email    string `json:"email" binding:"required"`
-	Provider string `json:"provider" binding:"required"`
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
-	IMAPHost string `json:"imap_host"`
-	IMAPPort int    `json:"imap_port"`
-	SMTPHost string `json:"smtp_host"`
-	SMTPPort int    `json:"smtp_port"`
-	Color    string `json:"color"`
+	Email          string `json:"email" binding:"required"`
+	Provider       string `json:"provider" binding:"required"`
+	Username       string `json:"username" binding:"required"`
+	Password       string `json:"password" binding:"required"`
+	IMAPHost       string `json:"imap_host"`
+	IMAPPort       int    `json:"imap_port"`
+	SMTPHost       string `json:"smtp_host"`
+	SMTPPort       int    `json:"smtp_port"`
+	Color          string `json:"color"`
+	EnableAutoSync bool   `json:"enable_auto_sync"`
 }
 
 func (h *AccountHandler) AddAccount(c *gin.Context) {
@@ -82,17 +83,18 @@ func (h *AccountHandler) AddAccount(c *gin.Context) {
 	}
 
 	account := models.EmailAccount{
-		UserID:   userID,
-		Email:    req.Email,
-		Provider: req.Provider,
-		IMAPHost: imapHost,
-		IMAPPort: imapPort,
-		SMTPHost: smtpHost,
-		SMTPPort: smtpPort,
-		Username: req.Username,
-		Password: req.Password,
-		Status:   "active",
-		Color:    req.Color,
+		UserID:         userID,
+		Email:          req.Email,
+		Provider:       req.Provider,
+		IMAPHost:       imapHost,
+		IMAPPort:       imapPort,
+		SMTPHost:       smtpHost,
+		SMTPPort:       smtpPort,
+		Username:       req.Username,
+		Password:       req.Password,
+		Status:         "active",
+		Color:          req.Color,
+		EnableAutoSync: req.EnableAutoSync,
 	}
 
 	if account.Color == "" {
@@ -125,11 +127,12 @@ func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 }
 
 type UpdateAccountRequest struct {
-	Email    string `json:"email"`
-	Provider string `json:"provider"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Color    string `json:"color"`
+	Email          string `json:"email"`
+	Provider       string `json:"provider"`
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	Color          string `json:"color"`
+	EnableAutoSync *bool  `json:"enable_auto_sync"`
 }
 
 func (h *AccountHandler) UpdateAccount(c *gin.Context) {
@@ -163,6 +166,9 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 	}
 	if req.Color != "" {
 		account.Color = req.Color
+	}
+	if req.EnableAutoSync != nil {
+		account.EnableAutoSync = *req.EnableAutoSync
 	}
 
 	if err := database.GetDB().Save(&account).Error; err != nil {

@@ -25,6 +25,10 @@ export default function Dashboard() {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'unread'>('all')
   const [syncStatuses, setSyncStatuses] = useState<Record<string, SyncStatus>>({})
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [toast, setToast] = useState<{
     message: string
     type: 'success' | 'error'
@@ -86,25 +90,64 @@ export default function Dashboard() {
     }
   }, [])
 
-  const loadEmails = useCallback(async () => {
+  const loadingMoreRef = useRef(false)
+  const hasMoreRef = useRef(true)
+  
+  const loadEmails = useCallback(async (pageNum: number = 1, append: boolean = false) => {
+    if (pageNum > 1 && loadingMoreRef.current) return
+    if (pageNum > 1 && !hasMoreRef.current) return
+    
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    
     try {
       const res = await emailApi.list({ 
-        page: 1, 
+        page: pageNum, 
         page_size: 50, 
         search,
         account_id: selectedAccountId || undefined,
       })
-      setEmails(res.data)
+      
+      if (append) {
+        setEmails(prev => [...prev, ...res.data])
+      } else {
+        setEmails(res.data)
+      }
+      
+      setTotal(res.total)
+      const hasMoreVal = pageNum * 50 < res.total
+      hasMoreRef.current = hasMoreVal
+      setHasMore(hasMoreVal)
+      setPage(pageNum)
     } catch (e) {
       console.error(e)
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
     }
   }, [search, selectedAccountId])
 
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement
+    const { scrollTop, scrollHeight, clientHeight } = target
+    
+    if (scrollHeight - scrollTop - clientHeight < 200 && !loadingMore && hasMore) {
+      loadEmails(page + 1, true)
+    }
+  }, [loadEmails, page, hasMore, loadingMore])
+
   useEffect(() => {
     loadAccounts()
-    loadEmails()
+    loadEmails(1, false)
     loadSyncStatuses()
   }, [loadAccounts, loadEmails, loadSyncStatuses])
+
+  useEffect(() => {
+    setPage(1)
+    setTotal(0)
+    setHasMore(true)
+    loadEmails(1, false)
+  }, [search, selectedAccountId, loadEmails])
 
   const showToast = useCallback((
     message: string,
@@ -613,7 +656,7 @@ export default function Dashboard() {
         </div>
 
         {/* Email List */}
-        <div className="flex-1 overflow-auto thin-scrollbar">
+        <div className="flex-1 overflow-auto thin-scrollbar" onScroll={handleScroll}>
           {filteredEmails.length === 0 ? (
             <div className="empty-state">
               <Mail className="empty-state-icon" />
@@ -748,6 +791,17 @@ export default function Dashboard() {
                   </div>
                 ) : null
               ))}
+              
+              {loadingMore && (
+                <div className="flex justify-center py-4">
+                  <div className="w-5 h-5 border-2 border-[var(--primary-500)] border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+              {!hasMore && emails.length > 0 && (
+                <div className="text-center py-4 text-sm text-[var(--text-tertiary)]">
+                  共 {total} 封邮件
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -42,6 +42,7 @@ export default function Accounts() {
     username: '',
     password: '',
     color: '',
+    enable_auto_sync: true,
   })
   const [error, setError] = useState('')
   const [syncingAccountId, setSyncingAccountId] = useState<number | null>(null)
@@ -69,24 +70,23 @@ export default function Accounts() {
     setLoading(true)
     try {
       if (editingAccount) {
-        // 编辑模式 - 只发送变更的字段
         const updateData: Partial<typeof form> = {}
         if (form.email !== editingAccount.email) updateData.email = form.email
         if (form.provider !== editingAccount.provider) updateData.provider = form.provider
         if (form.username !== editingAccount.username) updateData.username = form.username
         if (form.password) updateData.password = form.password
         if (form.color !== editingAccount.color) updateData.color = form.color
+        if (form.enable_auto_sync !== (editingAccount.enable_auto_sync ?? true)) updateData.enable_auto_sync = form.enable_auto_sync
         
         await accountApi.update(editingAccount.id, updateData)
         setToast({ message: '账户更新成功', type: 'success' })
       } else {
-        // 添加模式
         await accountApi.add(form)
         setToast({ message: '账户添加成功', type: 'success' })
       }
       setShowModal(false)
       setEditingAccount(null)
-      setForm({ email: '', provider: 'gmail', username: '', password: '', color: '' })
+      setForm({ email: '', provider: 'gmail', username: '', password: '', color: '', enable_auto_sync: true })
       loadAccounts()
     } catch (err: unknown) {
       const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
@@ -99,7 +99,7 @@ export default function Accounts() {
 
   const openAddModal = () => {
     setEditingAccount(null)
-    setForm({ email: '', provider: 'gmail', username: '', password: '', color: '' })
+    setForm({ email: '', provider: 'gmail', username: '', password: '', color: '', enable_auto_sync: true })
     setError('')
     setShowModal(true)
   }
@@ -112,6 +112,7 @@ export default function Accounts() {
       username: account.username,
       password: '',
       color: account.color || '',
+      enable_auto_sync: account.enable_auto_sync ?? true,
     })
     setError('')
     setShowModal(true)
@@ -573,6 +574,31 @@ export default function Accounts() {
                       随机
                     </button>
                   </div>
+                </div>
+
+                {/* Auto Sync Toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--text-secondary)]">
+                      自动同步
+                    </label>
+                    <p className="text-xs text-[var(--text-tertiary)] mt-0.5">
+                      开启后每分钟自动同步邮件
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, enable_auto_sync: !form.enable_auto_sync })}
+                    className={`relative w-11 h-6 rounded-full transition-colors ${
+                      form.enable_auto_sync ? 'bg-[var(--primary-500)]' : 'bg-[var(--bg-tertiary)]'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                        form.enable_auto_sync ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
                 </div>
 
                 {/* Error Message */}
