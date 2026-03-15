@@ -74,6 +74,7 @@ export interface SyncLog {
 
 export interface Email {
   id: number
+  created_at: string
   account_id: number
   from: string
   from_name: string

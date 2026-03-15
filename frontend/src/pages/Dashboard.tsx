@@ -3,7 +3,6 @@ import { emailApi, accountApi, syncApi } from '../api'
 import axios from 'axios'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
-import { defaultCollapsedGroups } from '../config/inbox'
 import type { Email, EmailAccount, SyncStatus } from '../api'
 import { Search, Mail, Paperclip, Trash2, Eye, EyeOff, Loader2 } from 'lucide-react'
 
@@ -47,8 +46,6 @@ export default function Dashboard() {
   const emailItemRefs = useRef<Record<number, HTMLDivElement | null>>({})
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ email: Email } | null>(null)
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
-  const hasLoadedGroupPrefs = useRef(false)
 
   const formatSyncTime = (value?: string) => {
     if (!value) return '未同步'
@@ -164,22 +161,43 @@ export default function Dashboard() {
     }, 1600)
   }, [])
 
-  const getGroupKey = useCallback((dateValue: string) => {
-    const date = new Date(dateValue)
-    const now = new Date()
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const dayOfWeek = (startOfToday.getDay() + 6) % 7
-    const startOfWeek = new Date(startOfToday)
-    startOfWeek.setDate(startOfToday.getDate() - dayOfWeek)
+  const parseEmailDate = useCallback((value?: string | null) => {
+    if (!value) return null
+    const direct = new Date(value)
+    if (!Number.isNaN(direct.getTime())) return direct
 
-    if (date >= startOfToday) return 'today'
-    if (date >= startOfWeek) return 'week'
-    return 'earlier'
+    const goTimeMatch = value.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?\s([+-]\d{4})/)
+    if (goTimeMatch) {
+      const [, datePart, timePart, offset] = goTimeMatch
+      const offsetWithColon = offset.replace(/([+-]\d{2})(\d{2})/, '$1:$2')
+      const normalized = `${datePart}T${timePart}${offsetWithColon}`
+      const parsed = new Date(normalized)
+      if (!Number.isNaN(parsed.getTime())) return parsed
+    }
+
+    const normalizedLocal = value.replace(' ', 'T')
+    const localParsed = new Date(normalizedLocal)
+    if (!Number.isNaN(localParsed.getTime())) return localParsed
+
+    return null
   }, [])
 
+  const resolveEmailDate = useCallback((email: Email) => {
+    const primary = email.date || email.created_at
+    const fallback = email.created_at || email.date
+    const primaryDate = parseEmailDate(primary)
+    if (primaryDate) return primaryDate
+    const fallbackDate = parseEmailDate(fallback)
+    if (fallbackDate) return fallbackDate
+    return null
+  }, [parseEmailDate])
+
+  const getEmailTimestamp = useCallback((email: Email) => {
+    const date = resolveEmailDate(email)
+    return date ? date.getTime() : 0
+  }, [resolveEmailDate])
+
   const handleRead = useCallback(async (email: Email, shouldScroll = false, scrollDetail = false) => {
-    const groupKey = getGroupKey(email.date)
-    setCollapsedGroups(prev => (prev[groupKey] ? { ...prev, [groupKey]: false } : prev))
     if (!email.is_read) {
       await emailApi.markAsRead(email.id)
       setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
@@ -203,7 +221,7 @@ export default function Dashboard() {
     if (scrollDetail && detailScrollRef.current) {
       detailScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' })
     }
-  }, [getGroupKey])
+  }, [])
 
   const handleMarkAsUnread = useCallback(async (email: Email) => {
     if (!email.is_read) return
@@ -293,60 +311,10 @@ export default function Dashboard() {
 
 
   const sortedFilteredEmails = [...filteredEmails].sort((a, b) =>
-    new Date(b.date).getTime() - new Date(a.date).getTime(),
+    getEmailTimestamp(b) - getEmailTimestamp(a),
   )
 
-  const groupedEmails = sortedFilteredEmails.reduce<Record<string, Email[]>>((acc, email) => {
-    const key = getGroupKey(email.date)
-    if (!acc[key]) acc[key] = []
-    acc[key].push(email)
-    return acc
-  }, {})
-
-  const groupOrder: Array<{ key: string; label: string }> = [
-    { key: 'today', label: '今天' },
-    { key: 'week', label: '本周' },
-    { key: 'earlier', label: '更早' },
-  ]
-
-  const toggleGroup = useCallback((key: string) => {
-    setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }))
-  }, [])
-
   useEffect(() => {
-    if (hasLoadedGroupPrefs.current) return
-    try {
-      const stored = localStorage.getItem('inbox.collapsedGroups')
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        if (parsed && typeof parsed === 'object') {
-          setCollapsedGroups(parsed)
-          return
-        }
-      }
-      setCollapsedGroups(defaultCollapsedGroups)
-    } catch (e) {
-      console.error(e)
-    } finally {
-      hasLoadedGroupPrefs.current = true
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!hasLoadedGroupPrefs.current) return
-    try {
-      localStorage.setItem('inbox.collapsedGroups', JSON.stringify(collapsedGroups))
-    } catch (e) {
-      console.error(e)
-    }
-  }, [collapsedGroups])
-
-  useEffect(() => {
-    const expandGroupForEmail = (email: Email) => {
-      const key = getGroupKey(email.date)
-      setCollapsedGroups(prev => (prev[key] ? { ...prev, [key]: false } : prev))
-    }
-
     const handleKeyDown = (event: KeyboardEvent) => {
       if (contextMenu) return
       const target = event.target as HTMLElement | null
@@ -359,7 +327,6 @@ export default function Dashboard() {
         const index = sortedFilteredEmails.findIndex(email => email.id === selectedEmail?.id)
         const nextEmail = sortedFilteredEmails[index + 1] || sortedFilteredEmails[0]
         if (nextEmail) {
-          expandGroupForEmail(nextEmail)
           handleRead(nextEmail, true)
         }
       }
@@ -369,7 +336,6 @@ export default function Dashboard() {
         const index = sortedFilteredEmails.findIndex(email => email.id === selectedEmail?.id)
         const prevEmail = index <= 0 ? sortedFilteredEmails[sortedFilteredEmails.length - 1] : sortedFilteredEmails[index - 1]
         if (prevEmail) {
-          expandGroupForEmail(prevEmail)
           handleRead(prevEmail, true)
         }
       }
@@ -378,7 +344,6 @@ export default function Dashboard() {
         event.preventDefault()
         const target = selectedEmail || sortedFilteredEmails[0]
         if (target) {
-          expandGroupForEmail(target)
           handleRead(target, true, true)
         }
       }
@@ -391,7 +356,7 @@ export default function Dashboard() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [loadEmails, handleRead, selectedEmail, sortedFilteredEmails, contextMenu, getGroupKey])
+  }, [loadEmails, handleRead, selectedEmail, sortedFilteredEmails, contextMenu])
 
   const contextMenuItems = useMemo(() => {
     if (!contextMenu) return []
@@ -545,10 +510,10 @@ export default function Dashboard() {
             <div className="flex items-center gap-2 text-[var(--text-primary)]">
               <Mail className="w-4 h-4 text-[var(--text-tertiary)]" />
               <span className="text-sm font-semibold">收件箱</span>
+              <span className="text-xs text-[var(--text-tertiary)]">
+                ({filteredEmails.length})
+              </span>
             </div>
-            <span className="badge badge-default">
-              {filteredEmails.length}
-            </span>
           </div>
 
           {accounts.length > 0 && (
@@ -665,133 +630,117 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="pt-2 pb-4">
-              {groupOrder.map(group => (
-                groupedEmails[group.key]?.length ? (
-                  <div key={group.key}>
-                    <button
-                      type="button"
-                      onClick={() => toggleGroup(group.key)}
-                      className="w-full px-4 py-2 text-left text-xs font-semibold text-[var(--text-tertiary)] uppercase tracking-wide flex items-center justify-between hover:text-[var(--text-secondary)] transition-colors"
-                    >
-                      {group.label}
-                      <span className="text-[10px]">
-                        {collapsedGroups[group.key] ? '展开' : '收起'}
-                      </span>
-                    </button>
-                    {!collapsedGroups[group.key] && groupedEmails[group.key].map(email => {
-  const accountColor = getAccountColor(email.account_id)
-  const isSelected = selectedEmail?.id === email.id
-  return (
-    <div
-      key={email.id}
-      ref={(node) => { emailItemRefs.current[email.id] = node }}
-      onClick={() => handleRead(email)}
-      onContextMenu={(event) => {
-        event.preventDefault()
-        const menuWidth = 192
-        const menuHeight = 132
-        const padding = 8
-        const maxX = window.innerWidth - menuWidth - padding
-        const maxY = window.innerHeight - menuHeight - padding
-        const x = Math.min(event.clientX, maxX)
-        const y = Math.min(event.clientY, maxY)
-        setContextMenu({
-          email,
-          x: Math.max(padding, x),
-          y: Math.max(padding, y),
-        })
-        setContextMenuIndex(0)
-      }}
-      className={`group mx-3 my-1 rounded-xl border cursor-pointer transition-all duration-200 ${
-        isSelected
-          ? 'bg-gradient-to-r from-[var(--primary-50)] to-[var(--bg-primary)] border-[var(--primary-300)] shadow-md ring-1 ring-[var(--primary-200)]'
-          : 'bg-[var(--bg-primary)] border-[var(--border-light)] hover:border-[var(--border-default)] hover:shadow-md hover:-translate-y-0.5'
-      } ${!email.is_read ? 'shadow-sm' : ''}`}
-    >
-      <div className="px-3 py-2.5">
-        <div className="flex items-start gap-2.5">
-          {/* Avatar */}
-          <div 
-            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white flex-shrink-0 shadow-sm ${!email.is_read ? 'ring-2 ring-offset-1 ring-[var(--primary-200)]' : ''}`}
-            style={{ backgroundColor: accountColor }}
-          >
-            {(email.from_name || email.from)?.[0]?.toUpperCase() || '?'}
-          </div>
-          
-          {/* Content */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className={`text-sm truncate ${!email.is_read ? 'font-semibold text-[var(--text-primary)]' : 'font-medium text-[var(--text-secondary)]'}`}>
-                {email.from_name || email.from}
-              </span>
-              {!email.is_read && (
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--primary-500)] flex-shrink-0" title="未读" />
-              )}
-            </div>
-            <p className={`text-sm truncate ${!email.is_read ? 'text-[var(--text-primary)] font-medium' : 'text-[var(--text-secondary)]'}`}>
-              {email.subject || '(无主题)'}
-            </p>
-            {email.has_attachment && (
-              <div className="flex items-center gap-1 mt-0.5">
-                <Paperclip className="w-3 h-3 text-[var(--text-tertiary)]" />
-                <span className="text-[10px] text-[var(--text-tertiary)]">附件</span>
-              </div>
-            )}
-          </div>
-          
-          {/* Actions & Date */}
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-0.5 opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
-              {email.is_read ? (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    handleMarkAsUnread(email)
-                  }}
-                  className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors"
-                  title="标记为未读"
-                >
-                  <EyeOff className="w-3.5 h-3.5" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    handleRead(email)
-                  }}
-                  className="p-1.5 rounded-md text-[var(--primary-600)] hover:text-[var(--primary-700)] hover:bg-[var(--primary-50)] transition-colors"
-                  title="标记为已读"
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  requestDeleteEmail(email)
-                }}
-                className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] transition-colors"
-                title="删除"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <span className="text-[10px] text-[var(--text-tertiary)] whitespace-nowrap">
-              {new Date(email.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-})}
+              {sortedFilteredEmails.map(email => {
+                const accountColor = getAccountColor(email.account_id)
+                const isSelected = selectedEmail?.id === email.id
+                return (
+                  <div
+                    key={email.id}
+                    ref={(node) => { emailItemRefs.current[email.id] = node }}
+                    onClick={() => handleRead(email)}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      const menuWidth = 192
+                      const menuHeight = 132
+                      const padding = 8
+                      const maxX = window.innerWidth - menuWidth - padding
+                      const maxY = window.innerHeight - menuHeight - padding
+                      const x = Math.min(event.clientX, maxX)
+                      const y = Math.min(event.clientY, maxY)
+                      setContextMenu({
+                        email,
+                        x: Math.max(padding, x),
+                        y: Math.max(padding, y),
+                      })
+                      setContextMenuIndex(0)
+                    }}
+                    className={`group mx-3 my-1 rounded-xl border cursor-pointer transition-all duration-200 ${
+                      isSelected
+                        ? 'bg-gradient-to-r from-[var(--primary-50)] to-[var(--bg-primary)] border-[var(--primary-300)] shadow-md ring-1 ring-[var(--primary-200)]'
+                        : 'bg-[var(--bg-primary)] border-[var(--border-light)] hover:border-[var(--border-default)] hover:shadow-md hover:-translate-y-0.5'
+                    } ${!email.is_read ? 'shadow-sm' : ''}`}
+                  >
+                    <div className="px-3 py-2.5">
+                      <div className="flex items-start gap-2.5">
+                        {/* Avatar */}
+                        <div
+                          className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white flex-shrink-0 shadow-sm ${!email.is_read ? 'ring-2 ring-offset-1 ring-[var(--primary-200)]' : ''}`}
+                          style={{ backgroundColor: accountColor }}
+                        >
+                          {(email.from_name || email.from)?.[0]?.toUpperCase() || '?'}
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-sm truncate ${!email.is_read ? 'font-semibold text-[var(--text-primary)]' : 'font-medium text-[var(--text-secondary)]'}`}>
+                              {email.from_name || email.from}
+                            </span>
+                            {!email.is_read && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--primary-500)] flex-shrink-0" title="未读" />
+                            )}
+                          </div>
+                          <p className={`text-sm truncate ${!email.is_read ? 'text-[var(--text-primary)] font-medium' : 'text-[var(--text-secondary)]'}`}>
+                            {email.subject || '(无主题)'}
+                          </p>
+                          {email.has_attachment && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <Paperclip className="w-3 h-3 text-[var(--text-tertiary)]" />
+                              <span className="text-[10px] text-[var(--text-tertiary)]">附件</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actions & Date */}
+                        <div className="flex flex-col items-end gap-1">
+                          <div className="flex items-center gap-0.5 opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
+                            {email.is_read ? (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleMarkAsUnread(email)
+                                }}
+                                className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors"
+                                title="标记为未读"
+                              >
+                                <EyeOff className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleRead(email)
+                                }}
+                                className="p-1.5 rounded-md text-[var(--primary-600)] hover:text-[var(--primary-700)] hover:bg-[var(--primary-50)] transition-colors"
+                                title="标记为已读"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                requestDeleteEmail(email)
+                              }}
+                              className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] transition-colors"
+                              title="删除"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          <span className="text-[10px] text-[var(--text-tertiary)] whitespace-nowrap">
+                            {resolveEmailDate(email)?.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) || '未知日期'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                ) : null
-              ))}
-              
+                )
+              })}
+
               {loadingMore && (
                 <div className="flex justify-center py-4">
                   <div className="w-5 h-5 border-2 border-[var(--primary-500)] border-t-transparent rounded-full animate-spin" />
