@@ -5,3 +5,12 @@ server:
 database:
   type: sqlite
   path: ./data/one-mail.db
+
+jwt:
+  secret: "916481d3-a196-46d1-a05b-fea0a6984c04"  # 留空则从环境变量 JWT_SECRET 读取，生产环境必须设置
+  expires: 168h  # 7天
+
+cors:
+  # 允许的域名列表，留空则允许所有来源（仅开发环境推荐）
+  # 生产环境示例: ["https://mail.example.com", "https://admin.example.com"]
+  allowed_origins: []

@@ -14,6 +14,7 @@ import (
 	"one-mail/backend/internal/handlers"
 	"one-mail/backend/internal/middleware"
 	syncservice "one-mail/backend/internal/services/sync"
+	"one-mail/backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -56,6 +57,11 @@ func main() {
 
 	if err := database.InitDatabase(); err != nil {
 		log.Fatalf("Failed to init database: %v", err)
+	}
+
+	// 初始化 JWT
+	if err := utils.InitJWT(); err != nil {
+		log.Fatalf("Failed to init JWT: %v", err)
 	}
 
 	if err := syncservice.InitSyncCache(); err != nil {

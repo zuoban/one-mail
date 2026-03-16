@@ -343,14 +343,17 @@ export default function Dashboard() {
     setContextMenuIndex(0)
   }, [])
 
-  const filteredEmails = emails.filter(email => {
-    if (filter === 'unread') return !email.is_read
-    return true
-  })
+  const filteredEmails = useMemo(() => {
+    if (filter === 'unread') return emails.filter(email => !email.is_read)
+    return emails
+  }, [emails, filter])
 
 
-  const sortedFilteredEmails = [...filteredEmails].sort((a, b) =>
-    getEmailTimestamp(b) - getEmailTimestamp(a),
+  const sortedFilteredEmails = useMemo(() =>
+    [...filteredEmails].sort((a, b) =>
+      getEmailTimestamp(b) - getEmailTimestamp(a),
+    ),
+    [filteredEmails, getEmailTimestamp]
   )
 
   useEffect(() => {
