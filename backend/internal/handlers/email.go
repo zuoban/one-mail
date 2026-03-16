@@ -117,11 +117,6 @@ func (h *EmailHandler) GetEmail(c *gin.Context) {
 		return
 	}
 
-	if !email.IsRead {
-		database.GetDB().Model(&email).Update("is_read", true)
-	}
-
-	// 只有在正文为空时才从 IMAP 拉取,并设置超时
 	if email.BodyText == "" && email.BodyHTML == "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -178,14 +173,20 @@ func (h *EmailHandler) MarkAsRead(c *gin.Context) {
 
 	database.GetDB().Model(&email).Update("is_read", true)
 
-	var account models.EmailAccount
-	database.GetDB().First(&account, email.AccountID)
+	go func() {
+		var account models.EmailAccount
+		if err := database.GetDB().First(&account, email.AccountID).Error; err != nil {
+			return
+		}
 
-	imapClient, err := imap.GetConnectionPool().GetConnection(&account)
-	if err == nil {
+		imapClient, err := imap.GetConnectionPool().GetConnection(&account)
+		if err != nil {
+			return
+		}
+		defer imap.GetConnectionPool().ReleaseConnection(account.ID)
+
 		imapClient.MarkAsRead(email.UID, email.Folder)
-		imap.GetConnectionPool().ReleaseConnection(account.ID)
-	}
+	}()
 
 	c.JSON(http.StatusOK, gin.H{"message": "marked as read"})
 }
