@@ -11,6 +11,7 @@ import (
 	"one-mail/backend/database"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
+	"one-mail/backend/internal/services/telegram"
 )
 
 func getBatchSize(isFirstSync bool) int {
@@ -190,6 +191,10 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 	if len(newEmails) > 0 {
 		if err := db.Create(&newEmails).Error; err != nil {
 			return 0, err
+		}
+
+		for i := range newEmails {
+			telegram.SendNewEmailAsync(&newEmails[i], account.Email)
 		}
 	}
 

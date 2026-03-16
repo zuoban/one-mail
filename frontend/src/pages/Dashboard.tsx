@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { emailApi, accountApi, syncApi } from '../api'
+import { emailApi, accountApi, syncApi, telegramApi } from '../api'
 import axios from 'axios'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 import type { Email, EmailAccount, SyncStatus } from '../api'
-import { Search, Mail, Paperclip, Trash2, Eye, EyeOff, Loader2 } from 'lucide-react'
+import { Search, Mail, Paperclip, Trash2, Eye, EyeOff, Loader2, Send } from 'lucide-react'
 
 const providers = [
   { value: 'gmail', label: 'Gmail' },
@@ -46,6 +46,7 @@ export default function Dashboard() {
   const emailItemRefs = useRef<Record<number, HTMLDivElement | null>>({})
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ email: Email } | null>(null)
+  const [sendingTelegram, setSendingTelegram] = useState(false)
 
   const formatSyncTime = (value?: string) => {
     if (!value) return '未同步'
@@ -323,6 +324,19 @@ export default function Dashboard() {
   const cancelDeleteEmail = useCallback(() => {
     setConfirmDelete(null)
   }, [])
+
+  const handleSendToTelegram = useCallback(async (email: Email) => {
+    setSendingTelegram(true)
+    try {
+      await telegramApi.sendEmail(email.id)
+      showToast('已发送到 Telegram', 'success')
+    } catch (e) {
+      const message = axios.isAxiosError(e) ? e.response?.data?.error : undefined
+      showToast(message || '发送失败', 'error')
+    } finally {
+      setSendingTelegram(false)
+    }
+  }, [showToast])
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
@@ -818,6 +832,15 @@ export default function Dashboard() {
                   title="删除"
                 >
                   <Trash2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendToTelegram(selectedEmail)}
+                  disabled={sendingTelegram}
+                  className="btn btn-secondary p-2"
+                  title="发送到 Telegram"
+                >
+                  {sendingTelegram ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                 </button>
               </div>
               <div className="mt-3 text-sm text-[var(--text-tertiary)]">

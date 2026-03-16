@@ -85,3 +85,11 @@ type Email struct {
 	Folder        string         `gorm:"default:'INBOX';index" json:"folder"`
 	UID           uint           `gorm:"not null;index" json:"uid"`
 }
+
+type TelegramConfig struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Enabled   bool      `gorm:"default:false" json:"enabled"`
+	BotToken  string    `gorm:"type:text" json:"bot_token"`
+	ChatID    string    `gorm:"type:text" json:"chat_id"`
+}

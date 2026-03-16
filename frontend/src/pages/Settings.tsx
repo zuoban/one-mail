@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
-import { authApi } from '../api'
+import { authApi, telegramApi } from '../api'
 import useAuth from '../context/useAuth'
-import { User, Lock, Save, Key } from 'lucide-react'
+import { User, Lock, Save, Key, Send, Bell } from 'lucide-react'
 import axios from 'axios'
+import type { TelegramConfig } from '../api'
 
 export default function Settings() {
   const { user, updateUser } = useAuth()
   const [loading, setLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<'profile' | 'password'>('profile')
+  const [activeTab, setActiveTab] = useState<'profile' | 'password' | 'telegram'>('profile')
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   const [profileForm, setProfileForm] = useState({
@@ -23,6 +24,15 @@ export default function Settings() {
   })
   const [passwordError, setPasswordError] = useState('')
 
+  const [telegramConfig, setTelegramConfig] = useState<TelegramConfig>({
+    enabled: false,
+    bot_token: '',
+    chat_id: '',
+  })
+  const [telegramLoading, setTelegramLoading] = useState(false)
+  const [telegramTesting, setTelegramTesting] = useState(false)
+  const [telegramError, setTelegramError] = useState('')
+
   useEffect(() => {
     if (user) {
       setProfileForm({
@@ -30,7 +40,17 @@ export default function Settings() {
         email: user.email,
       })
     }
+    loadTelegramConfig()
   }, [user])
+
+  const loadTelegramConfig = async () => {
+    try {
+      const res = await telegramApi.getConfig()
+      setTelegramConfig(res.data)
+    } catch (e) {
+      console.error('Failed to load telegram config', e)
+    }
+  }
 
   const handleProfileSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -82,6 +102,47 @@ export default function Settings() {
     }
   }
 
+  const handleTelegramSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setTelegramError('')
+    setTelegramLoading(true)
+
+    try {
+      await telegramApi.updateConfig({
+        enabled: telegramConfig.enabled,
+        bot_token: telegramConfig.bot_token,
+        chat_id: telegramConfig.chat_id,
+      })
+      setToast({ message: 'Telegram 配置已保存', type: 'success' })
+      loadTelegramConfig()
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      setTelegramError(message || '保存失败')
+    } finally {
+      setTelegramLoading(false)
+      setTimeout(() => setToast(null), 2000)
+    }
+  }
+
+  const handleTelegramTest = async () => {
+    setTelegramError('')
+    setTelegramTesting(true)
+
+    try {
+      await telegramApi.testConnection({
+        bot_token: telegramConfig.bot_token,
+        chat_id: telegramConfig.chat_id,
+      })
+      setToast({ message: '测试消息发送成功', type: 'success' })
+    } catch (err: unknown) {
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      setTelegramError(message || '测试失败')
+    } finally {
+      setTelegramTesting(false)
+      setTimeout(() => setToast(null), 2000)
+    }
+  }
+
   return (
     <div className="h-full overflow-auto">
       <div className="max-w-4xl mx-auto p-8">
@@ -121,6 +182,17 @@ export default function Settings() {
           >
             <Lock className="w-4 h-4" />
             修改密码
+          </button>
+          <button
+            onClick={() => setActiveTab('telegram')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              activeTab === 'telegram'
+                ? 'bg-[var(--primary-600)] text-white'
+                : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'
+            }`}
+          >
+            <Send className="w-4 h-4" />
+            Telegram 通知
           </button>
         </div>
 
@@ -244,6 +316,102 @@ export default function Settings() {
                 >
                   <Lock className="w-4 h-4" />
                   {loading ? '修改中...' : '修改密码'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {activeTab === 'telegram' && (
+          <div className="bg-[var(--bg-primary)] rounded-lg p-6 border border-[var(--border-light)]">
+            <h2 className="text-lg font-medium text-[var(--text-primary)] mb-4 flex items-center gap-2">
+              <Bell className="w-5 h-5" />
+              Telegram 通知
+            </h2>
+
+            <p className="text-sm text-[var(--text-tertiary)] mb-6">
+              配置 Telegram Bot 后，新邮件将自动转发到指定的 Telegram 聊天。
+            </p>
+
+            {telegramError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
+                {telegramError}
+              </div>
+            )}
+
+            <form onSubmit={handleTelegramSubmit} className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-[var(--text-secondary)]">
+                    启用通知
+                  </label>
+                  <p className="text-xs text-[var(--text-tertiary)] mt-0.5">
+                    开启后新邮件将自动转发到 Telegram
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTelegramConfig({ ...telegramConfig, enabled: !telegramConfig.enabled })}
+                  className={`relative w-11 h-6 rounded-full transition-colors ${
+                    telegramConfig.enabled ? 'bg-[var(--primary-500)]' : 'bg-[var(--bg-tertiary)]'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                      telegramConfig.enabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+                  Bot Token
+                </label>
+                <input
+                  type="text"
+                  value={telegramConfig.bot_token}
+                  onChange={(e) => setTelegramConfig({ ...telegramConfig, bot_token: e.target.value })}
+                  className="w-full px-4 py-2 border border-[var(--border-light)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary-500)] bg-[var(--bg-secondary)] text-[var(--text-primary)] font-mono text-sm"
+                  placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+                />
+                <p className="mt-1 text-xs text-[var(--text-tertiary)]">
+                  从 @BotFather 获取
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+                  Chat ID
+                </label>
+                <input
+                  type="text"
+                  value={telegramConfig.chat_id}
+                  onChange={(e) => setTelegramConfig({ ...telegramConfig, chat_id: e.target.value })}
+                  className="w-full px-4 py-2 border border-[var(--border-light)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary-500)] bg-[var(--bg-secondary)] text-[var(--text-primary)]"
+                  placeholder="-1001234567890"
+                />
+                <p className="mt-1 text-xs text-[var(--text-tertiary)]">
+                  可以是用户 ID、群组 ID 或频道 ID
+                </p>
+              </div>
+
+              <div className="flex justify-between pt-4">
+                <button
+                  type="button"
+                  onClick={handleTelegramTest}
+                  disabled={telegramTesting || !telegramConfig.bot_token || !telegramConfig.chat_id}
+                  className="px-4 py-2 rounded-lg text-sm text-[var(--primary-600)] border border-[var(--primary-200)] hover:bg-[var(--primary-50)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {telegramTesting ? '测试中...' : '发送测试消息'}
+                </button>
+                <button
+                  type="submit"
+                  disabled={telegramLoading}
+                  className="btn btn-primary flex items-center gap-2"
+                >
+                  <Save className="w-4 h-4" />
+                  {telegramLoading ? '保存中...' : '保存配置'}
                 </button>
               </div>
             </form>

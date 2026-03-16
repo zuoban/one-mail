@@ -173,6 +173,11 @@ func main() {
 		api.GET("/sync/logs", syncHandler.GetSyncLogs)
 		api.GET("/sync/logs/:account_id", syncHandler.GetSyncLogs)
 		api.DELETE("/sync/logs/:account_id", syncHandler.ClearSyncLogs)
+
+		api.GET("/telegram/config", handlers.GetTelegramConfig)
+		api.PUT("/telegram/config", handlers.UpdateTelegramConfig)
+		api.POST("/telegram/test", handlers.TestTelegramConnection)
+		api.POST("/telegram/send/:id", handlers.SendEmailToTelegram)
 	}
 
 	r.GET("/health", func(c *gin.Context) {

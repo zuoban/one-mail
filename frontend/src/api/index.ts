@@ -15,7 +15,6 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // 登录/注册接口的 401 是正常业务错误，不应跳转
     const isAuthEndpoint = error.config?.url?.includes('/auth/')
     if (error.response?.status === 401 && !isAuthEndpoint) {
       localStorage.removeItem('token')
@@ -88,6 +87,12 @@ export interface Email {
   folder: string
 }
 
+export interface TelegramConfig {
+  enabled: boolean
+  bot_token: string
+  chat_id: string
+}
+
 export interface AuthResponse {
   token: string
   user: User
@@ -131,7 +136,6 @@ export const syncApi = {
   clearLogs: (accountId: number) => api.delete(`/sync/logs/${accountId}`),
   applyToAll: () => api.post<{ message: string; updated_count: number }>('/sync/apply-to-all').then(r => r.data),
 }
-
 export const emailApi = {
   list: (params?: { account_id?: number; page?: number; page_size?: number; search?: string }) =>
     api.get<{ data: Email[]; total: number }>('/emails', { params }).then(r => r.data),
@@ -140,5 +144,13 @@ export const emailApi = {
   markAsUnread: (id: number) => api.post(`/emails/${id}/unread`),
   delete: (id: number) => api.delete(`/emails/${id}`),
 }
-
+export const telegramApi = {
+  getConfig: () => api.get<{ data: TelegramConfig }>('/telegram/config').then(r => r.data),
+  updateConfig: (data: { enabled?: boolean; bot_token?: string; chat_id?: string }) =>
+    api.put<{ data: TelegramConfig }>('/telegram/config', data).then(r => r.data),
+  testConnection: (data?: { bot_token?: string; chat_id?: string }) =>
+    api.post<{ message: string }>('/telegram/test', data || {}).then(r => r.data),
+  sendEmail: (emailId: number) =>
+    api.post<{ message: string }>(`/telegram/send/${emailId}`).then(r => r.data),
+}
 export default api
