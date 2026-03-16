@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  one-mail:
+    image: ghcr.io/zuoban/one-mail:latest
+    container_name: one-mail
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - one-mail-data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+
+volumes:
+  one-mail-data:
+    driver: local
