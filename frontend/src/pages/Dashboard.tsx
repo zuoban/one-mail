@@ -63,6 +63,31 @@ export default function Dashboard() {
     return date.toLocaleDateString('zh-CN')
   }
 
+  const formatRelativeTime = (date: Date | null) => {
+    if (!date) return '未知日期'
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    if (diffMs < 0) return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+    
+    const diffMinutes = Math.floor(diffMs / (1000 * 60))
+    if (diffMinutes < 1) return '刚刚'
+    if (diffMinutes < 60) return `${diffMinutes}分钟前`
+    
+    const diffHours = Math.floor(diffMinutes / 60)
+    if (diffHours < 24) return `${diffHours}小时前`
+    
+    const diffDays = Math.floor(diffHours / 24)
+    if (diffDays === 1) return '昨天'
+    if (diffDays < 7) return `${diffDays}天前`
+    
+    const nowYear = now.getFullYear()
+    const dateYear = date.getFullYear()
+    if (dateYear === nowYear) {
+      return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+    }
+    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' })
+  }
+
   const getAccountColor = (accountId: number) => {
     const account = accounts.find(a => a.id === accountId)
     return account?.color || '#6366f1'
@@ -732,7 +757,7 @@ export default function Dashboard() {
                             </button>
                           </div>
                           <span className="text-[10px] text-[var(--text-tertiary)] whitespace-nowrap">
-                            {resolveEmailDate(email)?.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) || '未知日期'}
+                            {formatRelativeTime(resolveEmailDate(email))}
                           </span>
                         </div>
                       </div>
