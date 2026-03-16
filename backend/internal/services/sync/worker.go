@@ -14,6 +14,18 @@ import (
 	"one-mail/backend/internal/services/telegram"
 )
 
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "use of closed network connection") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "i/o timeout") ||
+		strings.Contains(errStr, "network is unreachable")
+}
+
 func getBatchSize(isFirstSync bool) int {
 	if isFirstSync {
 		return 500
@@ -69,33 +81,59 @@ func SyncAccount(accountID uint) (int, error) {
 		folders = []string{"INBOX"}
 	}
 
-	totalNew := 0
-	syncedFolders := 0
-	var folderErrors []error
-	for _, folder := range folders {
-		folder = strings.TrimSpace(folder)
-		if folder == "" {
+	maxRetries := 2
+	for retry := 0; retry <= maxRetries; retry++ {
+		totalNew := 0
+		syncedFolders := 0
+		var folderErrors []error
+		networkErrorOccurred := false
+
+		for _, folder := range folders {
+			folder = strings.TrimSpace(folder)
+			if folder == "" {
+				continue
+			}
+
+			newCount, err := SyncFolder(db, &account, client, folder)
+			if err != nil {
+				log.Printf("Failed to sync folder %s for account %d: %v", folder, accountID, err)
+				if isNetworkError(err) {
+					networkErrorOccurred = true
+				}
+				folderErrors = append(folderErrors, err)
+				continue
+			}
+			syncedFolders++
+			totalNew += newCount
+		}
+
+		db.Model(&account).Update("last_sync_time", time.Now())
+
+		if syncedFolders > 0 {
+			log.Printf("Synced account %d, %d new emails", accountID, totalNew)
+			return totalNew, nil
+		}
+
+		if networkErrorOccurred && retry < maxRetries {
+			log.Printf("Network error occurred, retrying (%d/%d)...", retry+1, maxRetries)
+			pool.RemoveConnection(account.ID)
+			client, err = pool.GetConnection(&account)
+			if err != nil {
+				return 0, err
+			}
+			time.Sleep(time.Second * 2)
 			continue
 		}
 
-		newCount, err := SyncFolder(db, &account, client, folder)
-		if err != nil {
-			log.Printf("Failed to sync folder %s for account %d: %v", folder, accountID, err)
-			folderErrors = append(folderErrors, err)
-			continue
+		if syncedFolders == 0 && len(folderErrors) > 0 {
+			return totalNew, fmt.Errorf("sync failed for all folders (last error: %w)", folderErrors[len(folderErrors)-1])
 		}
-		syncedFolders++
-		totalNew += newCount
+
+		log.Printf("Synced account %d, %d new emails", accountID, totalNew)
+		return totalNew, nil
 	}
 
-	db.Model(&account).Update("last_sync_time", time.Now())
-
-	if syncedFolders == 0 && len(folderErrors) > 0 {
-		return totalNew, fmt.Errorf("sync failed for all folders (last error: %w)", folderErrors[len(folderErrors)-1])
-	}
-
-	log.Printf("Synced account %d, %d new emails", accountID, totalNew)
-	return totalNew, nil
+	return 0, fmt.Errorf("sync failed after %d retries", maxRetries)
 }
 
 func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, folder string) (int, error) {
