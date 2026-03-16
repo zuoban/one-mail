@@ -80,8 +80,8 @@ export interface Email {
   to: string
   subject: string
   date: string
-  body_text: string
-  body_html: string
+  body_text?: string
+  body_html?: string
   has_attachment: boolean
   is_read: boolean
   folder: string

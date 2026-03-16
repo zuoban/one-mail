@@ -2,12 +2,7 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"net/url"
-	"sync"
-	"time"
 
 	"one-mail/backend/config"
 	"one-mail/backend/database"
@@ -18,36 +13,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
-
-type cachedImage struct {
-	data        []byte
-	contentType string
-	expiry      time.Time
-}
-
-var imageCache struct {
-	sync.RWMutex
-	data map[string]cachedImage
-}
-
-var imageCacheInit sync.Mutex
-
-func init() {
-	imageCache.data = make(map[string]cachedImage)
-	go func() {
-		for {
-			time.Sleep(5 * time.Minute)
-			imageCache.Lock()
-			now := time.Now()
-			for k, v := range imageCache.data {
-				if now.After(v.expiry) {
-					delete(imageCache.data, k)
-				}
-			}
-			imageCache.Unlock()
-		}
-	}()
-}
 
 func main() {
 	cfg, err := config.LoadConfig("config.yaml")
@@ -74,69 +39,6 @@ func main() {
 
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware())
-
-	r.GET("/api/proxy/image", func(c *gin.Context) {
-		imgURL := c.Query("url")
-		if imgURL == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "url is required"})
-			return
-		}
-
-		parsedURL, err := url.Parse(imgURL)
-		if err != nil || parsedURL.Scheme == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url"})
-			return
-		}
-
-		imageCache.RLock()
-		if cached, ok := imageCache.data[imgURL]; ok {
-			imageCache.RUnlock()
-			c.Header("Content-Type", cached.contentType)
-			c.Header("Cache-Control", "public, max-age=86400")
-			c.Writer.Write(cached.data)
-			return
-		}
-		imageCache.RUnlock()
-
-		req, err := http.NewRequest("GET", imgURL, nil)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to create request"})
-			return
-		}
-
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch image"})
-			return
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read image"})
-			return
-		}
-
-		contentType := resp.Header.Get("Content-Type")
-		if contentType == "" {
-			contentType = "image/jpeg"
-		}
-
-		imageCache.Lock()
-		imageCache.data[imgURL] = cachedImage{
-			data:        body,
-			contentType: contentType,
-			expiry:      time.Now().Add(10 * time.Minute),
-		}
-		imageCache.Unlock()
-
-		c.Header("Content-Type", contentType)
-		c.Header("Cache-Control", "public, max-age=86400")
-		c.Writer.Write(body)
-	})
 
 	accountHandler := handlers.NewAccountHandler()
 	emailHandler := handlers.NewEmailHandler()

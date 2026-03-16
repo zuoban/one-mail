@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -75,8 +76,27 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 
 	offset := (query.Page - 1) * query.PageSize
 
-	var emails []models.Email
-	if err := db.Order("date DESC").Offset(offset).Limit(query.PageSize).Find(&emails).Error; err != nil {
+	type EmailListItem struct {
+		ID            uint      `json:"id"`
+		CreatedAt     time.Time `json:"created_at"`
+		AccountID     uint      `json:"account_id"`
+		From          string    `json:"from"`
+		FromName      string    `json:"from_name"`
+		To            string    `json:"to"`
+		Subject       string    `json:"subject"`
+		Date          time.Time `json:"date"`
+		HasAttachment bool      `json:"has_attachment"`
+		IsRead        bool      `json:"is_read"`
+		Folder        string    `json:"folder"`
+	}
+
+	var emails []EmailListItem
+	if err := db.Model(&models.Email{}).
+		Select("id, created_at, account_id, `from`, from_name, `to`, subject, date, has_attachment, is_read, folder").
+		Order("date DESC").
+		Offset(offset).
+		Limit(query.PageSize).
+		Find(&emails).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -101,28 +121,37 @@ func (h *EmailHandler) GetEmail(c *gin.Context) {
 		database.GetDB().Model(&email).Update("is_read", true)
 	}
 
+	// 只有在正文为空时才从 IMAP 拉取,并设置超时
 	if email.BodyText == "" && email.BodyHTML == "" {
-		h.fetchAndCacheBody(&email)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		h.fetchAndCacheBody(ctx, &email)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": email})
 }
 
-func (h *EmailHandler) fetchAndCacheBody(email *models.Email) {
+func (h *EmailHandler) fetchAndCacheBody(ctx context.Context, email *models.Email) {
 	var account models.EmailAccount
 	if err := database.GetDB().First(&account, email.AccountID).Error; err != nil {
 		return
 	}
 
-	imapClient := imap.NewClient(&account)
-	if err := imapClient.Connect(); err != nil {
-		return
-	}
-	defer imapClient.Disconnect()
-
-	bodyText, bodyHTML, err := imapClient.FetchEmailBody(email.Folder, email.UID)
+	imapClient, err := imap.GetConnectionPool().GetConnection(&account)
 	if err != nil {
 		return
+	}
+	defer imap.GetConnectionPool().ReleaseConnection(account.ID)
+
+	bodyText, bodyHTML, fetchErr := imapClient.FetchEmailBody(email.Folder, email.UID)
+	if fetchErr != nil {
+		return
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	default:
 	}
 
 	database.GetDB().Model(email).Updates(map[string]interface{}{
@@ -152,10 +181,10 @@ func (h *EmailHandler) MarkAsRead(c *gin.Context) {
 	var account models.EmailAccount
 	database.GetDB().First(&account, email.AccountID)
 
-	imapClient := imap.NewClient(&account)
-	if err := imapClient.Connect(); err == nil {
+	imapClient, err := imap.GetConnectionPool().GetConnection(&account)
+	if err == nil {
 		imapClient.MarkAsRead(email.UID, email.Folder)
-		imapClient.Disconnect()
+		imap.GetConnectionPool().ReleaseConnection(account.ID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "marked as read"})

@@ -416,18 +416,12 @@ export default function Dashboard() {
 
   const sanitizedHtml = useMemo(() => {
     if (!selectedEmail?.body_html) return ''
-    const baseURL = axios.defaults.baseURL || 'http://localhost:8080/api'
     try {
       const parser = new DOMParser()
       const doc = parser.parseFromString(selectedEmail.body_html, 'text/html')
       doc.querySelectorAll('style, link[rel="stylesheet"], script').forEach(node => node.remove())
       doc.querySelectorAll('img').forEach(img => {
-        const src = img.getAttribute('src')
-        if (src && !src.startsWith('cid:') && !src.startsWith('data:')) {
-          const encodedUrl = encodeURIComponent(src)
-          img.setAttribute('src', `${baseURL}/proxy/image?url=${encodedUrl}`)
-          img.setAttribute('loading', 'lazy')
-        }
+        img.setAttribute('loading', 'lazy')
       })
       return doc.body?.innerHTML || ''
     } catch (e) {
