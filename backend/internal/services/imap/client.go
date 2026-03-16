@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"strings"
 	"time"
 
@@ -78,7 +79,14 @@ func NewClient(account *models.EmailAccount) *Client {
 func (c *Client) Connect() error {
 	host := fmt.Sprintf("%s:%d", c.account.IMAPHost, c.account.IMAPPort)
 
-	conn, err := imapclient.DialTLS(host, nil)
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	options := &imapclient.Options{
+		Dialer: dialer,
+	}
+	conn, err := imapclient.DialTLS(host, options)
 	if err != nil {
 		return fmt.Errorf("failed to connect to IMAP server: %w", err)
 	}
@@ -699,7 +707,14 @@ func (c *Client) TestConnection() error {
 		return fmt.Errorf("invalid configuration")
 	}
 
-	conn, err := imapclient.DialTLS(fmt.Sprintf("%s:%d", host, port), nil)
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	options := &imapclient.Options{
+		Dialer: dialer,
+	}
+	conn, err := imapclient.DialTLS(fmt.Sprintf("%s:%d", host, port), options)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
 	}

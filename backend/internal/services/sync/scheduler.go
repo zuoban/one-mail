@@ -19,6 +19,7 @@ type Scheduler struct {
 	cron         *cron.Cron
 	running      bool
 	statuses     map[uint]*SyncStatus
+	syncLogs     map[uint]uint
 	trigger      chan struct{}
 	lastSyncTime time.Time
 }
@@ -43,6 +44,7 @@ func GetScheduler() *Scheduler {
 			ctx:      ctx,
 			cancel:   cancel,
 			statuses: make(map[uint]*SyncStatus),
+			syncLogs: make(map[uint]uint),
 			trigger:  make(chan struct{}, 1),
 		}
 	})
@@ -137,11 +139,13 @@ func (s *Scheduler) syncAllAccounts() {
 func (s *Scheduler) forceResetAccountStatus(accountID uint) {
 	s.mu.Lock()
 	status, exists := s.statuses[accountID]
+	syncLogID, hasLog := s.syncLogs[accountID]
+	delete(s.syncLogs, accountID)
+	s.mu.Unlock()
+
 	if !exists {
-		s.mu.Unlock()
 		return
 	}
-	s.mu.Unlock()
 
 	status.mu.Lock()
 	status.Running = false
@@ -149,9 +153,23 @@ func (s *Scheduler) forceResetAccountStatus(accountID uint) {
 	status.Error = "sync timeout after 5 minutes"
 	status.mu.Unlock()
 
+	if hasLog && syncLogID > 0 {
+		now := time.Now()
+		if err := database.GetDB().Model(&models.SyncLog{}).
+			Where("id = ?", syncLogID).
+			Updates(map[string]interface{}{
+				"end_time":    now,
+				"status":      "timeout",
+				"error":       "sync timeout after 5 minutes",
+				"duration_ms": 5 * 60 * 1000,
+			}).Error; err != nil {
+			log.Printf("Failed to update sync_log %d for account %d: %v", syncLogID, accountID, err)
+		}
+	}
+
 	if err := database.GetDB().Model(&models.SyncState{}).
 		Where("account_id = ? AND is_syncing = ?", accountID, true).
-		Updates(map[string]interface{}{ "is_syncing": false, "error": "sync timeout reset"}).Error; err != nil {
+		Updates(map[string]interface{}{"is_syncing": false, "error": "sync timeout reset"}).Error; err != nil {
 		log.Printf("Failed to reset sync_state for account %d: %v", accountID, err)
 	}
 
@@ -195,7 +213,15 @@ func (s *Scheduler) syncAccount(accountID uint) {
 	}
 	database.GetDB().Create(&syncLog)
 
+	s.mu.Lock()
+	s.syncLogs[accountID] = syncLog.ID
+	s.mu.Unlock()
+
 	defer func() {
+		s.mu.Lock()
+		delete(s.syncLogs, accountID)
+		s.mu.Unlock()
+
 		status.mu.Lock()
 		status.Running = false
 		status.LastSyncTime = time.Now()
