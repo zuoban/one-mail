@@ -70,7 +70,6 @@ func (s *Scheduler) Start() {
 	s.running = true
 
 	go s.startTriggerListener()
-	go s.startLogCleanup()
 
 	log.Println("Sync scheduler started with cron: @every 1m")
 }
@@ -223,29 +222,30 @@ func (s *Scheduler) syncAccount(accountID uint) {
 		})
 	}
 	status.mu.Unlock()
+
+	s.cleanupOldLogsForAccount(accountID)
 }
 
-func (s *Scheduler) startLogCleanup() {
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
+func (s *Scheduler) cleanupOldLogsForAccount(accountID uint) {
+	var count int64
+	database.GetDB().Model(&models.SyncLog{}).Where("account_id = ?", accountID).Count(&count)
 
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-ticker.C:
-			s.cleanupOldLogs()
+	if count > 20 {
+		var logIDs []uint
+		database.GetDB().Model(&models.SyncLog{}).
+			Where("account_id = ?", accountID).
+			Order("created_at DESC").
+			Offset(20).
+			Pluck("id", &logIDs)
+
+		if len(logIDs) > 0 {
+			result := database.GetDB().Where("id IN ?", logIDs).Delete(&models.SyncLog{})
+			if result.Error != nil {
+				log.Printf("Failed to cleanup old sync logs for account %d: %v", accountID, result.Error)
+			} else {
+				log.Printf("Cleaned up %d old sync logs for account %d", result.RowsAffected, accountID)
+			}
 		}
-	}
-}
-
-func (s *Scheduler) cleanupOldLogs() {
-	cutoff := time.Now().AddDate(0, 0, -2)
-	result := database.GetDB().Where("created_at < ?", cutoff).Delete(&models.SyncLog{})
-	if result.Error != nil {
-		log.Printf("Failed to cleanup old sync logs: %v", result.Error)
-	} else if result.RowsAffected > 0 {
-		log.Printf("Cleaned up %d old sync logs", result.RowsAffected)
 	}
 }
 
