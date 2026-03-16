@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"time"
 
@@ -425,12 +426,19 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 			return nil, 0, fmt.Errorf("failed to select mailbox: %w", err)
 		}
 		mailboxMessages := selectedMbox.NumMessages
+		var uidNext uint32
 		if mailboxMessages == 0 {
 			status, err := c.client.Status(folder, &imap.StatusOptions{
 				NumMessages: true,
+				UIDNext:     true,
 			}).Wait()
-			if err == nil && status.NumMessages != nil {
-				mailboxMessages = *status.NumMessages
+			if err == nil {
+				if status.NumMessages != nil {
+					mailboxMessages = *status.NumMessages
+				}
+				if status.UIDNext > 0 {
+					uidNext = uint32(status.UIDNext)
+				}
 			}
 		}
 
@@ -453,8 +461,10 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 		}
 
 		uids := data.AllUIDs()
+		log.Printf("Fetch incremental search: folder=%s last_uid=%d uids=%d limit=%d mailbox_messages=%d uid_next=%d", folder, lastUID, len(uids), limit, mailboxMessages, uidNext)
 		if len(uids) == 0 {
 			if lastUID == 0 && mailboxMessages > 0 {
+				log.Printf("Fetch incremental fallback for initial sync: folder=%s messages=%d limit=%d", folder, mailboxMessages, limit)
 				// Some servers return empty UID SEARCH; fallback to SEARCH ALL via header-less criteria.
 				allCriteria := imap.SearchCriteria{}
 				allData, allErr := c.client.Search(&allCriteria, nil).Wait()
@@ -508,6 +518,28 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 				}
 				break
 			}
+
+			if lastUID > 0 && limit > 0 {
+				log.Printf("Fetch incremental fallback to UID range: folder=%s last_uid=%d limit=%d", folder, lastUID, limit)
+				startUID := lastUID + 1
+				endUID := startUID + uint(limit) - 1
+				fallbackSet := imap.UIDSet{}
+				fallbackSet.AddRange(imap.UID(startUID), imap.UID(endUID))
+				fetchOptions := &imap.FetchOptions{
+					Envelope: true,
+					Flags:    true,
+					UID:      true,
+				}
+				messages, err = c.client.Fetch(fallbackSet, fetchOptions).Collect()
+				if err != nil {
+					if isTemporaryIMAPError(err) {
+						continue
+					}
+					return nil, 0, fmt.Errorf("failed to fetch messages: %w", err)
+				}
+				break
+			}
+
 			return []*EmailSummary{}, lastUID, nil
 		}
 
@@ -593,6 +625,8 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 	if maxUID == 0 {
 		maxUID = lastUID
 	}
+
+	log.Printf("Fetch incremental done: folder=%s last_uid=%d result=%d max_uid=%d", folder, lastUID, len(results), maxUID)
 
 	return results, maxUID, nil
 }

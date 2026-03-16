@@ -116,10 +116,18 @@ func (h *AccountHandler) AddAccount(c *gin.Context) {
 }
 
 func (h *AccountHandler) DeleteAccount(c *gin.Context) {
+	userID := c.GetUint("user_id")
 	id := c.Param("id")
 
-	if err := database.GetDB().Delete(&models.EmailAccount{}, id).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// 验证账户所有权，防止水平越权攻击
+	result := database.GetDB().Where("id = ? AND user_id = ?", id, userID).Delete(&models.EmailAccount{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	}
+
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
 		return
 	}
 
@@ -180,10 +188,12 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 }
 
 func (h *AccountHandler) TestAccount(c *gin.Context) {
+	userID := c.GetUint("user_id")
 	id := c.Param("id")
 
+	// 验证账户所有权
 	var account models.EmailAccount
-	if err := database.GetDB().First(&account, id).Error; err != nil {
+	if err := database.GetDB().Where("id = ? AND user_id = ?", id, userID).First(&account).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
 		return
 	}

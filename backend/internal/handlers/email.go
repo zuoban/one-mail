@@ -225,11 +225,29 @@ func (h *EmailHandler) SyncEmails(c *gin.Context) {
 		return
 	}
 
+	// 批量查询已存在的 message_id，避免 N+1 查询
+	var existingMessageIDs []string
+	messageIDs := make([]string, 0, len(emails))
+	for _, e := range emails {
+		messageIDs = append(messageIDs, e.MessageID)
+	}
+
+	if len(messageIDs) > 0 {
+		database.GetDB().Model(&models.Email{}).
+			Where("account_id = ? AND message_id IN ?", account.ID, messageIDs).
+			Pluck("message_id", &existingMessageIDs)
+	}
+
+	// 创建已存在 message_id 的集合，用于快速查找
+	existingSet := make(map[string]bool, len(existingMessageIDs))
+	for _, id := range existingMessageIDs {
+		existingSet[id] = true
+	}
+
 	var newEmails []models.Email
 	for _, e := range emails {
-		var existing models.Email
-		result := database.GetDB().Where("account_id = ? AND message_id = ?", account.ID, e.MessageID).First(&existing)
-		if result.Error == nil {
+		// 使用内存查找替代数据库查询
+		if existingSet[e.MessageID] {
 			continue
 		}
 

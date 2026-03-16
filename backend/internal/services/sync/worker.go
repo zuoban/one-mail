@@ -81,6 +81,8 @@ func SyncAccount(accountID uint) (int, error) {
 		folders = []string{"INBOX"}
 	}
 
+	log.Printf("Sync account %d folders: %v", accountID, folders)
+
 	maxRetries := 2
 	for retry := 0; retry <= maxRetries; retry++ {
 		totalNew := 0
@@ -94,6 +96,7 @@ func SyncAccount(accountID uint) (int, error) {
 				continue
 			}
 
+			log.Printf("Sync folder start: account=%d folder=%s", accountID, folder)
 			newCount, err := SyncFolder(db, &account, client, folder)
 			if err != nil {
 				log.Printf("Failed to sync folder %s for account %d: %v", folder, accountID, err)
@@ -103,6 +106,7 @@ func SyncAccount(accountID uint) (int, error) {
 				folderErrors = append(folderErrors, err)
 				continue
 			}
+			log.Printf("Sync folder done: account=%d folder=%s new_count=%d", accountID, folder, newCount)
 			syncedFolders++
 			totalNew += newCount
 		}
@@ -150,27 +154,58 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 
 	var isSyncing models.SyncState
 	if err := db.Where("id = ?", syncState.ID).First(&isSyncing).Error; err == nil && isSyncing.IsSyncing {
-		if time.Since(isSyncing.UpdatedAt) > 10*time.Minute {
+		staleFor := time.Since(isSyncing.UpdatedAt)
+		if staleFor > 10*time.Minute {
+			log.Printf("Sync lock stale, reset: account=%d folder=%s stale_for=%v", account.ID, folder, staleFor)
 			db.Model(&syncState).Updates(map[string]interface{}{
 				"is_syncing": false,
 				"error":      "stale sync lock reset",
 			})
 		} else {
+			log.Printf("Skip sync due to running lock: account=%d folder=%s running_for=%v", account.ID, folder, staleFor)
 			return 0, nil
 		}
 	}
 
+	log.Printf("Sync folder state: account=%d folder=%s last_uid=%d", account.ID, folder, syncState.LastUID)
+
 	db.Model(&syncState).Update("is_syncing", true)
 	defer db.Model(&syncState).Update("is_syncing", false)
 
-	emails, maxUID, err := client.FetchEmailsIncremental(folder, syncState.LastUID, 100)
+	batchSize := getBatchSize(syncState.LastUID == 0)
+	emails, maxUID, err := client.FetchEmailsIncremental(folder, syncState.LastUID, batchSize)
 	if err != nil {
 		db.Model(&syncState).Update("error", err.Error())
 		return 0, err
 	}
 
+	log.Printf("Fetch incremental: account=%d folder=%s emails=%d max_uid=%d", account.ID, folder, len(emails), maxUID)
+
 	if len(emails) == 0 {
-		return 0, nil
+		status, statusErr := client.Status(folder)
+		if statusErr == nil && status != nil && status.UIDNext > 0 {
+			uidNext := uint(status.UIDNext)
+			if uidNext > syncState.LastUID {
+				windowSize := uint(200)
+				fallbackStart := uint(1)
+				if uidNext > windowSize {
+					fallbackStart = uidNext - windowSize
+				}
+				fallbackLastUID := fallbackStart - 1
+				log.Printf("Incremental empty but UIDNext ahead, fallback fetch: account=%d folder=%s last_uid=%d uid_next=%d fallback_start=%d", account.ID, folder, syncState.LastUID, uidNext, fallbackStart)
+				fallbackEmails, fallbackMaxUID, fallbackErr := client.FetchEmailsIncremental(folder, fallbackLastUID, int(windowSize))
+				if fallbackErr == nil {
+					emails = fallbackEmails
+					maxUID = fallbackMaxUID
+					log.Printf("Fallback fetch done: account=%d folder=%s emails=%d max_uid=%d", account.ID, folder, len(emails), maxUID)
+				} else {
+					log.Printf("Fallback fetch failed: account=%d folder=%s error=%v", account.ID, folder, fallbackErr)
+				}
+			}
+		}
+		if len(emails) == 0 {
+			return 0, nil
+		}
 	}
 
 	cache := GetSyncCache()
@@ -182,7 +217,33 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 		}
 	}
 
+	log.Printf("Filter result: account=%d folder=%s need_check=%d total=%d", account.ID, folder, len(needCheckEmails), len(emails))
+
 	if len(needCheckEmails) == 0 {
+		var recentIDs []string
+		limit := 50
+		if len(emails) < limit {
+			limit = len(emails)
+		}
+		for i := 0; i < limit; i++ {
+			recentIDs = append(recentIDs, emails[i].MessageID)
+		}
+
+		if len(recentIDs) > 0 {
+			var existingCount int64
+			db.Model(&models.Email{}).
+				Where("account_id = ? AND message_id IN ?", account.ID, recentIDs).
+				Count(&existingCount)
+			if existingCount < int64(len(recentIDs)) {
+				log.Printf("Bloom filter may be stale, rebuild cache: account=%d folder=%s checked=%d exists=%d", account.ID, folder, len(recentIDs), existingCount)
+				var allIDs []string
+				if err := db.Model(&models.Email{}).
+					Where("account_id = ?", account.ID).
+					Pluck("message_id", &allIDs).Error; err == nil {
+					cache.Rebuild(account.ID, allIDs)
+				}
+			}
+		}
 		return 0, nil
 	}
 
@@ -226,10 +287,13 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 		cache.Add(account.ID, e.MessageID)
 	}
 
+	log.Printf("New emails prepared: account=%d folder=%s new_count=%d", account.ID, folder, len(newEmails))
+
 	if len(newEmails) > 0 {
 		if err := db.Create(&newEmails).Error; err != nil {
 			return 0, err
 		}
+		log.Printf("Inserted new emails: account=%d folder=%s inserted=%d", account.ID, folder, len(newEmails))
 
 		for i := range newEmails {
 			telegram.SendNewEmailAsync(&newEmails[i], account.Email)
@@ -243,6 +307,8 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 			"error":          "",
 		})
 	}
+
+	log.Printf("Sync folder summary: account=%d folder=%s new=%d last_uid=%d max_uid=%d", account.ID, folder, len(newEmails), syncState.LastUID, maxUID)
 
 	return len(newEmails), nil
 }

@@ -149,6 +149,12 @@ func (s *Scheduler) forceResetAccountStatus(accountID uint) {
 	status.Error = "sync timeout after 5 minutes"
 	status.mu.Unlock()
 
+	if err := database.GetDB().Model(&models.SyncState{}).
+		Where("account_id = ? AND is_syncing = ?", accountID, true).
+		Updates(map[string]interface{}{ "is_syncing": false, "error": "sync timeout reset"}).Error; err != nil {
+		log.Printf("Failed to reset sync_state for account %d: %v", accountID, err)
+	}
+
 	log.Printf("Account %d status force reset due to timeout", accountID)
 }
 
@@ -166,12 +172,13 @@ func (s *Scheduler) syncAccount(accountID uint) {
 
 	status.mu.Lock()
 	if status.Running {
-		if !status.StartTime.IsZero() && time.Since(status.StartTime) > 10*time.Minute {
-			log.Printf("Force reset stuck account %d (running for %v)", accountID, time.Since(status.StartTime))
+		runningFor := time.Since(status.StartTime)
+		if !status.StartTime.IsZero() && runningFor > 10*time.Minute {
+			log.Printf("Force reset stuck account %d (running for %v)", accountID, runningFor)
 			status.Running = false
 		} else {
 			status.mu.Unlock()
-			log.Printf("Skip sync for account %d: already running", accountID)
+			log.Printf("Skip sync for account %d: already running (running_for=%v)", accountID, runningFor)
 			return
 		}
 	}
