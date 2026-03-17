@@ -1,10 +1,12 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Users, Inbox, LogOut, Settings } from 'lucide-react'
+import { Users, Inbox, LogOut, Settings, Sun, Moon } from 'lucide-react'
 import useAuth from '../context/useAuth'
+import { useTheme } from '../context/ThemeContext'
 
 export default function Layout() {
   const location = useLocation()
   const { user, logout } = useAuth()
+  const { theme, setTheme } = useTheme()
 
   const navItems = [
     { path: '/inbox', label: '收件箱', icon: Inbox },
@@ -42,20 +44,29 @@ export default function Layout() {
           })}
         </nav>
         <div className="p-4 border-t border-[var(--border-light)]">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
               <div className="avatar avatar-sm">
                 {user?.username?.[0]?.toUpperCase() || '?'}
               </div>
               <span className="text-sm font-medium text-[var(--text-primary)]">{user?.username}</span>
             </div>
-            <button
-              onClick={logout}
-              className="btn btn-ghost p-2"
-              title="退出登录"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="btn btn-ghost p-2"
+                title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+              >
+                {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={logout}
+                className="btn btn-ghost p-2"
+                title="退出登录"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </aside>

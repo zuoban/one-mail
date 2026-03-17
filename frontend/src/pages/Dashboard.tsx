@@ -4,7 +4,7 @@ import axios from 'axios'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 import type { Email, EmailAccount, SyncStatus } from '../api'
-import { Search, Mail, Paperclip, Trash2, Eye, EyeOff, Loader2, Send } from 'lucide-react'
+import { Search, Mail, Paperclip, Trash2, EyeOff, Loader2, Send } from 'lucide-react'
 
 const providers = [
   { value: 'gmail', label: 'Gmail' },
@@ -605,10 +605,10 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={() => setSelectedAccountId(null)}
-                    className={`relative flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
+                    className={`relative flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 cursor-pointer ${
                       selectedAccountId === null
                         ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] border-[var(--border-default)]'
-                        : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--border-hover)]'
+                        : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:bg-[var(--bg-secondary)]'
                     }`}
                     style={selectedAccountId === null ? { borderBottomWidth: '2px', borderBottomColor: 'var(--primary-600)' } : undefined}
                   >
@@ -636,10 +636,10 @@ export default function Dashboard() {
                       <button
                         type="button"
                         onClick={() => setSelectedAccountId(account.id)}
-                        className={`relative flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 ${
+                        className={`relative flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg border text-[10px] font-medium whitespace-nowrap transition-all w-16 cursor-pointer ${
                           isSelected
                             ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] border-[var(--border-default)]'
-                            : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--border-hover)]'
+                            : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:bg-[var(--bg-secondary)]'
                         }`}
                         style={isSelected ? { borderBottomWidth: '2px', borderBottomColor: accountColor } : undefined}
                       >
@@ -686,7 +686,7 @@ export default function Dashboard() {
                 setBatchMode(!batchMode)
                 setSelectedIds(new Set())
               }}
-              className="px-3 py-1.5 text-xs rounded-full border transition-colors bg-[var(--bg-primary)] text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:text-[var(--text-secondary)]"
+              className="px-3 py-1.5 text-xs rounded-full border transition-colors cursor-pointer bg-[var(--bg-primary)] text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)]"
             >
               {batchMode ? '取消批量' : '批量操作'}
             </button>
@@ -712,14 +712,14 @@ export default function Dashboard() {
               <button
                 type="button"
                 onClick={toggleSelectAll}
-                className="px-2 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-default)] rounded hover:border-[var(--border-hover)] transition-colors"
+                className="px-2 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-default)] rounded hover:border-[var(--border-hover)] hover:bg-[var(--bg-secondary)] transition-colors cursor-pointer"
               >
                 全选
               </button>
               <button
                 type="button"
                 onClick={toggleInvert}
-                className="px-2 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-default)] rounded hover:border-[var(--border-hover)] transition-colors"
+                className="px-2 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-default)] rounded hover:border-[var(--border-hover)] hover:bg-[var(--bg-secondary)] transition-colors cursor-pointer"
               >
                 反选
               </button>
@@ -748,9 +748,11 @@ export default function Dashboard() {
         <div className="flex-1 overflow-auto thin-scrollbar" onScroll={handleScroll}>
           {filteredEmails.length === 0 ? (
             <div className="empty-state">
-              <Mail className="empty-state-icon" />
-              <p className="text-[var(--text-secondary)]">暂无邮件</p>
-              <p className="text-sm mt-1 text-[var(--text-tertiary)]">请先添加邮箱账户</p>
+              <div className="w-16 h-16 rounded-full bg-[var(--primary-50)] flex items-center justify-center mb-4">
+                <Mail className="w-8 h-8 text-[var(--primary-500)]" />
+              </div>
+              <p className="text-base font-medium text-[var(--text-primary)] mb-1">暂无邮件</p>
+              <p className="text-sm text-[var(--text-tertiary)]">请先添加邮箱账户并同步邮件</p>
             </div>
           ) : (
             <div className="pt-2 pb-4">
@@ -780,9 +782,9 @@ export default function Dashboard() {
                     }}
                     className={`group mx-3 my-1 rounded-xl border cursor-pointer transition-all duration-200 ${
                       isSelected
-                        ? 'bg-gradient-to-r from-[var(--primary-50)] to-[var(--bg-primary)] border-[var(--primary-300)] shadow-md ring-1 ring-[var(--primary-200)]'
-                        : 'bg-[var(--bg-primary)] border-[var(--border-light)] hover:border-[var(--border-default)] hover:shadow-md hover:-translate-y-0.5'
-                    } ${!email.is_read ? 'shadow-sm' : ''}`}
+                        ? 'bg-gradient-to-r from-[var(--primary-50)] to-[var(--bg-primary)] border-[var(--primary-300)] shadow-lg ring-2 ring-[var(--primary-200)]'
+                        : `bg-[var(--bg-primary)] border-[var(--border-light)] hover:border-[var(--border-default)] hover:shadow-lg hover:-translate-y-0.5 ${!email.is_read ? 'border-l-4 border-l-[var(--primary-500)]' : ''}`
+                    }`}
                   >
                     <div className="px-3 py-2.5">
                       <div className="flex items-start gap-2.5">
@@ -838,7 +840,7 @@ export default function Dashboard() {
                                 event.stopPropagation()
                                 requestDeleteEmail(email)
                               }}
-                              className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] transition-colors"
+                              className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] transition-colors cursor-pointer"
                               title="删除"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -855,8 +857,9 @@ export default function Dashboard() {
               })}
 
               {loadingMore && (
-                <div className="flex justify-center py-4">
-                  <div className="w-5 h-5 border-2 border-[var(--primary-500)] border-t-transparent rounded-full animate-spin" />
+                <div className="flex flex-col items-center justify-center py-6 gap-2">
+                  <Loader2 className="w-6 h-6 text-[var(--primary-500)] animate-spin" />
+                  <span className="text-xs text-[var(--text-tertiary)]">加载中...</span>
                 </div>
               )}
               {!hasMore && emails.length > 0 && (

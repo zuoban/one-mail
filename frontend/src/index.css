@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 /* ============================================
    One-Mail Design System
@@ -102,7 +103,54 @@
   --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Font Family */
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+/* Dark Mode */
+.dark {
+  /* Primary Color - 深色模式下稍微提亮 */
+  --primary-50: #1E3A8A;
+  --primary-100: #1E40AF;
+  --primary-500: #60A5FA;
+  --primary-600: #3B82F6;
+  --primary-700: #93C5FD;
+
+  /* Neutral Colors - 深色调色板 */
+  --neutral-50: #1E293B;
+  --neutral-100: #334155;
+  --neutral-200: #475569;
+  --neutral-300: #64748B;
+  --neutral-400: #94A3B8;
+  --neutral-500: #CBD5E1;
+  --neutral-600: #E2E8F0;
+  --neutral-700: #F1F5F9;
+  --neutral-800: #F8FAFC;
+  --neutral-900: #FFFFFF;
+
+  /* Background Colors */
+  --bg-primary: #0F172A;
+  --bg-secondary: #1E293B;
+  --bg-tertiary: #334155;
+
+  /* Text Colors */
+  --text-primary: #F8FAFC;
+  --text-secondary: #CBD5E1;
+  --text-tertiary: #94A3B8;
+  --text-inverse: #0F172A;
+
+  /* Border Colors */
+  --border-light: #334155;
+  --border-default: #475569;
+  --border-hover: #64748B;
+
+  /* Shadow System - 深色模式使用更柔和的阴影 */
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.4), 0 8px 10px -6px rgb(0 0 0 / 0.4);
+  --shadow-focus: 0 0 0 3px rgb(96 165 250 / 0.4);
 }
 
 /* ============================================
@@ -194,6 +242,20 @@ textarea:disabled {
 
 .thin-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: var(--neutral-500);
+}
+
+/* ============================================
+   Accessibility - Reduced Motion
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ============================================
