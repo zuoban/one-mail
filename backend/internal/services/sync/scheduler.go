@@ -19,7 +19,7 @@ type Scheduler struct {
 	cron         *cron.Cron
 	running      bool
 	statuses     map[uint]*SyncStatus
-	syncLogs     map[uint]uint
+	syncLogs     map[uint][]*models.SyncLog
 	trigger      chan struct{}
 	lastSyncTime time.Time
 }
@@ -44,7 +44,7 @@ func GetScheduler() *Scheduler {
 			ctx:      ctx,
 			cancel:   cancel,
 			statuses: make(map[uint]*SyncStatus),
-			syncLogs: make(map[uint]uint),
+			syncLogs: make(map[uint][]*models.SyncLog),
 			trigger:  make(chan struct{}, 1),
 		}
 	})
@@ -139,8 +139,6 @@ func (s *Scheduler) syncAllAccounts() {
 func (s *Scheduler) forceResetAccountStatus(accountID uint) {
 	s.mu.Lock()
 	status, exists := s.statuses[accountID]
-	syncLogID, hasLog := s.syncLogs[accountID]
-	delete(s.syncLogs, accountID)
 	s.mu.Unlock()
 
 	if !exists {
@@ -152,20 +150,6 @@ func (s *Scheduler) forceResetAccountStatus(accountID uint) {
 	status.StartTime = time.Time{}
 	status.Error = "sync timeout after 5 minutes"
 	status.mu.Unlock()
-
-	if hasLog && syncLogID > 0 {
-		now := time.Now()
-		if err := database.GetDB().Model(&models.SyncLog{}).
-			Where("id = ?", syncLogID).
-			Updates(map[string]interface{}{
-				"end_time":    now,
-				"status":      "timeout",
-				"error":       "sync timeout after 5 minutes",
-				"duration_ms": 5 * 60 * 1000,
-			}).Error; err != nil {
-			log.Printf("Failed to update sync_log %d for account %d: %v", syncLogID, accountID, err)
-		}
-	}
 
 	if err := database.GetDB().Model(&models.SyncState{}).
 		Where("account_id = ? AND is_syncing = ?", accountID, true).
@@ -206,22 +190,14 @@ func (s *Scheduler) syncAccount(accountID uint) {
 	status.mu.Unlock()
 
 	startTime := time.Now()
-	syncLog := models.SyncLog{
+	syncLog := &models.SyncLog{
 		AccountID: accountID,
 		StartTime: startTime,
 		Status:    "running",
+		CreatedAt: startTime,
 	}
-	database.GetDB().Create(&syncLog)
-
-	s.mu.Lock()
-	s.syncLogs[accountID] = syncLog.ID
-	s.mu.Unlock()
 
 	defer func() {
-		s.mu.Lock()
-		delete(s.syncLogs, accountID)
-		s.mu.Unlock()
-
 		status.mu.Lock()
 		status.Running = false
 		status.LastSyncTime = time.Now()
@@ -234,52 +210,38 @@ func (s *Scheduler) syncAccount(accountID uint) {
 	endTime := time.Now()
 	durationMs := endTime.Sub(startTime).Milliseconds()
 
+	syncLog.EndTime = endTime
+	syncLog.DurationMs = durationMs
+
 	status.mu.Lock()
 	if err != nil {
 		status.Error = err.Error()
 		log.Printf("Sync failed for account %d: %v", accountID, err)
-		database.GetDB().Model(&syncLog).Updates(map[string]interface{}{
-			"end_time":    endTime,
-			"status":      "failed",
-			"error":       err.Error(),
-			"duration_ms": durationMs,
-		})
+		syncLog.Status = "failed"
+		syncLog.Error = err.Error()
 	} else {
 		status.LastSyncTime = time.Now()
 		status.NewCount = newCount
-		database.GetDB().Model(&syncLog).Updates(map[string]interface{}{
-			"end_time":    endTime,
-			"status":      "success",
-			"new_count":   newCount,
-			"duration_ms": durationMs,
-		})
+		syncLog.Status = "success"
+		syncLog.NewCount = newCount
 	}
 	status.mu.Unlock()
 
-	s.cleanupOldLogsForAccount(accountID)
+	s.addSyncLog(accountID, syncLog)
 }
 
-func (s *Scheduler) cleanupOldLogsForAccount(accountID uint) {
-	var count int64
-	database.GetDB().Model(&models.SyncLog{}).Where("account_id = ?", accountID).Count(&count)
+func (s *Scheduler) addSyncLog(accountID uint, log *models.SyncLog) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	if count > 20 {
-		var logIDs []uint
-		database.GetDB().Model(&models.SyncLog{}).
-			Where("account_id = ?", accountID).
-			Order("created_at DESC").
-			Offset(20).
-			Pluck("id", &logIDs)
+	logs := s.syncLogs[accountID]
+	logs = append(logs, log)
 
-		if len(logIDs) > 0 {
-			result := database.GetDB().Where("id IN ?", logIDs).Delete(&models.SyncLog{})
-			if result.Error != nil {
-				log.Printf("Failed to cleanup old sync logs for account %d: %v", accountID, result.Error)
-			} else {
-				log.Printf("Cleaned up %d old sync logs for account %d", result.RowsAffected, accountID)
-			}
-		}
+	if len(logs) > 10 {
+		logs = logs[len(logs)-10:]
 	}
+
+	s.syncLogs[accountID] = logs
 }
 
 func (s *Scheduler) Stop() {
@@ -344,4 +306,27 @@ func (s *Scheduler) GetLastSyncTime() time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.lastSyncTime
+}
+
+func (s *Scheduler) GetSyncLogs(accountID uint) []*models.SyncLog {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	logs := s.syncLogs[accountID]
+	result := make([]*models.SyncLog, len(logs))
+	copy(result, logs)
+	return result
+}
+
+func (s *Scheduler) GetAllSyncLogs(accountIDs []uint) []*models.SyncLog {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*models.SyncLog
+	for _, accountID := range accountIDs {
+		if logs, exists := s.syncLogs[accountID]; exists {
+			result = append(result, logs...)
+		}
+	}
+	return result
 }

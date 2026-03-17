@@ -371,6 +371,17 @@ export default function Dashboard() {
     }
   }, [selectedIds.size, emails, filter])
 
+  const toggleInvert = useCallback(() => {
+    const filtered = filter === 'unread' ? emails.filter(e => !e.is_read) : emails
+    const newSelected = new Set<number>()
+    filtered.forEach(e => {
+      if (!selectedIds.has(e.id)) {
+        newSelected.add(e.id)
+      }
+    })
+    setSelectedIds(newSelected)
+  }, [selectedIds, emails, filter])
+
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
     setContextMenuIndex(0)
@@ -695,6 +706,26 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* Selection Controls */}
+          {batchMode && (
+            <div className="flex items-center gap-2 mb-3">
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                className="px-2 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-default)] rounded hover:border-[var(--border-hover)] transition-colors"
+              >
+                全选
+              </button>
+              <button
+                type="button"
+                onClick={toggleInvert}
+                className="px-2 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-default)] rounded hover:border-[var(--border-hover)] transition-colors"
+              >
+                反选
+              </button>
+            </div>
+          )}
+
           {/* Search Input */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-tertiary)] pointer-events-none" />
@@ -801,31 +832,6 @@ export default function Dashboard() {
                         {/* Actions & Date */}
                         <div className="flex flex-col items-end gap-1">
                           <div className="flex items-center gap-0.5 opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
-                            {email.is_read ? (
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  handleMarkAsUnread(email)
-                                }}
-                                className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors"
-                                title="标记为未读"
-                              >
-                                <EyeOff className="w-3.5 h-3.5" />
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  handleRead(email)
-                                }}
-                                className="p-1.5 rounded-md text-[var(--primary-600)] hover:text-[var(--primary-700)] hover:bg-[var(--primary-50)] transition-colors"
-                                title="标记为已读"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                              </button>
-                            )}
                             <button
                               type="button"
                               onClick={(event) => {

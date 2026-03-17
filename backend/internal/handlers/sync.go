@@ -246,42 +246,24 @@ func (h *SyncHandler) GetSyncLogs(c *gin.Context) {
 		return
 	}
 
-	var total int64
-	db := database.GetDB().Model(&models.SyncLog{}).Where("account_id IN ?", accountIDs)
-	db.Count(&total)
+	logs := sync.GetScheduler().GetAllSyncLogs(accountIDs)
+	total := len(logs)
 
-	var logs []models.SyncLog
 	offset := (page - 1) * pageSize
-	if err := db.Order("created_at DESC").Limit(pageSize).Offset(offset).Find(&logs).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	end := offset + pageSize
+	if offset >= total {
+		c.JSON(http.StatusOK, gin.H{"data": []models.SyncLog{}, "total": total, "page": page, "page_size": pageSize})
 		return
 	}
+	if end > total {
+		end = total
+	}
 
-	c.JSON(http.StatusOK, gin.H{"data": logs, "total": total, "page": page, "page_size": pageSize})
+	c.JSON(http.StatusOK, gin.H{"data": logs[offset:end], "total": total, "page": page, "page_size": pageSize})
 }
 
 func (h *SyncHandler) ClearSyncLogs(c *gin.Context) {
-	userID := c.GetUint("user_id")
-	accountIDStr := c.Param("account_id")
-
-	accountID, err := strconv.ParseUint(accountIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid account_id"})
-		return
-	}
-
-	var account models.EmailAccount
-	if err := database.GetDB().Where("id = ? AND user_id = ?", accountID, userID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
-		return
-	}
-
-	if err := database.GetDB().Where("account_id = ?", accountID).Delete(&models.SyncLog{}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "sync logs cleared"})
+	c.JSON(http.StatusOK, gin.H{"message": "sync logs are stored in memory and auto-cleared"})
 }
 
 func parseUint(s string) (uint, error) {
