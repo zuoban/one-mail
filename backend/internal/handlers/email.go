@@ -209,6 +209,40 @@ func (h *EmailHandler) MarkAsUnread(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "marked as unread"})
 }
 
+func (h *EmailHandler) BatchMarkAsRead(c *gin.Context) {
+	var req struct {
+		IDs []uint `json:"ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := c.GetUint("user_id")
+
+	var validIDs []uint
+	database.GetDB().
+		Table("emails").
+		Select("emails.id").
+		Joins("JOIN email_accounts ON email_accounts.id = emails.account_id").
+		Where("emails.id IN ? AND email_accounts.user_id = ?", req.IDs, userID).
+		Pluck("id", &validIDs)
+
+	if len(validIDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{"message": "marked as read", "count": 0})
+		return
+	}
+
+	result := database.GetDB().Model(&models.Email{}).Where("id IN ?", validIDs).Update("is_read", true)
+
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "marked as read", "count": result.RowsAffected})
+}
+
 func (h *EmailHandler) DeleteEmail(c *gin.Context) {
 	id := c.Param("id")
 	userID := c.GetUint("user_id")

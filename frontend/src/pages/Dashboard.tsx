@@ -47,6 +47,8 @@ export default function Dashboard() {
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ email: Email } | null>(null)
   const [sendingTelegram, setSendingTelegram] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [batchMode, setBatchMode] = useState(false)
 
   const formatSyncTime = (value?: string) => {
     if (!value) return '未同步'
@@ -337,6 +339,37 @@ export default function Dashboard() {
       setSendingTelegram(false)
     }
   }, [showToast])
+
+  const handleBatchMarkAsRead = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    try {
+      await emailApi.batchMarkAsRead(ids)
+      setEmails(prev => prev.map(e => ids.includes(e.id) ? { ...e, is_read: true } : e))
+      setSelectedIds(new Set())
+      showToast(`已标记 ${ids.length} 封邮件为已读`, 'success')
+    } catch (e) {
+      showToast('批量标记失败', 'error')
+    }
+  }, [selectedIds, showToast])
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const toggleSelectAll = useCallback(() => {
+    const filtered = filter === 'unread' ? emails.filter(e => !e.is_read) : emails
+    if (selectedIds.size === filtered.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filtered.map(e => e.id)))
+    }
+  }, [selectedIds.size, emails, filter])
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
@@ -636,7 +669,31 @@ export default function Dashboard() {
                 {f === 'all' ? '全部' : '未读'}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => {
+                setBatchMode(!batchMode)
+                setSelectedIds(new Set())
+              }}
+              className="px-3 py-1.5 text-xs rounded-full border transition-colors bg-[var(--bg-primary)] text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:text-[var(--text-secondary)]"
+            >
+              {batchMode ? '取消批量' : '批量操作'}
+            </button>
           </div>
+
+          {/* Batch Actions */}
+          {batchMode && selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 mb-3 p-2 bg-[var(--primary-50)] rounded-lg border border-[var(--primary-200)]">
+              <span className="text-xs text-[var(--text-secondary)]">已选 {selectedIds.size} 封</span>
+              <button
+                type="button"
+                onClick={handleBatchMarkAsRead}
+                className="px-2 py-1 text-xs bg-[var(--primary-600)] text-white rounded hover:bg-[var(--primary-700)] transition-colors"
+              >
+                标记已读
+              </button>
+            </div>
+          )}
 
           {/* Search Input */}
           <div className="relative">
@@ -698,6 +755,20 @@ export default function Dashboard() {
                   >
                     <div className="px-3 py-2.5">
                       <div className="flex items-start gap-2.5">
+                        {/* Checkbox */}
+                        {batchMode && (
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(email.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              e.stopPropagation()
+                              toggleSelect(email.id)
+                            }}
+                            className="mt-2 w-4 h-4 rounded border-[var(--border-default)] text-[var(--primary-600)] focus:ring-[var(--primary-500)]"
+                          />
+                        )}
+
                         {/* Avatar */}
                         <div
                           className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white flex-shrink-0 shadow-sm ${!email.is_read ? 'ring-2 ring-offset-1 ring-[var(--primary-200)]' : ''}`}

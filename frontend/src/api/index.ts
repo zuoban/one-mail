@@ -142,6 +142,7 @@ export const emailApi = {
   get: (id: number) => api.get<{ data: Email }>(`/emails/${id}`).then(r => r.data),
   markAsRead: (id: number) => api.post(`/emails/${id}/read`),
   markAsUnread: (id: number) => api.post(`/emails/${id}/unread`),
+  batchMarkAsRead: (ids: number[]) => api.post<{ message: string; count: number }>('/emails/batch/read', { ids }).then(r => r.data),
   delete: (id: number) => api.delete(`/emails/${id}`),
 }
 export const telegramApi = {
