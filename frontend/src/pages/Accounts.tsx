@@ -49,7 +49,6 @@ export default function Accounts() {
   const [folders, setFolders] = useState<FolderStatus[]>([])
   const [selectedFolders, setSelectedFolders] = useState<string[]>([])
   const [showLogsDrawer, setShowLogsDrawer] = useState(false)
-  const [logsAccountId, setLogsAccountId] = useState<number | null>(null)
   const [syncLogs, setSyncLogs] = useState<SyncLog[]>([])
   const [logsLoading, setLogsLoading] = useState(false)
 
@@ -219,7 +218,6 @@ export default function Accounts() {
   }
 
   const openLogsDrawer = async (accountId: number) => {
-    setLogsAccountId(accountId)
     setShowLogsDrawer(true)
     loadSyncLogs(accountId)
   }
