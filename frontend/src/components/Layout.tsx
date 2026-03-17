@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Users, Inbox, LogOut, FileText, Settings } from 'lucide-react'
+import { Users, Inbox, LogOut, Settings } from 'lucide-react'
 import useAuth from '../context/useAuth'
 
 export default function Layout() {
@@ -9,7 +9,6 @@ export default function Layout() {
   const navItems = [
     { path: '/inbox', label: '收件箱', icon: Inbox },
     { path: '/accounts', label: '邮箱账户', icon: Users },
-    { path: '/sync-logs', label: '同步日志', icon: FileText },
     { path: '/settings', label: '设置', icon: Settings },
   ]
 

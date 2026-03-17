@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { accountApi } from '../api'
-import type { EmailAccount, FolderStatus } from '../api'
-import { Plus, Trash2, X, Mail, Plug, Pencil, FileText, RefreshCw } from 'lucide-react'
+import { accountApi, syncApi } from '../api'
+import type { EmailAccount, FolderStatus, SyncLog } from '../api'
+import { Plus, Trash2, X, Mail, Plug, Pencil, FileText, RefreshCw, CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 const providers = [
@@ -29,7 +28,6 @@ const accountColors = [
 ]
 
 export default function Accounts() {
-  const navigate = useNavigate()
   const [accounts, setAccounts] = useState<EmailAccount[]>([])
   const [loading, setLoading] = useState(false)
   const [showModal, setShowModal] = useState(false)
@@ -50,6 +48,10 @@ export default function Accounts() {
   const [foldersLoading, setFoldersLoading] = useState(false)
   const [folders, setFolders] = useState<FolderStatus[]>([])
   const [selectedFolders, setSelectedFolders] = useState<string[]>([])
+  const [showLogsDrawer, setShowLogsDrawer] = useState(false)
+  const [logsAccountId, setLogsAccountId] = useState<number | null>(null)
+  const [syncLogs, setSyncLogs] = useState<SyncLog[]>([])
+  const [logsLoading, setLogsLoading] = useState(false)
 
   useEffect(() => {
     loadAccounts()
@@ -216,6 +218,42 @@ export default function Accounts() {
     }
   }
 
+  const openLogsDrawer = async (accountId: number) => {
+    setLogsAccountId(accountId)
+    setShowLogsDrawer(true)
+    loadSyncLogs(accountId)
+  }
+
+  const loadSyncLogs = async (accountId: number) => {
+    setLogsLoading(true)
+    try {
+      const res = await syncApi.getLogsByAccount(accountId, { page: 1, page_size: 10 })
+      setSyncLogs(res.data || [])
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLogsLoading(false)
+    }
+  }
+
+  const formatTime = (time: string) => {
+    if (!time) return '-'
+    const date = new Date(time)
+    return date.toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+  }
+
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return `${ms}ms`
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+    return `${(ms / 60000).toFixed(1)}min`
+  }
+
   return (
     <div className="p-6">
       <ConfirmDialog
@@ -310,7 +348,7 @@ export default function Accounts() {
                     <RefreshCw className={`w-4 h-4 ${syncingAccountId === account.id ? 'animate-spin' : ''}`} />
                   </button>
                   <button
-                    onClick={() => navigate(`/sync-logs?account_id=${account.id}`)}
+                    onClick={() => openLogsDrawer(account.id)}
                     className="p-2 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors"
                     title="同步日志"
                   >
@@ -637,6 +675,68 @@ export default function Accounts() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Sync Logs Drawer */}
+      {showLogsDrawer && (
+        <>
+          <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setShowLogsDrawer(false)} />
+          <div className="fixed right-0 top-0 bottom-0 w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--border-light)]">
+              <h3 className="text-lg font-semibold text-[var(--text-primary)]">同步日志</h3>
+              <button onClick={() => setShowLogsDrawer(false)} className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {logsLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-[var(--primary-500)]" />
+                </div>
+              ) : syncLogs.length === 0 ? (
+                <div className="text-center py-12">
+                  <FileText className="w-12 h-12 mx-auto mb-3 text-[var(--text-tertiary)] opacity-30" />
+                  <p className="text-[var(--text-secondary)]">暂无同步日志</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {syncLogs.map(log => (
+                    <div key={log.id} className="bg-[var(--bg-secondary)] rounded-lg p-4 border border-[var(--border-light)]">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          {log.status === 'success' ? (
+                            <CheckCircle className="w-4 h-4 text-[var(--success-600)]" />
+                          ) : log.status === 'failed' ? (
+                            <XCircle className="w-4 h-4 text-[var(--error-600)]" />
+                          ) : (
+                            <Loader2 className="w-4 h-4 text-[var(--primary-600)] animate-spin" />
+                          )}
+                          <span className={`text-sm font-medium ${
+                            log.status === 'success' ? 'text-[var(--success-600)]' :
+                            log.status === 'failed' ? 'text-[var(--error-600)]' :
+                            'text-[var(--primary-600)]'
+                          }`}>
+                            {log.status === 'success' ? '成功' : log.status === 'failed' ? '失败' : '进行中'}
+                          </span>
+                        </div>
+                        <span className="text-xs text-[var(--text-tertiary)]">{formatTime(log.start_time)}</span>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs text-[var(--text-secondary)]">
+                        <span>耗时: {formatDuration(log.duration_ms)}</span>
+                        <span>新增: {log.new_count} 封</span>
+                      </div>
+                      {log.error && (
+                        <div className="mt-2 text-xs text-[var(--error-600)] bg-[var(--error-50)] rounded p-2">
+                          {log.error}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
       )}
     </div>
   )
