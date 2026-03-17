@@ -382,17 +382,12 @@ export default function Accounts() {
         </div>
       )}
 
-      {/* Folders Modal */}
+      {/* Folders Drawer */}
       {foldersAccount && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-          onClick={() => setFoldersAccount(null)}
-        >
-          <div
-            className="bg-white dark:bg-[var(--bg-primary)] rounded-2xl shadow-xl w-full max-w-lg"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-light)]">
+        <>
+          <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setFoldersAccount(null)} />
+          <div className="fixed right-0 top-0 bottom-0 w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--border-light)]">
               <div>
                 <h3 className="text-lg font-semibold text-[var(--text-primary)]">同步文件夹</h3>
                 <p className="text-sm text-[var(--text-tertiary)]">{foldersAccount.email}</p>
@@ -400,19 +395,24 @@ export default function Accounts() {
               <button
                 type="button"
                 onClick={() => setFoldersAccount(null)}
-                className="p-2 rounded-lg hover:bg-[var(--bg-secondary)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
+                className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-6">
+            <div className="flex-1 overflow-auto p-6">
               {foldersLoading ? (
-                <div className="text-sm text-[var(--text-tertiary)]">正在加载文件夹...</div>
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-[var(--primary-500)]" />
+                </div>
               ) : folders.length === 0 ? (
-                <div className="text-sm text-[var(--text-tertiary)]">没有获取到文件夹</div>
+                <div className="text-center py-12">
+                  <Mail className="w-12 h-12 mx-auto mb-3 text-[var(--text-tertiary)] opacity-30" />
+                  <p className="text-[var(--text-secondary)]">没有获取到文件夹</p>
+                </div>
               ) : (
-                <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1">
+                <div className="grid grid-cols-2 gap-2">
                   {folders.map(folder => (
                     <button
                       key={folder.name}
@@ -443,7 +443,7 @@ export default function Accounts() {
               )}
             </div>
 
-            <div className="flex justify-end gap-3 px-6 pb-6">
+            <div className="flex justify-end gap-3 p-4 border-t border-[var(--border-light)]">
               <button
                 type="button"
                 onClick={() => setFoldersAccount(null)}
@@ -461,27 +461,22 @@ export default function Accounts() {
               </button>
             </div>
           </div>
-        </div>
+        </>
       )}
 
-      {/* Add Account Modal */}
+      {/* Add Account Drawer */}
       {showModal && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-          onClick={() => {
+        <>
+          <div className="fixed inset-0 bg-black/50 z-40" onClick={() => {
             setShowModal(false)
             setEditingAccount(null)
-          }}
-        >
-          <div
-            className="bg-white dark:bg-[var(--bg-primary)] rounded-2xl shadow-xl w-full max-w-lg"
-            onClick={e => e.stopPropagation()}
-          >
+          }} />
+          <div className="fixed right-0 top-0 bottom-0 w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-light)]">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--border-light)]">
               <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-lg ${
-                  editingAccount 
+                  editingAccount
                     ? 'bg-gradient-to-br from-[var(--warning-500)] to-[var(--warning-600)] shadow-[var(--warning-500)]/25'
                     : 'bg-gradient-to-br from-[var(--primary-500)] to-[var(--primary-600)] shadow-[var(--primary-500)]/25'
                 }`}>
@@ -502,14 +497,15 @@ export default function Accounts() {
                   setShowModal(false)
                   setEditingAccount(null)
                 }}
-                className="p-2 rounded-lg hover:bg-[var(--bg-secondary)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
+                className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Form */}
-            <form onSubmit={handleSubmit} className="p-6">
+            <form onSubmit={handleSubmit} className="flex-1 overflow-auto flex flex-col">
+              <div className="flex-1 overflow-auto p-6">
               <div className="space-y-5">
                 {/* Provider Selection */}
                 <div>
@@ -648,8 +644,10 @@ export default function Accounts() {
                 )}
               </div>
 
+              </div>
+
               {/* Footer */}
-              <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-[var(--border-light)]">
+              <div className="flex justify-end gap-3 p-4 border-t border-[var(--border-light)]">
                 <button
                   type="button"
                   onClick={() => {
@@ -674,7 +672,7 @@ export default function Accounts() {
               </div>
             </form>
           </div>
-        </div>
+        </>
       )}
 
       {/* Sync Logs Drawer */}
