@@ -49,6 +49,7 @@ export default function Dashboard() {
   const [sendingTelegram, setSendingTelegram] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [batchMode, setBatchMode] = useState(false)
+  const [loadingDetail, setLoadingDetail] = useState(false)
 
   const formatSyncTime = (value?: string) => {
     if (!value) return '未同步'
@@ -228,6 +229,7 @@ export default function Dashboard() {
   const handleRead = useCallback(async (email: Email, shouldScroll = false, scrollDetail = false) => {
     // 立即切换选中状态（UI 响应）
     setSelectedEmail(email)
+    setLoadingDetail(true)
 
     if (shouldScroll) {
       const node = emailItemRefs.current[email.id]
@@ -249,8 +251,10 @@ export default function Dashboard() {
     // 异步获取邮件详情（包含正文内容）
     emailApi.get(email.id).then(detail => {
       setSelectedEmail(detail.data)
+      setLoadingDetail(false)
     }).catch(e => {
       console.error('Failed to fetch email detail:', e)
+      setLoadingDetail(false)
     })
   }, [])
 
@@ -929,7 +933,12 @@ export default function Dashboard() {
             </div>
             <div ref={detailScrollRef} className="flex-1 p-6 overflow-auto thin-scrollbar text-[var(--text-primary)] leading-relaxed">
               <div className="max-w-3xl mx-auto">
-                {selectedEmail.body_html ? (
+                {loadingDetail ? (
+                  <div className="flex flex-col items-center justify-center py-12 gap-3">
+                    <Loader2 className="w-8 h-8 text-[var(--primary-500)] animate-spin" />
+                    <span className="text-sm text-[var(--text-tertiary)]">加载中...</span>
+                  </div>
+                ) : selectedEmail.body_html ? (
                   <div className="prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
                 ) : selectedEmail.body_text ? (
                   <pre className="whitespace-pre-wrap text-[var(--text-primary)] leading-relaxed font-sans">{selectedEmail.body_text}</pre>
