@@ -57,7 +57,7 @@ export default function Tooltip({ content, children, className = '', placement =
             left: `${coords.left}px`,
             top: `${coords.top}px`,
           }}
-          className={`pointer-events-none fixed z-50 w-max max-w-[360px] -translate-x-1/2 rounded-lg bg-[var(--neutral-800)] px-2.5 py-1.5 text-[11px] font-medium text-white shadow-lg whitespace-nowrap ${
+          className={`pointer-events-none fixed z-50 w-max max-w-[360px] -translate-x-1/2 rounded-lg bg-gray-900 dark:bg-gray-100 px-2.5 py-1.5 text-[11px] font-medium text-white dark:text-gray-900 shadow-lg whitespace-nowrap ${
             placement === 'bottom' ? '' : '-translate-y-full'
           }`}
         >
@@ -65,8 +65,8 @@ export default function Tooltip({ content, children, className = '', placement =
           <span
             className={`absolute left-1/2 h-0 w-0 -translate-x-1/2 border-[6px] border-transparent ${
               placement === 'bottom'
-                ? 'top-0 -translate-y-1/2 border-b-[var(--neutral-800)]'
-                : 'bottom-0 translate-y-1/2 border-t-[var(--neutral-800)]'
+                ? 'top-0 -translate-y-1/2 border-b-gray-900 dark:border-b-gray-100'
+                : 'bottom-0 translate-y-1/2 border-t-gray-900 dark:border-t-gray-100'
             }`}
           />
         </span>,

@@ -18,7 +18,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return (stored as Theme) || 'system'
   })
 
-  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>('light')
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => {
+    const stored = localStorage.getItem('theme') as Theme || 'system'
+    const isDark = stored === 'dark' || (stored === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    return isDark ? 'dark' : 'light'
+  })
 
   useEffect(() => {
     const root = document.documentElement

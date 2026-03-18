@@ -226,19 +226,8 @@ export default function Dashboard() {
   }, [resolveEmailDate])
 
   const handleRead = useCallback(async (email: Email, shouldScroll = false, scrollDetail = false) => {
-    if (!email.is_read) {
-      await emailApi.markAsRead(email.id)
-      setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
-    }
-
-    // 获取邮件详情（包含正文内容）
-    try {
-      const detail = await emailApi.get(email.id)
-      setSelectedEmail(detail.data)
-    } catch (e) {
-      console.error('Failed to fetch email detail:', e)
-      setSelectedEmail(email)
-    }
+    // 立即切换选中状态（UI 响应）
+    setSelectedEmail(email)
 
     if (shouldScroll) {
       const node = emailItemRefs.current[email.id]
@@ -249,6 +238,20 @@ export default function Dashboard() {
     if (scrollDetail && detailScrollRef.current) {
       detailScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' })
     }
+
+    // 异步标记已读
+    if (!email.is_read) {
+      emailApi.markAsRead(email.id).then(() => {
+        setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
+      }).catch(console.error)
+    }
+
+    // 异步获取邮件详情（包含正文内容）
+    emailApi.get(email.id).then(detail => {
+      setSelectedEmail(detail.data)
+    }).catch(e => {
+      console.error('Failed to fetch email detail:', e)
+    })
   }, [])
 
   const handleMarkAsUnread = useCallback(async (email: Email) => {
