@@ -59,6 +59,10 @@ func (s *Scheduler) Start() {
 		return
 	}
 
+	if err := database.GetDB().Model(&models.SyncState{}).Where("is_syncing = ?", true).Update("is_syncing", false).Error; err != nil {
+		log.Printf("Failed to clean stale sync states: %v", err)
+	}
+
 	s.cron = cron.New()
 	_, err := s.cron.AddFunc("@every 1m", func() {
 		s.triggerSyncAll()
