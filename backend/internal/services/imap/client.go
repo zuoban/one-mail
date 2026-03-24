@@ -119,8 +119,19 @@ func (c *Client) IsConnected() bool {
 	if c.client == nil {
 		return false
 	}
-	err := c.client.Noop().Wait()
-	return err == nil
+
+	// 使用带超时的 channel 检测连接状态
+	done := make(chan error, 1)
+	go func() {
+		done <- c.client.Noop().Wait()
+	}()
+
+	select {
+	case err := <-done:
+		return err == nil
+	case <-time.After(5 * time.Second):
+		return false
+	}
 }
 
 func (c *Client) ListMailboxes() ([]string, error) {

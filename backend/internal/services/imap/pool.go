@@ -46,13 +46,16 @@ func (p *ConnectionPool) GetConnection(account *models.EmailAccount) (*Client, e
 		wrapper.mu.Lock()
 		defer wrapper.mu.Unlock()
 
-		if wrapper.client != nil && wrapper.client.IsConnected() {
-			wrapper.lastUsed = time.Now()
-			return wrapper.client, nil
+		// 检查连接是否有效，如果无效则重连
+		if wrapper.client != nil {
+			if wrapper.client.IsConnected() {
+				wrapper.lastUsed = time.Now()
+				return wrapper.client, nil
+			}
+			// 连接已断开，清理并重连
+			_ = wrapper.client.Disconnect()
+			wrapper.client = nil
 		}
-
-		_ = wrapper.client.Disconnect()
-		wrapper.client = nil
 	}
 
 	return p.createConnection(account)

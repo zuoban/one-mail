@@ -23,7 +23,12 @@ func isNetworkError(err error) bool {
 		strings.Contains(errStr, "connection reset") ||
 		strings.Contains(errStr, "broken pipe") ||
 		strings.Contains(errStr, "i/o timeout") ||
-		strings.Contains(errStr, "network is unreachable")
+		strings.Contains(errStr, "network is unreachable") ||
+		strings.Contains(errStr, "eof") ||
+		strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "connection timed out") ||
+		strings.Contains(errStr, "bad connection")
 }
 
 func getBatchSize(isFirstSync bool) int {
@@ -83,7 +88,7 @@ func SyncAccount(accountID uint) (int, error) {
 
 	log.Printf("Sync account %d folders: %v", accountID, folders)
 
-	maxRetries := 2
+	maxRetries := 3
 	for retry := 0; retry <= maxRetries; retry++ {
 		totalNew := 0
 		syncedFolders := 0
@@ -119,13 +124,14 @@ func SyncAccount(accountID uint) (int, error) {
 		}
 
 		if networkErrorOccurred && retry < maxRetries {
-			log.Printf("Network error occurred, retrying (%d/%d)...", retry+1, maxRetries)
+			backoff := time.Duration(1<<uint(retry)) * time.Second
+			log.Printf("Network error occurred, retrying (%d/%d) after %v...", retry+1, maxRetries, backoff)
 			pool.RemoveConnection(account.ID)
+			time.Sleep(backoff)
 			client, err = pool.GetConnection(&account)
 			if err != nil {
 				return 0, err
 			}
-			time.Sleep(time.Second * 2)
 			continue
 		}
 
@@ -141,6 +147,11 @@ func SyncAccount(accountID uint) (int, error) {
 }
 
 func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, folder string) (int, error) {
+	// 验证连接状态
+	if !client.IsConnected() {
+		return 0, fmt.Errorf("client not connected")
+	}
+
 	var syncState models.SyncState
 	result := db.Where("account_id = ? AND folder = ?", account.ID, folder).First(&syncState)
 	if result.Error != nil {
