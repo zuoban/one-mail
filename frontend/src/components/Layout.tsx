@@ -6,7 +6,7 @@ import { useTheme } from '../context/ThemeContext'
 export default function Layout() {
   const location = useLocation()
   const { user, logout } = useAuth()
-  const { theme, setTheme } = useTheme()
+  const { theme, resolvedTheme, setTheme } = useTheme()
 
   const navItems = [
     { path: '/inbox', label: '收件箱', icon: Inbox },
@@ -19,7 +19,7 @@ export default function Layout() {
       <aside className="w-64 bg-[var(--bg-primary)] border-r border-[var(--border-light)] flex flex-col">
         <div className="p-5 border-b border-[var(--border-light)]">
           <h1 className="text-xl font-semibold flex items-center gap-3 text-[var(--text-primary)]">
-            <img src="/logo.svg" alt="One-Mail" className="w-9 h-9 rounded-lg" />
+            <img src={resolvedTheme === 'dark' ? '/logo-dark.svg' : '/logo.svg'} alt="One-Mail" className="w-9 h-9 rounded-lg" />
             One-Mail
           </h1>
         </div>

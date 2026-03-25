@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import axios from 'axios'
 import { authApi } from '../api'
 import useAuth from '../context/useAuth'
+import { useTheme } from '../context/ThemeContext'
 import { Mail, Lock, LogIn, AlertCircle } from 'lucide-react'
 
 export default function Login() {
@@ -12,6 +13,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const { login } = useAuth()
+  const { resolvedTheme } = useTheme()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -35,7 +37,7 @@ export default function Login() {
       <div className="w-full max-w-md p-8 mx-4 card">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[var(--primary-100)] mb-4">
-            <img src="/logo.svg" alt="One-Mail" className="w-10 h-10" />
+            <img src={resolvedTheme === 'dark' ? '/logo-dark.svg' : '/logo.svg'} alt="One-Mail" className="w-10 h-10" />
           </div>
           <h1 className="text-2xl font-semibold text-[var(--text-primary)] mb-2">登录 One-Mail</h1>
           <p className="text-[var(--text-secondary)]">欢迎回来</p>

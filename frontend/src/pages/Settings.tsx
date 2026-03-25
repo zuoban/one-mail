@@ -150,10 +150,10 @@ export default function Settings() {
 
         {toast && (
           <div
-            className={`fixed top-4 right-4 px-4 py-3 rounded-lg shadow-lg z-50 ${
+            className={`fixed top-4 right-4 px-4 py-3 rounded-lg shadow-lg border z-50 ${
               toast.type === 'success'
-                ? 'bg-green-500 text-white'
-                : 'bg-red-500 text-white'
+                ? 'bg-[var(--success-50)] text-[var(--success-700)] border-[var(--success-100)]'
+                : 'bg-[var(--error-50)] text-[var(--error-700)] border-[var(--error-100)]'
             }`}
           >
             {toast.message}
@@ -204,7 +204,7 @@ export default function Settings() {
             </h2>
 
             {profileError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
+              <div className="alert alert-error mb-4 rounded-lg">
                 {profileError}
               </div>
             )}
@@ -259,7 +259,7 @@ export default function Settings() {
             </h2>
 
             {passwordError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
+              <div className="alert alert-error mb-4 rounded-lg">
                 {passwordError}
               </div>
             )}
@@ -334,7 +334,7 @@ export default function Settings() {
             </p>
 
             {telegramError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
+              <div className="alert alert-error mb-4 rounded-lg">
                 {telegramError}
               </div>
             )}
@@ -357,7 +357,7 @@ export default function Settings() {
                   }`}
                 >
                   <span
-                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                    className={`toggle-thumb absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform ${
                       telegramConfig.enabled ? 'translate-x-5' : 'translate-x-0'
                     }`}
                   />
@@ -401,7 +401,7 @@ export default function Settings() {
                   type="button"
                   onClick={handleTelegramTest}
                   disabled={telegramTesting || !telegramConfig.bot_token || !telegramConfig.chat_id}
-                  className="px-4 py-2 rounded-lg text-sm text-[var(--primary-600)] border border-[var(--primary-200)] hover:bg-[var(--primary-50)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-lg text-sm text-[var(--primary-700)] border border-[var(--primary-200)] hover:bg-[var(--bg-accent-soft)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {telegramTesting ? '测试中...' : '发送测试消息'}
                 </button>

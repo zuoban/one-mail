@@ -20,7 +20,7 @@ export default function ConfirmDialog({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div className="overlay-backdrop fixed inset-0 z-50 flex items-center justify-center">
       <div className="card-static w-full max-w-sm p-6">
         <h3 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h3>
         <p className="mt-2 text-sm text-[var(--text-secondary)]">{message}</p>

@@ -36,19 +36,25 @@
   --success-100: #DCFCE7;
   --success-500: #22C55E;
   --success-600: #16A34A;
+  --success-700: #15803D;
   --warning-50: #FFFBEB;
   --warning-100: #FEF3C7;
   --warning-500: #F59E0B;
   --warning-600: #D97706;
+  --warning-700: #B45309;
   --error-50: #FEF2F2;
   --error-100: #FEE2E2;
   --error-500: #EF4444;
   --error-600: #DC2626;
+  --error-700: #B91C1C;
 
   /* Background Colors */
   --bg-primary: #FFFFFF;
   --bg-secondary: #F8FAFC;
   --bg-tertiary: #F1F5F9;
+  --bg-elevated: #FFFFFF;
+  --bg-overlay: rgb(15 23 42 / 0.4);
+  --bg-accent-soft: #EFF6FF;
 
   /* Text Colors */
   --text-primary: #0F172A;
@@ -60,6 +66,14 @@
   --border-light: #E2E8F0;
   --border-default: #CBD5E1;
   --border-hover: #94A3B8;
+  --border-strong: #94A3B8;
+
+  /* Component Surfaces */
+  --tooltip-bg: #0F172A;
+  --tooltip-text: #FFFFFF;
+  --tooltip-border: rgb(15 23 42 / 0.08);
+  --toggle-knob: #FFFFFF;
+  --app-background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%);
 
   /* Shadow System - Soft UI */
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
@@ -109,48 +123,79 @@
 
 /* Dark Mode */
 .dark {
-  /* Primary Color - 深色模式下稍微提亮 */
-  --primary-50: #1E3A8A;
-  --primary-100: #1E40AF;
-  --primary-500: #60A5FA;
-  --primary-600: #3B82F6;
-  --primary-700: #93C5FD;
+  /* Primary Color - Night mode with cooler, lower-glare accents */
+  --primary-50: #0D2137;
+  --primary-100: #12304E;
+  --primary-200: #1D476F;
+  --primary-500: #67B4FF;
+  --primary-600: #4FA1F4;
+  --primary-700: #9ED1FF;
 
-  /* Neutral Colors - 深色调色板 */
-  --neutral-50: #1E293B;
-  --neutral-100: #334155;
-  --neutral-200: #475569;
-  --neutral-300: #64748B;
-  --neutral-400: #94A3B8;
-  --neutral-500: #CBD5E1;
-  --neutral-600: #E2E8F0;
-  --neutral-700: #F1F5F9;
-  --neutral-800: #F8FAFC;
-  --neutral-900: #FFFFFF;
+  /* Neutral Colors - Deep navy foundation */
+  --neutral-50: #0C1727;
+  --neutral-100: #122032;
+  --neutral-200: #1A2B40;
+  --neutral-300: #26384F;
+  --neutral-400: #51657F;
+  --neutral-500: #8DA1BC;
+  --neutral-600: #B9C8DC;
+  --neutral-700: #D5E0EE;
+  --neutral-800: #EAF2FB;
+  --neutral-900: #F7FAFF;
+
+  /* Semantic Colors - darker surfaces with readable accents */
+  --success-50: #0D221B;
+  --success-100: #163628;
+  --success-500: #4ADE80;
+  --success-600: #34D399;
+  --success-700: #A7F3D0;
+  --warning-50: #261A07;
+  --warning-100: #3A290D;
+  --warning-500: #FBBF24;
+  --warning-600: #F59E0B;
+  --warning-700: #FDE68A;
+  --error-50: #2A1116;
+  --error-100: #411923;
+  --error-500: #FB7185;
+  --error-600: #F87171;
+  --error-700: #FECDD3;
 
   /* Background Colors */
-  --bg-primary: #0F172A;
-  --bg-secondary: #1E293B;
-  --bg-tertiary: #334155;
+  --bg-primary: #08111F;
+  --bg-secondary: #020617;
+  --bg-tertiary: #0E1A2B;
+  --bg-elevated: #0C1727;
+  --bg-overlay: rgb(2 6 23 / 0.72);
+  --bg-accent-soft: #0F2742;
 
   /* Text Colors */
-  --text-primary: #F8FAFC;
-  --text-secondary: #CBD5E1;
-  --text-tertiary: #94A3B8;
-  --text-inverse: #0F172A;
+  --text-primary: #EAF2FB;
+  --text-secondary: #BAC8DA;
+  --text-tertiary: #7E91AD;
+  --text-inverse: #020617;
 
   /* Border Colors */
-  --border-light: #334155;
-  --border-default: #475569;
-  --border-hover: #64748B;
+  --border-light: #162336;
+  --border-default: #243349;
+  --border-hover: #38516F;
+  --border-strong: #4C698C;
 
-  /* Shadow System - 深色模式使用更柔和的阴影 */
-  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
-  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.4);
-  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.4), 0 8px 10px -6px rgb(0 0 0 / 0.4);
-  --shadow-focus: 0 0 0 3px rgb(96 165 250 / 0.4);
+  /* Component Surfaces */
+  --tooltip-bg: #10233A;
+  --tooltip-text: #EAF2FB;
+  --tooltip-border: rgb(110 168 255 / 0.18);
+  --toggle-knob: #DCEBFF;
+  --app-background:
+    radial-gradient(circle at top, rgb(31 88 153 / 0.18), transparent 32%),
+    linear-gradient(180deg, #040A14 0%, #020617 55%, #08111F 100%);
+
+  /* Shadow System - deeper shadows with a soft blue edge */
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.35);
+  --shadow-sm: 0 10px 30px -22px rgb(0 0 0 / 0.9), 0 0 0 1px rgb(125 170 230 / 0.08);
+  --shadow-md: 0 18px 40px -24px rgb(0 0 0 / 0.95), 0 0 0 1px rgb(125 170 230 / 0.1);
+  --shadow-lg: 0 24px 55px -26px rgb(0 0 0 / 0.98), 0 0 0 1px rgb(125 170 230 / 0.12);
+  --shadow-xl: 0 32px 70px -28px rgb(0 0 0 / 1), 0 0 0 1px rgb(125 170 230 / 0.16);
+  --shadow-focus: 0 0 0 3px rgb(103 180 255 / 0.28);
 }
 
 /* ============================================
@@ -165,6 +210,8 @@ body {
   margin: 0;
   min-height: 100vh;
   background-color: var(--bg-secondary);
+  background-image: var(--app-background);
+  background-attachment: fixed;
   color: var(--text-primary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -264,21 +311,23 @@ textarea:disabled {
 
 /* Card */
 .card {
-  background-color: var(--bg-primary);
+  background-color: var(--bg-elevated);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow var(--transition-base);
+  transition: box-shadow var(--transition-base), border-color var(--transition-base), transform var(--transition-base);
 }
 
 .card:hover {
+  border-color: var(--border-default);
   box-shadow: var(--shadow-md);
 }
 
 .card-static {
-  background-color: var(--bg-primary);
+  background-color: var(--bg-elevated);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Button Base */
@@ -390,10 +439,10 @@ textarea:disabled {
 
 .alert-error {
   background-color: var(--error-50);
-  border: 2px solid var(--error-500);
+  border: 1px solid var(--error-100);
   color: var(--error-700);
   font-weight: 500;
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15);
+  box-shadow: var(--shadow-sm);
 }
 
 .alert-success {
@@ -481,6 +530,23 @@ textarea:disabled {
 .focus-ring:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
+}
+
+.overlay-backdrop {
+  background-color: var(--bg-overlay);
+  backdrop-filter: blur(8px);
+}
+
+.tooltip-surface {
+  background-color: var(--tooltip-bg);
+  color: var(--tooltip-text);
+  border: 1px solid var(--tooltip-border);
+  box-shadow: var(--shadow-lg);
+}
+
+.toggle-thumb {
+  background-color: var(--toggle-knob);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Selection */

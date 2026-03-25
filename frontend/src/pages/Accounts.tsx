@@ -383,7 +383,7 @@ export default function Accounts() {
       {/* Folders Drawer */}
       {foldersAccount && (
         <>
-          <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setFoldersAccount(null)} />
+          <div className="overlay-backdrop fixed inset-0 z-40" onClick={() => setFoldersAccount(null)} />
           <div className="fixed right-0 top-0 bottom-0 w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-[var(--border-light)]">
               <div>
@@ -418,7 +418,7 @@ export default function Accounts() {
                       onClick={() => toggleFolder(folder.name)}
                       className={`px-3 py-2 rounded-lg text-sm border transition-colors ${
                         selectedFolders.includes(folder.name)
-                          ? 'bg-[var(--primary-50)] text-[var(--primary-700)] border-[var(--primary-200)]'
+                          ? 'bg-[var(--bg-accent-soft)] text-[var(--primary-700)] border-[var(--primary-200)]'
                           : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border-[var(--border-light)] hover:bg-[var(--bg-tertiary)]'
                       }`}
                     >
@@ -465,7 +465,7 @@ export default function Accounts() {
       {/* Add Account Drawer */}
       {showModal && (
         <>
-          <div className="fixed inset-0 bg-black/50 z-40" onClick={() => {
+          <div className="overlay-backdrop fixed inset-0 z-40" onClick={() => {
             setShowModal(false)
             setEditingAccount(null)
           }} />
@@ -589,7 +589,7 @@ export default function Accounts() {
                         type="button"
                         onClick={() => setForm({ ...form, color })}
                         className={`w-7 h-7 rounded-full transition-transform hover:scale-110 ${
-                          form.color === color ? 'ring-2 ring-offset-2 ring-[var(--primary-500)]' : ''
+                          form.color === color ? 'ring-2 ring-[var(--primary-500)] ring-offset-2 ring-offset-[var(--bg-primary)]' : ''
                         }`}
                         style={{ backgroundColor: color }}
                       />
@@ -626,7 +626,7 @@ export default function Accounts() {
                     }`}
                   >
                     <span
-                      className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                      className={`toggle-thumb absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform ${
                         form.enable_auto_sync ? 'translate-x-5' : 'translate-x-0'
                       }`}
                     />
@@ -676,7 +676,7 @@ export default function Accounts() {
       {/* Sync Logs Drawer */}
       {showLogsDrawer && (
         <>
-          <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setShowLogsDrawer(false)} />
+          <div className="overlay-backdrop fixed inset-0 z-40" onClick={() => setShowLogsDrawer(false)} />
           <div className="fixed right-0 top-0 bottom-0 w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-[var(--border-light)]">
               <h3 className="text-lg font-semibold text-[var(--text-primary)]">同步日志</h3>
