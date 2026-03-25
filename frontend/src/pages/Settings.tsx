@@ -158,22 +158,15 @@ export default function Settings() {
     <div className="h-full overflow-auto">
       <div className="max-w-4xl mx-auto p-4 md:p-8">
         <div className="mb-6 rounded-[28px] border border-[var(--border-light)] bg-[var(--bg-primary)]/85 p-5 shadow-[var(--shadow-lg)] backdrop-blur md:p-7">
-          <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-            <div className="min-w-0">
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-[var(--primary-200)] bg-[var(--bg-accent-soft)] px-3 py-1 text-xs font-medium text-[var(--primary-700)]">
-                <span className="status-dot status-dot-success" />
-                账户与通知中心
-              </div>
-              <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-[var(--text-primary)]">设置</h1>
-              <p className="mt-2 max-w-2xl text-sm md:text-base text-[var(--text-secondary)]">
-                在这里统一管理账号资料、登录安全和 Telegram 推送，让 One-Mail 更贴合你的工作节奏。
-              </p>
+          <div className="min-w-0">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-[var(--primary-200)] bg-[var(--bg-accent-soft)] px-3 py-1 text-xs font-medium text-[var(--primary-700)]">
+              <span className="status-dot status-dot-success" />
+              账户与通知中心
             </div>
-            <div className="rounded-2xl border border-[var(--border-light)] bg-[var(--bg-secondary)] px-4 py-3 shadow-sm">
-              <div className="text-xs uppercase tracking-[0.18em] text-[var(--text-tertiary)]">当前账号</div>
-              <div className="mt-2 text-sm font-medium text-[var(--text-primary)]">{user?.username || '未命名用户'}</div>
-              <div className="mt-1 text-sm text-[var(--text-secondary)] break-all">{user?.email || '未设置邮箱'}</div>
-            </div>
+            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-[var(--text-primary)]">设置</h1>
+            <p className="mt-2 max-w-2xl text-sm md:text-base text-[var(--text-secondary)]">
+              在这里统一管理账号资料、登录安全和 Telegram 推送，让 One-Mail 更贴合你的工作节奏。
+            </p>
           </div>
         </div>
 
