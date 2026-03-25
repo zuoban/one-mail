@@ -222,6 +222,13 @@ body {
   min-height: 100vh;
 }
 
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+}
+
 /* ============================================
    Form Elements - Unified Style
    ============================================ */
@@ -549,10 +556,69 @@ textarea:disabled {
   box-shadow: var(--shadow-sm);
 }
 
+.safe-area-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-area-bottom-margin {
+  margin-bottom: env(safe-area-inset-bottom);
+}
+
+.auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 28rem;
+  margin-inline: auto;
+}
+
+.email-content {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.email-content img,
+.email-content table,
+.email-content iframe,
+.email-content pre,
+.email-content blockquote {
+  max-width: 100%;
+}
+
+.email-content table {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.email-content pre {
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
 /* Selection */
 ::selection {
   background-color: var(--primary-200);
   color: var(--primary-900);
+}
+
+@media (max-width: 767px) {
+  .auth-shell {
+    align-items: flex-start;
+    padding-top: calc(env(safe-area-inset-top) + var(--space-8));
+    padding-bottom: calc(env(safe-area-inset-bottom) + var(--space-6));
+  }
 }
 
 /* ============================================

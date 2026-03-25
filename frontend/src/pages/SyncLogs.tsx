@@ -109,7 +109,7 @@ export default function SyncLogs() {
   const totalPages = Math.ceil(total / pageSize)
 
   return (
-    <div className="p-6">
+    <div className="p-4 md:p-6">
       <ConfirmDialog
         open={confirmClear}
         title="确认清空"
@@ -121,20 +121,20 @@ export default function SyncLogs() {
       />
 
       {toast && (
-        <div className="fixed top-4 right-4 z-50">
+        <div className="fixed left-4 right-4 top-4 z-50 md:left-auto md:right-4">
           <div className={`px-4 py-3 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-[var(--success-50)] text-[var(--success-600)] border-[var(--success-100)]' : 'bg-[var(--error-50)] text-[var(--error-600)] border-[var(--error-100)]'}`}>
             {toast.message}
           </div>
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <h2 className="text-2xl font-semibold text-[var(--text-primary)]">同步日志</h2>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <select
             value={selectedAccountId || ''}
             onChange={e => handleAccountChange(e.target.value)}
-            className="px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-light)] text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary-500)]"
+            className="w-full sm:w-auto sm:min-w-56 px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-light)] text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary-500)]"
           >
             <option value="">全部账户</option>
             {accounts.map(account => (
@@ -146,7 +146,7 @@ export default function SyncLogs() {
           <button
             onClick={loadData}
             disabled={loading}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg text-[var(--text-primary)] hover:text-white bg-[var(--bg-primary)] hover:bg-[var(--primary-500)] border border-[var(--border-light)] transition-all duration-200 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg text-[var(--text-primary)] hover:text-white bg-[var(--bg-primary)] hover:bg-[var(--primary-500)] border border-[var(--border-light)] transition-all duration-200 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             <span>刷新</span>
@@ -154,7 +154,7 @@ export default function SyncLogs() {
           {selectedAccountId && (
             <button
               onClick={() => setConfirmClear(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg text-[var(--error-600)] hover:text-white bg-[var(--bg-primary)] hover:bg-[var(--error-600)] border border-[var(--error-600)] transition-all duration-200 whitespace-nowrap"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg text-[var(--error-600)] hover:text-white bg-[var(--bg-primary)] hover:bg-[var(--error-600)] border border-[var(--error-600)] transition-all duration-200 whitespace-nowrap w-full sm:w-auto"
             >
               <Trash2 className="w-4 h-4" />
               <span>清空日志</span>
@@ -176,7 +176,8 @@ export default function SyncLogs() {
       ) : (
         <>
           <div className="bg-[var(--bg-primary)] rounded-xl border border-[var(--border-light)] overflow-hidden">
-            <table className="w-full">
+            <div className="overflow-x-auto thin-scrollbar">
+            <table className="w-full min-w-[760px]">
               <thead>
                 <tr className="border-b border-[var(--border-light)] bg-[var(--bg-secondary)]">
                   <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--text-tertiary)] uppercase tracking-wider">状态</th>
@@ -233,14 +234,15 @@ export default function SyncLogs() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {totalPages > 1 && (
-            <div className="flex items-center justify-between mt-6 pt-4 border-t border-[var(--border-light)]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mt-6 pt-4 border-t border-[var(--border-light)]">
               <span className="text-sm text-[var(--text-tertiary)]">
                 共 {total} 条记录
               </span>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 flex-wrap">
                 <button
                   onClick={() => setPage(1)}
                   disabled={page === 1}

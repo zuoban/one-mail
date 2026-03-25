@@ -46,13 +46,13 @@ export default function Register() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--bg-secondary)]">
-      <div className="w-full max-w-md p-8 mx-4 card">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[var(--primary-100)] mb-4">
+    <div className="auth-shell bg-[var(--bg-secondary)]">
+      <div className="auth-card card p-6 sm:p-8">
+        <div className="text-center mb-6 sm:mb-8">
+          <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-[var(--primary-100)] mb-4">
             <img src={resolvedTheme === 'dark' ? '/logo-dark.svg' : '/logo.svg'} alt="One-Mail" className="w-10 h-10" />
           </div>
-          <h1 className="text-2xl font-semibold text-[var(--text-primary)] mb-2">注册 One-Mail</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold text-[var(--text-primary)] mb-2">注册 One-Mail</h1>
           <p className="text-[var(--text-secondary)]">创建您的账号</p>
         </div>
 
@@ -147,7 +147,7 @@ export default function Register() {
           </button>
         </form>
 
-        <p className="mt-6 text-center text-[var(--text-secondary)]">
+        <p className="mt-6 text-center text-sm sm:text-base text-[var(--text-secondary)]">
           已有账号？{' '}
           <Link to="/login" className="text-[var(--primary-600)] hover:text-[var(--primary-700)] font-medium">
             立即登录

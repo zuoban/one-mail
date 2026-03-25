@@ -4,7 +4,7 @@ import axios from 'axios'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 import type { Email, EmailAccount, SyncStatus } from '../api'
-import { Search, Mail, Paperclip, Trash2, EyeOff, Loader2, Send } from 'lucide-react'
+import { Search, Mail, Paperclip, Trash2, EyeOff, Loader2, Send, ArrowLeft } from 'lucide-react'
 
 const providers = [
   { value: 'gmail', label: 'Gmail' },
@@ -406,6 +406,7 @@ export default function Dashboard() {
     ),
     [filteredEmails, getEmailTimestamp]
   )
+  const isMobileDetailOpen = Boolean(selectedEmail)
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -535,10 +536,10 @@ export default function Dashboard() {
   }, [contextMenu])
 
   return (
-    <div className="h-full flex bg-[var(--bg-secondary)] overflow-hidden">
+    <div className="h-full flex flex-col md:flex-row bg-[var(--bg-secondary)] overflow-hidden">
       {/* Toast Notification */}
       {toast && (
-        <div className="fixed top-4 right-4 z-50">
+        <div className="fixed left-4 right-4 top-4 z-50 md:left-auto md:right-4">
           <div className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-[var(--success-50)] text-[var(--success-600)] border-[var(--success-100)]' : 'bg-[var(--error-50)] text-[var(--error-600)] border-[var(--error-100)]'}`}>
             <span>{toast.message}</span>
             {toast.actionLabel && toast.onAction && (
@@ -591,7 +592,7 @@ export default function Dashboard() {
       )}
 
       {/* Left Sidebar - Email List */}
-      <div className="w-96 border-r border-[var(--border-light)] bg-[var(--bg-primary)] flex flex-col min-h-0">
+      <div className={`${isMobileDetailOpen ? 'hidden md:flex' : 'flex'} w-full md:w-96 border-r border-[var(--border-light)] bg-[var(--bg-primary)] flex-col min-h-0`}>
         <div className="p-4 border-b border-[var(--border-light)] bg-[var(--bg-secondary)] flex-shrink-0">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2 text-[var(--text-primary)]">
@@ -672,13 +673,13 @@ export default function Dashboard() {
           )}
 
           {/* Filter Buttons */}
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
             {(['all', 'unread'] as const).map((f) => (
               <button
                 key={f}
                 type="button"
                 onClick={() => setFilter(f)}
-                className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                className={`min-h-10 px-3 py-2 text-sm sm:text-xs rounded-full border transition-colors ${
                   filter === f
                     ? 'bg-[var(--primary-600)] text-white border-[var(--primary-600)]'
                     : 'bg-[var(--bg-primary)] text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:text-[var(--text-secondary)]'
@@ -693,7 +694,7 @@ export default function Dashboard() {
                 setBatchMode(!batchMode)
                 setSelectedIds(new Set())
               }}
-              className="px-3 py-1.5 text-xs rounded-full border transition-colors cursor-pointer bg-[var(--bg-primary)] text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)]"
+              className="min-h-10 px-3 py-2 text-sm sm:text-xs rounded-full border transition-colors cursor-pointer bg-[var(--bg-primary)] text-[var(--text-tertiary)] border-[var(--border-default)] hover:border-[var(--border-hover)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)]"
             >
               {batchMode ? '取消批量' : '批量操作'}
             </button>
@@ -701,12 +702,12 @@ export default function Dashboard() {
 
           {/* Batch Actions */}
           {batchMode && selectedIds.size > 0 && (
-            <div className="flex items-center gap-2 mb-3 p-2 bg-[var(--primary-50)] rounded-lg border border-[var(--primary-200)]">
-              <span className="text-xs text-[var(--text-secondary)]">已选 {selectedIds.size} 封</span>
+            <div className="flex items-center gap-2 mb-3 p-2 bg-[var(--primary-50)] rounded-lg border border-[var(--primary-200)] flex-wrap">
+              <span className="text-sm sm:text-xs text-[var(--text-secondary)]">已选 {selectedIds.size} 封</span>
               <button
                 type="button"
                 onClick={handleBatchMarkAsRead}
-                className="px-2 py-1 text-xs bg-[var(--primary-600)] text-white rounded hover:bg-[var(--primary-700)] transition-colors"
+                className="min-h-9 px-3 py-2 text-sm sm:text-xs bg-[var(--primary-600)] text-white rounded hover:bg-[var(--primary-700)] transition-colors"
               >
                 标记已读
               </button>
@@ -715,18 +716,18 @@ export default function Dashboard() {
 
           {/* Selection Controls */}
           {batchMode && (
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
               <button
                 type="button"
                 onClick={toggleSelectAll}
-                className="px-2 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-default)] rounded hover:border-[var(--border-hover)] hover:bg-[var(--bg-secondary)] transition-colors cursor-pointer"
+                className="min-h-9 px-3 py-2 text-sm sm:text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-default)] rounded hover:border-[var(--border-hover)] hover:bg-[var(--bg-secondary)] transition-colors cursor-pointer"
               >
                 全选
               </button>
               <button
                 type="button"
                 onClick={toggleInvert}
-                className="px-2 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-default)] rounded hover:border-[var(--border-hover)] hover:bg-[var(--bg-secondary)] transition-colors cursor-pointer"
+                className="min-h-9 px-3 py-2 text-sm sm:text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-default)] rounded hover:border-[var(--border-hover)] hover:bg-[var(--bg-secondary)] transition-colors cursor-pointer"
               >
                 反选
               </button>
@@ -746,7 +747,7 @@ export default function Dashboard() {
             />
           </div>
 
-          <div className="mt-3 text-[11px] text-[var(--text-tertiary)]">
+          <div className="mt-3 hidden md:block text-[11px] text-[var(--text-tertiary)]">
             快捷键：j/k 上下，o 打开，r 刷新
           </div>
         </div>
@@ -840,14 +841,14 @@ export default function Dashboard() {
 
                         {/* Actions & Date */}
                         <div className="flex flex-col items-end gap-1">
-                          <div className="flex items-center gap-0.5 opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
+                          <div className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:translate-x-2 md:group-hover:opacity-100 md:group-hover:translate-x-0 transition-all duration-200">
                             <button
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation()
                                 requestDeleteEmail(email)
                               }}
-                              className="p-1.5 rounded-md text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] transition-colors cursor-pointer"
+                              className="min-h-10 min-w-10 p-2 rounded-md text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] transition-colors cursor-pointer"
                               title="删除"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -880,13 +881,24 @@ export default function Dashboard() {
       </div>
 
       {/* Right Panel - Email Detail */}
-      <div className="flex-1 bg-[var(--bg-primary)] min-h-0">
+      <div className={`${selectedEmail ? 'flex' : 'hidden md:flex'} flex-1 bg-[var(--bg-primary)] min-h-0 flex-col`}>
         {selectedEmail ? (
           <div className="h-full flex flex-col">
-            <div className="p-6 border-b border-[var(--border-light)] bg-[var(--bg-secondary)] flex-shrink-0 relative">
-              <div className="flex items-start gap-4 pr-16">
+            <div className="p-4 md:p-6 border-b border-[var(--border-light)] bg-[var(--bg-secondary)] flex-shrink-0">
+              <div className="mb-4 md:hidden">
+                <button
+                  type="button"
+                  onClick={() => setSelectedEmail(null)}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  返回邮件列表
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-xl font-semibold text-[var(--text-primary)] truncate mb-3">
+                  <h2 className="text-lg md:text-xl font-semibold text-[var(--text-primary)] break-words mb-3">
                     {selectedEmail.subject || '(无主题)'}
                   </h2>
                   <div className="flex items-center gap-3">
@@ -898,40 +910,41 @@ export default function Dashboard() {
                       <p className="text-sm text-[var(--text-secondary)]">{selectedEmail.from}</p>
                     </div>
                   </div>
+                  <div className="mt-3 text-sm text-[var(--text-tertiary)]">
+                    {new Date(selectedEmail.date).toLocaleString('zh-CN')}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleMarkAsUnread(selectedEmail)}
+                    className="btn btn-secondary p-2 min-h-11 min-w-11"
+                    title="标记未读"
+                  >
+                    <EyeOff className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => requestDeleteEmail(selectedEmail)}
+                    className="btn btn-danger p-2 min-h-11 min-w-11"
+                    title="删除"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSendToTelegram(selectedEmail)}
+                    disabled={sendingTelegram}
+                    className="btn btn-secondary p-2 min-h-11 min-w-11"
+                    title="发送到 Telegram"
+                  >
+                    {sendingTelegram ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
-              <div className="absolute top-5 right-6 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleMarkAsUnread(selectedEmail)}
-                  className="btn btn-secondary p-2"
-                  title="标记未读"
-                >
-                  <EyeOff className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => requestDeleteEmail(selectedEmail)}
-                  className="btn btn-danger p-2"
-                  title="删除"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSendToTelegram(selectedEmail)}
-                  disabled={sendingTelegram}
-                  className="btn btn-secondary p-2"
-                  title="发送到 Telegram"
-                >
-                  {sendingTelegram ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                </button>
-              </div>
-              <div className="mt-3 text-sm text-[var(--text-tertiary)]">
-                {new Date(selectedEmail.date).toLocaleString('zh-CN')}
-              </div>
             </div>
-            <div ref={detailScrollRef} className="flex-1 p-6 overflow-auto thin-scrollbar text-[var(--text-primary)] leading-relaxed">
+            <div ref={detailScrollRef} className="flex-1 p-4 md:p-6 overflow-auto thin-scrollbar text-[var(--text-primary)] leading-relaxed">
               <div className="max-w-3xl mx-auto">
                 {loadingDetail ? (
                   <div className="flex flex-col items-center justify-center py-12 gap-3">
@@ -939,9 +952,9 @@ export default function Dashboard() {
                     <span className="text-sm text-[var(--text-tertiary)]">加载中...</span>
                   </div>
                 ) : selectedEmail.body_html ? (
-                  <div className="prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+                  <div className="email-content prose prose-slate max-w-none overflow-x-auto" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
                 ) : selectedEmail.body_text ? (
-                  <pre className="whitespace-pre-wrap text-[var(--text-primary)] leading-relaxed font-sans">{selectedEmail.body_text}</pre>
+                  <pre className="whitespace-pre-wrap break-words text-[var(--text-primary)] leading-relaxed font-sans">{selectedEmail.body_text}</pre>
                 ) : (
                   <p className="text-[var(--text-tertiary)]">无邮件内容</p>
                 )}

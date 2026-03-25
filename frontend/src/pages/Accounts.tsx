@@ -253,7 +253,7 @@ export default function Accounts() {
   }
 
   return (
-    <div className="p-6">
+    <div className="p-4 md:p-6">
       <ConfirmDialog
         open={Boolean(confirmDelete)}
         title="确认删除"
@@ -266,7 +266,7 @@ export default function Accounts() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed top-4 right-4 z-50">
+        <div className="fixed left-4 right-4 top-4 z-50 md:left-auto md:right-4">
           <div className={`px-4 py-3 rounded-lg text-sm shadow-lg border ${toast.type === 'success' ? 'bg-[var(--success-50)] text-[var(--success-600)] border-[var(--success-100)]' : 'bg-[var(--error-50)] text-[var(--error-600)] border-[var(--error-100)]'}`}>
             {toast.message}
           </div>
@@ -274,11 +274,11 @@ export default function Accounts() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-2xl font-semibold text-[var(--text-primary)]">邮箱账户</h2>
         <button
           onClick={openAddModal}
-          className="btn btn-primary"
+          className="btn btn-primary w-full sm:w-auto justify-center"
         >
           <Plus className="w-4 h-4" />
           <span>添加账户</span>
@@ -300,7 +300,7 @@ export default function Accounts() {
               className="group relative rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-4 transition-all duration-200 hover:border-[var(--primary-200)]"
             >
 
-              <div className="flex items-center gap-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-5">
 
                 {/* 头像 */}
                 <div className="flex-shrink-0">
@@ -329,7 +329,7 @@ export default function Accounts() {
                 </div>
 
                 {/* 操作按钮 */}
-              <div className="flex items-center gap-1">
+              <div className="flex flex-wrap items-center gap-1">
                   <button
                     onClick={() => openFoldersModal(account)}
                     className="p-2 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--primary-600)] hover:bg-[var(--primary-50)] transition-colors"
@@ -384,7 +384,7 @@ export default function Accounts() {
       {foldersAccount && (
         <>
           <div className="overlay-backdrop fixed inset-0 z-40" onClick={() => setFoldersAccount(null)} />
-          <div className="fixed right-0 top-0 bottom-0 w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
+          <div className="fixed inset-y-0 right-0 w-full sm:w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-[var(--border-light)]">
               <div>
                 <h3 className="text-lg font-semibold text-[var(--text-primary)]">同步文件夹</h3>
@@ -410,7 +410,7 @@ export default function Accounts() {
                   <p className="text-[var(--text-secondary)]">没有获取到文件夹</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {folders.map(folder => (
                     <button
                       key={folder.name}
@@ -422,8 +422,8 @@ export default function Accounts() {
                           : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border-[var(--border-light)] hover:bg-[var(--bg-tertiary)]'
                       }`}
                     >
-                      <div className="flex flex-col items-start">
-                        <span className="truncate max-w-[180px]">{folder.name}</span>
+                      <div className="flex flex-col items-start min-w-0">
+                        <span className="truncate max-w-full">{folder.name}</span>
                         <span className="text-xs text-[var(--text-tertiary)]">
                           {folder.messages} 封 · 未读 {folder.unseen}
                         </span>
@@ -441,11 +441,11 @@ export default function Accounts() {
               )}
             </div>
 
-            <div className="flex justify-end gap-3 p-4 border-t border-[var(--border-light)]">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 p-4 border-t border-[var(--border-light)]">
               <button
                 type="button"
                 onClick={() => setFoldersAccount(null)}
-                className="px-4 py-2 rounded-lg text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] transition-colors"
+                className="px-4 py-2 rounded-lg text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] transition-colors w-full sm:w-auto"
               >
                 取消
               </button>
@@ -453,7 +453,7 @@ export default function Accounts() {
                 type="button"
                 onClick={applyFolders}
                 disabled={loading || foldersLoading}
-                className="px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-50 bg-[var(--primary-500)] hover:bg-[var(--primary-600)]"
+                className="px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-50 bg-[var(--primary-500)] hover:bg-[var(--primary-600)] w-full sm:w-auto"
               >
                 应用
               </button>
@@ -469,7 +469,7 @@ export default function Accounts() {
             setShowModal(false)
             setEditingAccount(null)
           }} />
-          <div className="fixed right-0 top-0 bottom-0 w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
+          <div className="fixed inset-y-0 right-0 w-full sm:w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-[var(--border-light)]">
               <div className="flex items-center gap-3">
@@ -503,14 +503,14 @@ export default function Accounts() {
 
             {/* Form */}
             <form onSubmit={handleSubmit} className="flex-1 overflow-auto flex flex-col">
-              <div className="flex-1 overflow-auto p-6">
+              <div className="flex-1 overflow-auto p-4 sm:p-6">
               <div className="space-y-5">
                 {/* Provider Selection */}
                 <div>
                   <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                     邮箱类型
                   </label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {providers.map(p => (
                       <button
                         key={p.value}
@@ -582,7 +582,7 @@ export default function Accounts() {
                   <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                     账户颜色
                   </label>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {accountColors.map(color => (
                       <button
                         key={color}
@@ -645,21 +645,21 @@ export default function Accounts() {
               </div>
 
               {/* Footer */}
-              <div className="flex justify-end gap-3 p-4 border-t border-[var(--border-light)]">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 p-4 border-t border-[var(--border-light)]">
                 <button
                   type="button"
                   onClick={() => {
                     setShowModal(false)
                     setEditingAccount(null)
                   }}
-                  className="px-4 py-2 rounded-lg text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] transition-colors"
+                  className="px-4 py-2 rounded-lg text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] transition-colors w-full sm:w-auto"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className={`px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-50 ${
+                  className={`px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-50 w-full sm:w-auto ${
                     editingAccount
                       ? 'bg-[var(--warning-500)] hover:bg-[var(--warning-600)]'
                       : 'bg-[var(--primary-500)] hover:bg-[var(--primary-600)]'
@@ -677,7 +677,7 @@ export default function Accounts() {
       {showLogsDrawer && (
         <>
           <div className="overlay-backdrop fixed inset-0 z-40" onClick={() => setShowLogsDrawer(false)} />
-          <div className="fixed right-0 top-0 bottom-0 w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
+          <div className="fixed inset-y-0 right-0 w-full sm:w-[600px] bg-[var(--bg-primary)] shadow-2xl z-50 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-[var(--border-light)]">
               <h3 className="text-lg font-semibold text-[var(--text-primary)]">同步日志</h3>
               <button onClick={() => setShowLogsDrawer(false)} className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors">
