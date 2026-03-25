@@ -38,6 +38,27 @@ func getBatchSize(isFirstSync bool) int {
 	return 100
 }
 
+func syncFolderWithTimeout(db *gorm.DB, account *models.EmailAccount, client *imap.Client, folder string, timeout time.Duration) (int, error) {
+	type result struct {
+		newCount int
+		err      error
+	}
+
+	done := make(chan result, 1)
+	go func() {
+		newCount, err := SyncFolder(db, account, client, folder)
+		done <- result{newCount: newCount, err: err}
+	}()
+
+	select {
+	case res := <-done:
+		return res.newCount, res.err
+	case <-time.After(timeout):
+		_ = client.Disconnect()
+		return 0, fmt.Errorf("sync folder timeout after %v", timeout)
+	}
+}
+
 func InitSyncCache() error {
 	db := database.GetDB()
 
@@ -74,12 +95,17 @@ func SyncAccount(accountID uint) (int, error) {
 		return 0, err
 	}
 
-	pool := imap.GetConnectionPool()
-	client, err := pool.GetConnection(&account)
-	if err != nil {
+	// 同步任务使用短连接，避免长期复用 IMAP 连接后进入僵死状态，
+	// 导致某次 Select/Search/Fetch 永久阻塞，后续不再产生新的同步日志。
+	client := imap.NewClient(&account)
+	if err := client.Connect(); err != nil {
 		return 0, err
 	}
-	defer pool.ReleaseConnection(account.ID)
+	defer func() {
+		if err := client.Disconnect(); err != nil {
+			log.Printf("Failed to disconnect IMAP client for account %d: %v", accountID, err)
+		}
+	}()
 
 	folders := strings.Split(account.SyncFolders, ",")
 	if len(folders) == 0 {
@@ -102,10 +128,10 @@ func SyncAccount(accountID uint) (int, error) {
 			}
 
 			log.Printf("Sync folder start: account=%d folder=%s", accountID, folder)
-			newCount, err := SyncFolder(db, &account, client, folder)
+			newCount, err := syncFolderWithTimeout(db, &account, client, folder, 2*time.Minute)
 			if err != nil {
 				log.Printf("Failed to sync folder %s for account %d: %v", folder, accountID, err)
-				if isNetworkError(err) {
+				if isNetworkError(err) || strings.Contains(strings.ToLower(err.Error()), "timeout") {
 					networkErrorOccurred = true
 				}
 				folderErrors = append(folderErrors, err)
@@ -126,10 +152,12 @@ func SyncAccount(accountID uint) (int, error) {
 		if networkErrorOccurred && retry < maxRetries {
 			backoff := time.Duration(1<<uint(retry)) * time.Second
 			log.Printf("Network error occurred, retrying (%d/%d) after %v...", retry+1, maxRetries, backoff)
-			pool.RemoveConnection(account.ID)
+
+			_ = client.Disconnect()
 			time.Sleep(backoff)
-			client, err = pool.GetConnection(&account)
-			if err != nil {
+
+			client = imap.NewClient(&account)
+			if err := client.Connect(); err != nil {
 				return 0, err
 			}
 			continue
