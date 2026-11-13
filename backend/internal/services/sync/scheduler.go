@@ -25,13 +25,48 @@ type Scheduler struct {
 }
 
 type SyncStatus struct {
-	AccountID    uint      `json:"account_id"`
-	Running      bool      `json:"running"`
-	StartTime    time.Time `json:"start_time"`
-	LastSyncTime time.Time `json:"last_sync_time"`
-	Error        string    `json:"error"`
-	NewCount     int       `json:"new_count"`
-	mu           sync.RWMutex
+	AccountID         uint      `json:"account_id"`
+	Running           bool      `json:"running"`
+	StartTime         time.Time `json:"start_time"`
+	LastSyncTime      time.Time `json:"last_sync_time"`
+	Error             string    `json:"error"`
+	NewCount          int       `json:"new_count"`
+	ConsecutiveErrors int       `json:"consecutive_errors"`
+	NextRetryAt       time.Time `json:"next_retry_at,omitempty"`
+	mu                sync.RWMutex
+}
+
+func (s *SyncStatus) Snapshot() *SyncStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return &SyncStatus{
+		AccountID:         s.AccountID,
+		Running:           s.Running,
+		StartTime:         s.StartTime,
+		LastSyncTime:      s.LastSyncTime,
+		Error:             s.Error,
+		NewCount:          s.NewCount,
+		ConsecutiveErrors: s.ConsecutiveErrors,
+		NextRetryAt:       s.NextRetryAt,
+	}
+}
+
+func computeRetryBackoff(consecutiveErrors int, err error) time.Duration {
+	if consecutiveErrors <= 0 {
+		consecutiveErrors = 1
+	}
+	if isAuthError(err) {
+		d := 15 * time.Minute * time.Duration(1<<uint(min(consecutiveErrors-1, 2)))
+		if d > 60*time.Minute {
+			return 60 * time.Minute
+		}
+		return d
+	}
+	d := time.Minute * time.Duration(1<<uint(min(consecutiveErrors-1, 4)))
+	if d > 15*time.Minute {
+		return 15 * time.Minute
+	}
+	return d
 }
 
 var globalScheduler *Scheduler
@@ -119,6 +154,9 @@ func (s *Scheduler) syncAllAccounts() {
 			interval = 1
 		}
 		status := s.GetStatus(acc.ID)
+		if !status.NextRetryAt.IsZero() && now.Before(status.NextRetryAt) {
+			continue
+		}
 		lastSync := status.LastSyncTime
 		if lastSync.IsZero() {
 			lastSync = acc.LastSyncTime
@@ -256,9 +294,9 @@ func (s *Scheduler) syncAccount(acc models.EmailAccount) {
 	)
 	if acc.Email != "" {
 		accCopy := acc
-		newCount, err = SyncAccountWithModel(&accCopy)
+		newCount, err = SyncAccountModelWithContext(s.ctx, &accCopy)
 	} else {
-		newCount, err = SyncAccount(accountID)
+		newCount, err = SyncAccountWithContext(s.ctx, accountID)
 	}
 
 	endTime := time.Now()
@@ -270,17 +308,20 @@ func (s *Scheduler) syncAccount(acc models.EmailAccount) {
 	status.mu.Lock()
 	if err != nil {
 		status.Error = err.Error()
-		log.Printf("Sync failed for account %d: %v", accountID, err)
+		status.ConsecutiveErrors++
+		status.NextRetryAt = time.Now().Add(computeRetryBackoff(status.ConsecutiveErrors, err))
+		log.Printf("Sync failed for account %d (consecutive=%d, next_retry=%v): %v", accountID, status.ConsecutiveErrors, time.Until(status.NextRetryAt).Round(time.Second), err)
 		syncLog.Status = "failed"
 		syncLog.Error = err.Error()
 	} else {
 		status.LastSyncTime = time.Now()
 		status.NewCount = newCount
+		status.ConsecutiveErrors = 0
+		status.NextRetryAt = time.Time{}
 		syncLog.Status = "success"
 		syncLog.NewCount = newCount
 	}
 	status.mu.Unlock()
-
 	s.addSyncLog(accountID, syncLog)
 }
 
@@ -317,12 +358,18 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) TriggerSync(accountID uint) error {
-	status := s.GetStatus(accountID)
-	status.mu.RLock()
-	running := status.Running
-	status.mu.RUnlock()
-	if running {
-		return nil
+	s.mu.RLock()
+	status, exists := s.statuses[accountID]
+	s.mu.RUnlock()
+	if exists {
+		status.mu.Lock()
+		if status.Running {
+			status.mu.Unlock()
+			return nil
+		}
+		// Manual trigger resets backoff so the user gets an immediate retry.
+		status.NextRetryAt = time.Time{}
+		status.mu.Unlock()
 	}
 
 	go s.runAccountWithTimeout(models.EmailAccount{ID: accountID})
@@ -335,10 +382,11 @@ func (s *Scheduler) TriggerAllSync() {
 
 func (s *Scheduler) GetStatus(accountID uint) *SyncStatus {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	status, exists := s.statuses[accountID]
+	s.mu.RUnlock()
 
-	if status, exists := s.statuses[accountID]; exists {
-		return status
+	if exists {
+		return status.Snapshot()
 	}
 
 	return &SyncStatus{
@@ -351,9 +399,9 @@ func (s *Scheduler) GetAllStatuses() map[uint]*SyncStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	statuses := make(map[uint]*SyncStatus)
+	statuses := make(map[uint]*SyncStatus, len(s.statuses))
 	for id, status := range s.statuses {
-		statuses[id] = status
+		statuses[id] = status.Snapshot()
 	}
 	return statuses
 }

@@ -95,3 +95,34 @@ func TestDecodeBodyPart(t *testing.T) {
 		t.Fatalf("expected decoded quoted-printable, got %q", got)
 	}
 }
+
+func TestSelectUIDBatch(t *testing.T) {
+	uids := []goimap.UID{30, 10, 50, 20, 40}
+
+	// Initial sync (lastUID == 0) grabs newest `limit` UIDs without pagination
+	initialBatch, hasMore := selectUIDBatch(uids, 0, 3)
+	if hasMore {
+		t.Fatal("expected hasMore=false on initial sync")
+	}
+	if !reflect.DeepEqual(initialBatch, []goimap.UID{30, 40, 50}) {
+		t.Fatalf("unexpected initial batch: %v", initialBatch)
+	}
+
+	// Incremental sync (lastUID > 0) grabs oldest `limit` UIDs sequentially and signals hasMore=true
+	incBatch, hasMore := selectUIDBatch(uids, 5, 3)
+	if !hasMore {
+		t.Fatal("expected hasMore=true on incremental sync when len > limit")
+	}
+	if !reflect.DeepEqual(incBatch, []goimap.UID{10, 20, 30}) {
+		t.Fatalf("unexpected incremental batch: %v", incBatch)
+	}
+
+	// Within limit returns all sorted UIDs with hasMore=false
+	fullBatch, hasMore := selectUIDBatch(uids, 5, 10)
+	if hasMore {
+		t.Fatal("expected hasMore=false when len <= limit")
+	}
+	if !reflect.DeepEqual(fullBatch, []goimap.UID{10, 20, 30, 40, 50}) {
+		t.Fatalf("unexpected full batch: %v", fullBatch)
+	}
+}

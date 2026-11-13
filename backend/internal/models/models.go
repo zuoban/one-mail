@@ -48,6 +48,8 @@ type SyncState struct {
 	AccountID    uint      `gorm:"not null;index;uniqueIndex:idx_sync_state_account_folder,priority:1" json:"account_id"`
 	Folder       string    `gorm:"not null;index;uniqueIndex:idx_sync_state_account_folder,priority:2" json:"folder"`
 	LastUID      uint      `gorm:"default:0" json:"last_uid"`
+	UIDValidity   uint32    `gorm:"default:0" json:"uid_validity"`
+	HighestModSeq uint64    `gorm:"default:0" json:"highest_mod_seq"`
 	LastSyncTime time.Time `json:"last_sync_time"`
 	IsSyncing    bool      `gorm:"default:false" json:"is_syncing"`
 	Error        string    `gorm:"type:text" json:"error"`

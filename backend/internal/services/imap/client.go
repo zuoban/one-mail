@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -468,12 +469,64 @@ func (c *Client) FetchEmails(folder string, since time.Time, limit int) ([]*Emai
 	return results, nil
 }
 
+type EmailFlags struct {
+	IsRead    bool
+	IsStarred bool
+}
+
+type IncrementalFetchResult struct {
+	Emails             []*EmailSummary
+	MaxUID             uint
+	UIDValidity        uint32
+	UIDNext            uint32
+	NumMessages        uint32
+	HighestModSeq      uint64
+	HasMore            bool
+	UIDValidityChanged bool
+}
+
+func selectUIDBatch(uids []imap.UID, lastUID uint, limit int) ([]imap.UID, bool) {
+	if len(uids) == 0 {
+		return nil, false
+	}
+	sorted := make([]imap.UID, len(uids))
+	copy(sorted, uids)
+	slices.Sort(sorted)
+
+	if limit <= 0 || len(sorted) <= limit {
+		return sorted, false
+	}
+	if lastUID == 0 {
+		return sorted[len(sorted)-limit:], false
+	}
+	return sorted[:limit], true
+}
+
 func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) ([]*EmailSummary, uint, error) {
+	res, err := c.FetchEmailsIncrementalEx(folder, lastUID, 0, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	return res.Emails, res.MaxUID, nil
+}
+
+func (c *Client) FetchEmailsIncrementalEx(folder string, lastUID uint, knownUIDValidity uint32, limit int) (*IncrementalFetchResult, error) {
 	if c.client == nil {
-		return nil, 0, fmt.Errorf("not connected")
+		return nil, fmt.Errorf("not connected")
 	}
 
-	var messages []*imapclient.FetchMessageBuffer
+	var (
+		messages           []*imapclient.FetchMessageBuffer
+		uidValidity        uint32
+		uidNext            uint32
+		mailboxMessages    uint32
+		highestModSeq      uint64
+		uidValidityChanged bool
+		hasMore            bool
+		emptyGapAdvanceUID uint
+	)
+
+	effectiveLastUID := lastUID
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Second * time.Duration(1<<uint(attempt-1)))
@@ -484,25 +537,53 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 			if isTemporaryIMAPError(err) {
 				continue
 			}
-			return nil, 0, fmt.Errorf("failed to select mailbox: %w", err)
+			return nil, fmt.Errorf("failed to select mailbox: %w", err)
 		}
 		c.lastActivity = time.Now()
-		mailboxMessages := selectedMbox.NumMessages
-		uidNext := uint32(selectedMbox.UIDNext)
+		mailboxMessages = selectedMbox.NumMessages
+		uidNext = uint32(selectedMbox.UIDNext)
+		uidValidity = selectedMbox.UIDValidity
+		highestModSeq = selectedMbox.HighestModSeq
+
+		if knownUIDValidity != 0 && uidValidity != 0 && knownUIDValidity != uidValidity {
+			log.Printf("UIDVALIDITY changed for folder=%s: old=%d new=%d, resetting lastUID=%d to 0", folder, knownUIDValidity, uidValidity, lastUID)
+			effectiveLastUID = 0
+			uidValidityChanged = true
+		}
 
 		// 如果邮箱为空，直接返回，避免多余 STATUS / SEARCH RTT
 		if mailboxMessages == 0 {
-			return []*EmailSummary{}, lastUID, nil
+			maxUID := effectiveLastUID
+			if uidValidityChanged {
+				maxUID = 0
+			}
+			return &IncrementalFetchResult{
+				Emails:             []*EmailSummary{},
+				MaxUID:             maxUID,
+				UIDValidity:        uidValidity,
+				UIDNext:            uidNext,
+				NumMessages:        0,
+				HighestModSeq:      highestModSeq,
+				UIDValidityChanged: uidValidityChanged,
+			}, nil
 		}
 
-		// 如果服务器返回的 UIDNext 不高于 lastUID+1，说明没有新邮件，跳过 SEARCH RTT
-		if lastUID > 0 && uidNext > 0 && uint(uidNext) <= lastUID+1 {
-			return []*EmailSummary{}, lastUID, nil
+		// 如果服务器返回的 UIDNext 不高于 effectiveLastUID+1，说明没有新邮件，跳过 SEARCH RTT
+		if effectiveLastUID > 0 && uidNext > 0 && uint(uidNext) <= effectiveLastUID+1 {
+			return &IncrementalFetchResult{
+				Emails:             []*EmailSummary{},
+				MaxUID:             effectiveLastUID,
+				UIDValidity:        uidValidity,
+				UIDNext:            uidNext,
+				NumMessages:        mailboxMessages,
+				HighestModSeq:      highestModSeq,
+				UIDValidityChanged: uidValidityChanged,
+			}, nil
 		}
 
 		uidSet := imap.UIDSet{}
-		if lastUID > 0 {
-			uidSet.AddRange(imap.UID(lastUID)+1, 0)
+		if effectiveLastUID > 0 {
+			uidSet.AddRange(imap.UID(effectiveLastUID)+1, 0)
 		} else {
 			uidSet.AddRange(1, 0)
 		}
@@ -515,15 +596,14 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 			if isTemporaryIMAPError(err) {
 				continue
 			}
-			return nil, 0, err
+			return nil, err
 		}
 
 		uids := data.AllUIDs()
-		log.Printf("Fetch incremental search: folder=%s last_uid=%d uids=%d limit=%d mailbox_messages=%d uid_next=%d", folder, lastUID, len(uids), limit, mailboxMessages, uidNext)
+		log.Printf("Fetch incremental search: folder=%s last_uid=%d uids=%d limit=%d mailbox_messages=%d uid_next=%d", folder, effectiveLastUID, len(uids), limit, mailboxMessages, uidNext)
 		if len(uids) == 0 {
-			if lastUID == 0 && mailboxMessages > 0 {
+			if effectiveLastUID == 0 && mailboxMessages > 0 {
 				log.Printf("Fetch incremental fallback for initial sync: folder=%s messages=%d limit=%d", folder, mailboxMessages, limit)
-				// Some servers return empty UID SEARCH; fallback to SEARCH ALL via header-less criteria.
 				allCriteria := imap.SearchCriteria{}
 				allData, allErr := c.client.Search(&allCriteria, nil).Wait()
 				if allErr == nil {
@@ -546,7 +626,7 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 							if isTemporaryIMAPError(err) {
 								continue
 							}
-							return nil, 0, fmt.Errorf("failed to fetch messages: %w", err)
+							return nil, fmt.Errorf("failed to fetch messages: %w", err)
 						}
 						break
 					}
@@ -572,41 +652,57 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 					if isTemporaryIMAPError(err) {
 						continue
 					}
-					return nil, 0, fmt.Errorf("failed to fetch messages: %w", err)
+					return nil, fmt.Errorf("failed to fetch messages: %w", err)
 				}
 				break
 			}
 
-			if lastUID > 0 && limit > 0 {
-				log.Printf("Fetch incremental fallback to UID range: folder=%s last_uid=%d limit=%d", folder, lastUID, limit)
-				startUID := lastUID + 1
+			if effectiveLastUID > 0 && limit > 0 {
+				log.Printf("Fetch incremental fallback to UID range: folder=%s last_uid=%d limit=%d", folder, effectiveLastUID, limit)
+				startUID := effectiveLastUID + 1
 				endUID := startUID + uint(limit) - 1
-				fallbackSet := imap.UIDSet{}
-				fallbackSet.AddRange(imap.UID(startUID), imap.UID(endUID))
-				fetchOptions := &imap.FetchOptions{
-					Envelope: true,
-					Flags:    true,
-					UID:      true,
+				if uidNext > 1 && uint(uidNext-1) < endUID {
+					endUID = uint(uidNext - 1)
 				}
-				messages, err = c.client.Fetch(fallbackSet, fetchOptions).Collect()
-				if err != nil {
-					if isTemporaryIMAPError(err) {
-						continue
+				if endUID >= startUID {
+					fallbackSet := imap.UIDSet{}
+					fallbackSet.AddRange(imap.UID(startUID), imap.UID(endUID))
+					fetchOptions := &imap.FetchOptions{
+						Envelope: true,
+						Flags:    true,
+						UID:      true,
 					}
-					return nil, 0, fmt.Errorf("failed to fetch messages: %w", err)
+					messages, err = c.client.Fetch(fallbackSet, fetchOptions).Collect()
+					if err != nil {
+						if isTemporaryIMAPError(err) {
+							continue
+						}
+						return nil, fmt.Errorf("failed to fetch messages: %w", err)
+					}
+					if len(messages) == 0 && uidNext > 1 && endUID <= uint(uidNext-1) {
+						emptyGapAdvanceUID = endUID
+						hasMore = uint(uidNext-1) > endUID
+					}
+					break
 				}
-				break
 			}
 
-			return []*EmailSummary{}, lastUID, nil
+			return &IncrementalFetchResult{
+				Emails:             []*EmailSummary{},
+				MaxUID:             effectiveLastUID,
+				UIDValidity:        uidValidity,
+				UIDNext:            uidNext,
+				NumMessages:        mailboxMessages,
+				HighestModSeq:      highestModSeq,
+				UIDValidityChanged: uidValidityChanged,
+			}, nil
 		}
 
-		if limit > 0 && len(uids) > limit {
-			uids = uids[len(uids)-limit:]
-		}
+		batchUIDs, more := selectUIDBatch(uids, effectiveLastUID, limit)
+		hasMore = more
 
 		fetchUIDSet := imap.UIDSet{}
-		for _, uid := range uids {
+		for _, uid := range batchUIDs {
 			fetchUIDSet.AddNum(uid)
 		}
 
@@ -621,7 +717,7 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 			if isTemporaryIMAPError(err) {
 				continue
 			}
-			return nil, 0, fmt.Errorf("failed to fetch messages: %w", err)
+			return nil, fmt.Errorf("failed to fetch messages: %w", err)
 		}
 		break
 	}
@@ -681,13 +777,72 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 	}
 
 	if maxUID == 0 {
-		maxUID = lastUID
+		if emptyGapAdvanceUID > effectiveLastUID {
+			maxUID = emptyGapAdvanceUID
+		} else {
+			maxUID = effectiveLastUID
+		}
 	}
 
 	c.lastActivity = time.Now()
-	log.Printf("Fetch incremental done: folder=%s last_uid=%d result=%d max_uid=%d", folder, lastUID, len(results), maxUID)
+	log.Printf("Fetch incremental done: folder=%s last_uid=%d result=%d max_uid=%d has_more=%v", folder, effectiveLastUID, len(results), maxUID, hasMore)
 
-	return results, maxUID, nil
+	return &IncrementalFetchResult{
+		Emails:             results,
+		MaxUID:             maxUID,
+		UIDValidity:        uidValidity,
+		UIDNext:            uidNext,
+		NumMessages:        mailboxMessages,
+		HighestModSeq:      highestModSeq,
+		HasMore:            hasMore,
+		UIDValidityChanged: uidValidityChanged,
+	}, nil
+}
+
+// FetchRecentFlags fetches only UID and FLAGS for UIDs in [minUID, maxUID] to reconcile read/starred state and deletions.
+func (c *Client) FetchRecentFlags(folder string, minUID, maxUID uint) (map[uint]EmailFlags, uint32, error) {
+	if c.client == nil {
+		return nil, 0, fmt.Errorf("not connected")
+	}
+	if minUID == 0 || maxUID < minUID {
+		return map[uint]EmailFlags{}, 0, nil
+	}
+
+	selectedMbox, err := c.client.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to select mailbox: %w", err)
+	}
+	if selectedMbox.NumMessages == 0 {
+		c.lastActivity = time.Now()
+		return map[uint]EmailFlags{}, 0, nil
+	}
+
+	uidSet := imap.UIDSet{}
+	uidSet.AddRange(imap.UID(minUID), imap.UID(maxUID))
+
+	messages, err := c.client.Fetch(uidSet, &imap.FetchOptions{
+		UID:   true,
+		Flags: true,
+	}).Collect()
+	if err != nil {
+		return nil, selectedMbox.NumMessages, fmt.Errorf("failed to fetch flags: %w", err)
+	}
+
+	flagsByUID := make(map[uint]EmailFlags, len(messages))
+	for _, msg := range messages {
+		var f EmailFlags
+		for _, flag := range msg.Flags {
+			if flag == imap.FlagSeen {
+				f.IsRead = true
+			} else if flag == imap.FlagFlagged {
+				f.IsStarred = true
+			}
+		}
+		flagsByUID[uint(msg.UID)] = f
+	}
+
+	c.lastActivity = time.Now()
+	return flagsByUID, selectedMbox.NumMessages, nil
 }
 
 func isTemporaryIMAPError(err error) bool {

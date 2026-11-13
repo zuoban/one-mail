@@ -1,8 +1,10 @@
 package sync
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -94,5 +96,66 @@ func TestGetBatchSizeAndBatchedCacheRebuild(t *testing.T) {
 		if !cache.MightContain(testAccID, id) {
 			t.Fatalf("expected bloom filter to contain %s", id)
 		}
+	}
+}
+
+func TestParseSyncFoldersAndBackoff(t *testing.T) {
+	if got := parseSyncFolders(""); !reflect.DeepEqual(got, []string{"INBOX"}) {
+		t.Fatalf("expected default [INBOX], got %v", got)
+	}
+	if got := parseSyncFolders(" , , "); !reflect.DeepEqual(got, []string{"INBOX"}) {
+		t.Fatalf("expected default [INBOX] for whitespace, got %v", got)
+	}
+	if got := parseSyncFolders("Sent, inbox, Archive, INBOX, Sent "); !reflect.DeepEqual(got, []string{"inbox", "Sent", "Archive"}) {
+		t.Fatalf("expected INBOX-first deduplicated folders, got %v", got)
+	}
+
+	authErr := errors.New("failed to login: Authentication failed")
+	if !isAuthError(authErr) {
+		t.Fatal("expected auth error classification")
+	}
+	netErr := errors.New("read tcp: i/o timeout")
+	if isAuthError(netErr) || !isNetworkError(netErr) {
+		t.Fatal("expected network error classification")
+	}
+
+	if d := computeRetryBackoff(1, authErr); d != 15*time.Minute {
+		t.Fatalf("expected 15m auth backoff, got %v", d)
+	}
+	if d := computeRetryBackoff(2, authErr); d != 30*time.Minute {
+		t.Fatalf("expected 30m auth backoff, got %v", d)
+	}
+	if d := computeRetryBackoff(1, netErr); d != 1*time.Minute {
+		t.Fatalf("expected 1m transient backoff, got %v", d)
+	}
+	if d := computeRetryBackoff(3, netErr); d != 4*time.Minute {
+		t.Fatalf("expected 4m transient backoff, got %v", d)
+	}
+	if d := computeRetryBackoff(10, netErr); d != 15*time.Minute {
+		t.Fatalf("expected capped 15m transient backoff, got %v", d)
+	}
+}
+
+func TestShouldSyncFlags(t *testing.T) {
+	key := folderSyncKey{accountID: 777, folder: "INBOX"}
+	lastFlagSyncAt.Delete(key)
+	defer lastFlagSyncAt.Delete(key)
+
+	if shouldSyncFlags(key, &models.SyncState{LastUID: 0}, 10) {
+		t.Fatal("should skip flag sync before initial LastUID is set")
+	}
+	if shouldSyncFlags(key, &models.SyncState{LastUID: 100, HighestModSeq: 42}, 42) {
+		t.Fatal("should skip flag sync when CONDSTORE HighestModSeq is unchanged")
+	}
+	if !shouldSyncFlags(key, &models.SyncState{LastUID: 100, HighestModSeq: 42}, 43) {
+		t.Fatal("should run flag sync when CONDSTORE HighestModSeq changed")
+	}
+
+	if !shouldSyncFlags(key, &models.SyncState{LastUID: 100}, 0) {
+		t.Fatal("should run flag sync on first non-CONDSTORE check")
+	}
+	lastFlagSyncAt.Store(key, time.Now())
+	if shouldSyncFlags(key, &models.SyncState{LastUID: 100}, 0) {
+		t.Fatal("should throttle non-CONDSTORE flag sync within interval")
 	}
 }
