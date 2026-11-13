@@ -1,4 +1,5 @@
 import { Navigate, useLocation } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
 import useAuth from '../context/useAuth'
 
 interface ProtectedRouteProps {
@@ -12,7 +13,7 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--bg-secondary)]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--primary-600)]"></div>
+        <Loader2 className="w-5 h-5 animate-spin text-[var(--text-tertiary)]" strokeWidth={1.5} />
       </div>
     )
   }

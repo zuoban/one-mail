@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -14,7 +14,7 @@ export default function Tooltip({ content, children, className = '', placement =
   const [open, setOpen] = useState(false)
   const [coords, setCoords] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
 
-  const updatePosition = () => {
+  const updatePosition = useCallback(() => {
     const node = wrapperRef.current
     if (!node) return
     const rect = node.getBoundingClientRect()
@@ -25,19 +25,18 @@ export default function Tooltip({ content, children, className = '', placement =
       left: rect.left + rect.width / 2,
       top,
     })
-  }
+  }, [placement])
 
   useEffect(() => {
     if (!open) return
     updatePosition()
-    const handle = () => updatePosition()
-    window.addEventListener('scroll', handle, true)
-    window.addEventListener('resize', handle)
+    window.addEventListener('scroll', updatePosition, true)
+    window.addEventListener('resize', updatePosition)
     return () => {
-      window.removeEventListener('scroll', handle, true)
-      window.removeEventListener('resize', handle)
+      window.removeEventListener('scroll', updatePosition, true)
+      window.removeEventListener('resize', updatePosition)
     }
-  }, [open, placement])
+  }, [open, updatePosition])
 
   return (
     <span
@@ -57,19 +56,11 @@ export default function Tooltip({ content, children, className = '', placement =
             left: `${coords.left}px`,
             top: `${coords.top}px`,
           }}
-          className={`tooltip-surface pointer-events-none fixed z-50 w-max max-w-[360px] -translate-x-1/2 rounded-lg px-2.5 py-1.5 text-[11px] font-medium whitespace-nowrap ${
+          className={`tooltip-surface pointer-events-none fixed z-50 w-max max-w-[360px] -translate-x-1/2 rounded-[6px] px-2.5 py-1 text-xs font-normal whitespace-nowrap ${
             placement === 'bottom' ? '' : '-translate-y-full'
           }`}
         >
           {content}
-          <span
-            className={`absolute left-1/2 h-0 w-0 -translate-x-1/2 border-[6px] border-transparent ${
-              placement === 'bottom'
-                ? 'top-0 -translate-y-1/2'
-                : 'bottom-0 translate-y-1/2'
-            }`}
-            style={placement === 'bottom' ? { borderBottomColor: 'var(--tooltip-bg)' } : { borderTopColor: 'var(--tooltip-bg)' }}
-          />
         </span>,
         document.body,
       )}

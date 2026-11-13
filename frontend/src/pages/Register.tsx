@@ -4,7 +4,7 @@ import axios from 'axios'
 import { authApi } from '../api'
 import useAuth from '../context/useAuth'
 import { useTheme } from '../context/ThemeContext'
-import { Mail, Lock, User, UserPlus } from 'lucide-react'
+import { Mail, Lock, User, UserPlus, AlertCircle, Sun, Moon } from 'lucide-react'
 
 export default function Register() {
   const [username, setUsername] = useState('')
@@ -15,7 +15,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const { login } = useAuth()
-  const { resolvedTheme } = useTheme()
+  const { resolvedTheme, setTheme } = useTheme()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -46,86 +46,106 @@ export default function Register() {
   }
 
   return (
-    <div className="auth-shell bg-[var(--bg-secondary)]">
-      <div className="auth-card card p-6 sm:p-8">
-        <div className="text-center mb-6 sm:mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-[var(--primary-100)] mb-4">
-            <img src={resolvedTheme === 'dark' ? '/logo-dark.svg' : '/logo.svg'} alt="One-Mail" className="w-10 h-10" />
-          </div>
-          <h1 className="text-xl sm:text-2xl font-semibold text-[var(--text-primary)] mb-2">注册 One-Mail</h1>
-          <p className="text-[var(--text-secondary)]">创建您的账号</p>
+    <div className="auth-shell bg-[var(--bg-secondary)] relative">
+      <button
+        type="button"
+        onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+        className="btn btn-secondary w-9 h-9 p-0 fixed top-4 right-4"
+        aria-label={resolvedTheme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+        title={resolvedTheme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+      >
+        {resolvedTheme === 'dark' ? (
+          <Sun className="w-4 h-4 text-[var(--text-secondary)]" strokeWidth={1.5} />
+        ) : (
+          <Moon className="w-4 h-4 text-[var(--text-secondary)]" strokeWidth={1.5} />
+        )}
+      </button>
+      <div className="auth-card rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-6 sm:p-8 shadow-[var(--shadow-sm)]">
+        <div className="mb-6">
+          <img
+            src={resolvedTheme === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
+            alt="One-Mail"
+            className="w-9 h-9 rounded-[8px] mb-4"
+          />
+          <h1 className="text-xl font-medium tracking-[-0.015em] text-[var(--text-primary)]">
+            注册 One-Mail
+          </h1>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+            创建用于管理个人邮箱的账号
+          </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
-            <div className="alert alert-error">
-              {error}
+            <div className="alert alert-error flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
+              <span>{error}</span>
             </div>
           )}
 
           <div>
-            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
               用户名
             </label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-tertiary)] pointer-events-none" />
+            <div className="relative flex items-center">
+              <User className="absolute left-3 w-4 h-4 text-[var(--text-tertiary)] pointer-events-none" strokeWidth={1.5} />
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                style={{ paddingLeft: '44px' }}
-                placeholder="请输入用户名"
+                style={{ paddingLeft: '36px' }}
+                placeholder="输入用户名"
                 required
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
               邮箱
             </label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-tertiary)] pointer-events-none" />
+            <div className="relative flex items-center">
+              <Mail className="absolute left-3 w-4 h-4 text-[var(--text-tertiary)] pointer-events-none" strokeWidth={1.5} />
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                style={{ paddingLeft: '44px' }}
-                placeholder="请输入邮箱"
+                style={{ paddingLeft: '36px' }}
+                placeholder="name@example.com"
                 required
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
               密码
             </label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-tertiary)] pointer-events-none" />
+            <div className="relative flex items-center">
+              <Lock className="absolute left-3 w-4 h-4 text-[var(--text-tertiary)] pointer-events-none" strokeWidth={1.5} />
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                style={{ paddingLeft: '44px' }}
-                placeholder="请输入密码（至少6位）"
+                style={{ paddingLeft: '36px' }}
+                placeholder="至少 6 位字符"
                 required
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
               确认密码
             </label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-tertiary)] pointer-events-none" />
+            <div className="relative flex items-center">
+              <Lock className="absolute left-3 w-4 h-4 text-[var(--text-tertiary)] pointer-events-none" strokeWidth={1.5} />
               <input
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                style={{ paddingLeft: '44px' }}
-                placeholder="请再次输入密码"
+                style={{ paddingLeft: '36px' }}
+                placeholder="再次输入密码"
                 required
               />
             </div>
@@ -134,23 +154,23 @@ export default function Register() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full btn btn-primary py-3"
+            className="btn btn-primary w-full h-10 mt-2"
           >
             {loading ? (
-              <span>注册中...</span>
+              <span>注册中</span>
             ) : (
               <>
-                <UserPlus className="w-5 h-5" />
+                <UserPlus className="w-4 h-4" strokeWidth={1.5} />
                 <span>注册</span>
               </>
             )}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm sm:text-base text-[var(--text-secondary)]">
+        <p className="mt-6 text-center text-sm text-[var(--text-secondary)]">
           已有账号？{' '}
-          <Link to="/login" className="text-[var(--primary-600)] hover:text-[var(--primary-700)] font-medium">
-            立即登录
+          <Link to="/login" className="text-[var(--primary-600)] hover:underline font-medium">
+            直接登录
           </Link>
         </p>
       </div>
