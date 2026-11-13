@@ -46,9 +46,9 @@ func (c *SyncCache) GetOrCreateFilter(accountID uint, expectedItems uint) *bloom
 
 func (c *SyncCache) MightContain(accountID uint, messageID string) bool {
 	c.mu.RLock()
-	filter, exists := c.filters[accountID]
-	c.mu.RUnlock()
+	defer c.mu.RUnlock()
 
+	filter, exists := c.filters[accountID]
 	if !exists {
 		return false
 	}
@@ -57,15 +57,13 @@ func (c *SyncCache) MightContain(accountID uint, messageID string) bool {
 }
 
 func (c *SyncCache) Add(accountID uint, messageID string) {
-	c.mu.RLock()
-	filter, exists := c.filters[accountID]
-	c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
+	filter, exists := c.filters[accountID]
 	if !exists {
-		filter = c.GetOrCreateFilter(accountID, 10000)
-		c.mu.RLock()
-		filter = c.filters[accountID]
-		c.mu.RUnlock()
+		filter = bloom.NewWithEstimates(10000, 0.01)
+		c.filters[accountID] = filter
 	}
 
 	filter.AddString(messageID)
@@ -76,7 +74,14 @@ func (c *SyncCache) AddBatch(accountID uint, messageIDs []string) {
 		return
 	}
 
-	filter := c.GetOrCreateFilter(accountID, uint(len(messageIDs)*10))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	filter, exists := c.filters[accountID]
+	if !exists {
+		filter = bloom.NewWithEstimates(uint(len(messageIDs)*10), 0.01)
+		c.filters[accountID] = filter
+	}
 
 	for _, messageID := range messageIDs {
 		filter.AddString(messageID)
@@ -107,6 +112,25 @@ func (c *SyncCache) Rebuild(accountID uint, messageIDs []string) {
 	c.filters[accountID] = filter
 }
 
+// NewDetachedFilter allocates an isolated bloom filter to populate off-lock before SwapFilter.
+func NewDetachedFilter(expectedItems uint) *bloom.BloomFilter {
+	if expectedItems < 1000 {
+		expectedItems = 1000
+	}
+	return bloom.NewWithEstimates(expectedItems*2, 0.01)
+}
+
+// SwapFilter atomically replaces the bloom filter for an account under write lock.
+func (c *SyncCache) SwapFilter(accountID uint, filter *bloom.BloomFilter) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if filter == nil {
+		delete(c.filters, accountID)
+		return
+	}
+	c.filters[accountID] = filter
+}
 func (c *SyncCache) GetStats() map[string]interface{} {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

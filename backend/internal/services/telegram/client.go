@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -19,16 +20,21 @@ type Client struct {
 	httpClient *http.Client
 }
 
-var globalClient *Client
-
-var styleTagRegex = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+var (
+	globalClient      *Client
+	clientOnce        sync.Once
+	styleTagRegex     = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	multiNewlineRegex = regexp.MustCompile(`\n\s*\n\s*\n+`)
+	entityRegex       = regexp.MustCompile(`&#(\d+);`)
+	hexEntityRegex    = regexp.MustCompile(`&#x([0-9a-fA-F]+);`)
+)
 
 func GetClient() *Client {
-	if globalClient == nil {
+	clientOnce.Do(func() {
 		globalClient = &Client{
 			httpClient: &http.Client{Timeout: 10 * time.Second},
 		}
-	}
+	})
 	return globalClient
 }
 
@@ -229,7 +235,6 @@ func stripHTML(html string) string {
 
 	text := result.String()
 
-	multiNewlineRegex := regexp.MustCompile(`\n\s*\n\s*\n+`)
 	text = multiNewlineRegex.ReplaceAllString(text, "\n\n")
 	text = strings.TrimSpace(text)
 
@@ -269,7 +274,6 @@ func decodeHTMLEntities(s string) string {
 		result = strings.ReplaceAll(result, entity, replacement)
 	}
 
-	entityRegex := regexp.MustCompile(`&#(\d+);`)
 	result = entityRegex.ReplaceAllStringFunc(result, func(match string) string {
 		matches := entityRegex.FindStringSubmatch(match)
 		if len(matches) > 1 {
@@ -283,7 +287,6 @@ func decodeHTMLEntities(s string) string {
 		return match
 	})
 
-	hexEntityRegex := regexp.MustCompile(`&#x([0-9a-fA-F]+);`)
 	result = hexEntityRegex.ReplaceAllStringFunc(result, func(match string) string {
 		matches := hexEntityRegex.FindStringSubmatch(match)
 		if len(matches) > 1 {
@@ -300,11 +303,42 @@ func decodeHTMLEntities(s string) string {
 	return result
 }
 
-func SendNewEmailAsync(email *models.Email, accountEmail string) {
-	go func() {
-		client := GetClient()
-		if err := client.SendNewEmail(email, accountEmail); err != nil {
-			log.Printf("Failed to send telegram notification: %v", err)
+type notifyJob struct {
+	email        models.Email
+	accountEmail string
+}
+
+var (
+	notifyQueue     chan notifyJob
+	notifyQueueOnce sync.Once
+)
+
+func initNotifyQueue() {
+	notifyQueueOnce.Do(func() {
+		notifyQueue = make(chan notifyJob, 128)
+		// 2 个限流 worker，防止首次同步大量邮件时并发打爆 Telegram API
+		for range 2 {
+			go func() {
+				client := GetClient()
+				for job := range notifyQueue {
+					emailCopy := job.email
+					if err := client.SendNewEmail(&emailCopy, job.accountEmail); err != nil {
+						log.Printf("Failed to send telegram notification: %v", err)
+					}
+				}
+			}()
 		}
-	}()
+	})
+}
+
+func SendNewEmailAsync(email *models.Email, accountEmail string) {
+	if email == nil {
+		return
+	}
+	initNotifyQueue()
+	select {
+	case notifyQueue <- notifyJob{email: *email, accountEmail: accountEmail}:
+	default:
+		log.Printf("Telegram notify queue full, dropping notification for subject=%q", email.Subject)
+	}
 }

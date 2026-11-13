@@ -131,20 +131,23 @@ func (h *SyncHandler) PreviewSync(c *gin.Context) {
 	var syncState models.SyncState
 	database.GetDB().Where("account_id = ? AND folder = ?", account.ID, folder).First(&syncState)
 
-	client := imap.NewClient(&account)
-	if err := client.Connect(); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	defer client.Disconnect()
-
-	status, statusErr := clientStatus(client, folder)
-	emails, maxUID, err := client.FetchEmailsIncremental(folder, syncState.LastUID, 20)
+	client, release, err := imap.GetConnectionPool().AcquireConnection(&account)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	healthy := true
+	defer func() {
+		release(healthy)
+	}()
 
+	status, statusErr := clientStatus(client, folder)
+	emails, maxUID, err := client.FetchEmailsIncremental(folder, syncState.LastUID, 20)
+	if err != nil {
+		healthy = false
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	var firstUID uint
 	var lastFetchedUID uint
 	if len(emails) > 0 {

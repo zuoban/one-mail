@@ -39,7 +39,7 @@ COPY backend/ ./
 
 # 更新 go.mod 并构建（启用 CGO）
 RUN go1.25.8 mod tidy && \
-    CGO_ENABLED=1 GOOS=linux go1.25.8 build -ldflags="-w -s" -o server ./cmd/server/main.go
+    CGO_ENABLED=1 GOOS=linux go1.25.8 build -tags fts5 -ldflags="-w -s" -o server ./cmd/server/main.go
 
 # 最终运行阶段
 FROM alpine:latest

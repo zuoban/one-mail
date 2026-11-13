@@ -98,6 +98,8 @@ func (s *Scheduler) triggerSyncAll() {
 	}
 }
 
+const maxSyncWorkers = 4
+
 func (s *Scheduler) syncAllAccounts() {
 	var accounts []models.EmailAccount
 	if err := database.GetDB().Where("enable_auto_sync = ? AND status = ?", true, "active").Find(&accounts).Error; err != nil {
@@ -109,27 +111,50 @@ func (s *Scheduler) syncAllAccounts() {
 		return
 	}
 
-	log.Printf("Starting sync for %d accounts", len(accounts))
+	now := time.Now()
+	var dueAccounts []models.EmailAccount
+	for _, acc := range accounts {
+		interval := acc.SyncInterval
+		if interval <= 0 {
+			interval = 1
+		}
+		status := s.GetStatus(acc.ID)
+		lastSync := status.LastSyncTime
+		if lastSync.IsZero() {
+			lastSync = acc.LastSyncTime
+		}
+		if interval > 1 && !lastSync.IsZero() && now.Sub(lastSync) < time.Duration(interval)*time.Minute {
+			continue
+		}
+		dueAccounts = append(dueAccounts, acc)
+	}
+
+	if len(dueAccounts) == 0 {
+		return
+	}
+
+	log.Printf("Starting sync for %d/%d due accounts", len(dueAccounts), len(accounts))
+
+	workerCount := maxSyncWorkers
+	if len(dueAccounts) < workerCount {
+		workerCount = len(dueAccounts)
+	}
+
+	jobs := make(chan models.EmailAccount, len(dueAccounts))
+	for _, acc := range dueAccounts {
+		jobs <- acc
+	}
+	close(jobs)
 
 	var wg sync.WaitGroup
-	for _, account := range accounts {
+	for range workerCount {
 		wg.Add(1)
-		go func(acc models.EmailAccount) {
+		go func() {
 			defer wg.Done()
-
-			done := make(chan struct{})
-			go func() {
-				s.syncAccount(acc.ID)
-				close(done)
-			}()
-
-			select {
-			case <-done:
-			case <-time.After(5 * time.Minute):
-				log.Printf("Sync timeout for account %d (%s), force reset status", acc.ID, acc.Email)
-				s.forceResetAccountStatus(acc.ID)
+			for acc := range jobs {
+				s.runAccountWithTimeout(acc)
 			}
-		}(account)
+		}()
 	}
 	wg.Wait()
 
@@ -137,7 +162,22 @@ func (s *Scheduler) syncAllAccounts() {
 	s.lastSyncTime = time.Now()
 	s.mu.Unlock()
 
-	log.Printf("Completed sync for all accounts")
+	log.Printf("Completed sync for %d due accounts", len(dueAccounts))
+}
+
+func (s *Scheduler) runAccountWithTimeout(acc models.EmailAccount) {
+	done := make(chan struct{})
+	go func() {
+		s.syncAccount(acc.ID)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Minute):
+		log.Printf("Sync timeout for account %d (%s), force reset status", acc.ID, acc.Email)
+		s.forceResetAccountStatus(acc.ID)
+	}
 }
 
 func (s *Scheduler) forceResetAccountStatus(accountID uint) {
@@ -267,7 +307,15 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) TriggerSync(accountID uint) error {
-	s.syncAccount(accountID)
+	status := s.GetStatus(accountID)
+	status.mu.RLock()
+	running := status.Running
+	status.mu.RUnlock()
+	if running {
+		return nil
+	}
+
+	go s.runAccountWithTimeout(models.EmailAccount{ID: accountID})
 	return nil
 }
 

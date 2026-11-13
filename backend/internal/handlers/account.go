@@ -217,15 +217,19 @@ func (h *AccountHandler) ListFolders(c *gin.Context) {
 		return
 	}
 
-	client := imap.NewClient(&account)
-	if err := client.Connect(); err != nil {
+	client, release, err := imap.GetConnectionPool().AcquireConnection(&account)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	defer client.Disconnect()
+	healthy := true
+	defer func() {
+		release(healthy)
+	}()
 
 	folders, err := client.ListFoldersWithStatus()
 	if err != nil {
+		healthy = false
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

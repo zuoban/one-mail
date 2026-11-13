@@ -3,13 +3,13 @@
 run: backend frontend
 
 backend:
-	cd backend && ./server
+	cd backend && go run -tags fts5 ./cmd/server/main.go
 
 frontend:
 	cd frontend && npm run dev
 
 build:
-	cd backend && go build -o server ./cmd/server/main.go
+	cd backend && go build -tags fts5 -o server ./cmd/server/main.go
 	cd frontend && npm run build
 
 clean:

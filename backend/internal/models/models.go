@@ -45,8 +45,8 @@ type SyncState struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-	AccountID    uint      `gorm:"not null;index" json:"account_id"`
-	Folder       string    `gorm:"not null;index" json:"folder"`
+	AccountID    uint      `gorm:"not null;index;uniqueIndex:idx_sync_state_account_folder,priority:1" json:"account_id"`
+	Folder       string    `gorm:"not null;index;uniqueIndex:idx_sync_state_account_folder,priority:2" json:"folder"`
 	LastUID      uint      `gorm:"default:0" json:"last_uid"`
 	LastSyncTime time.Time `json:"last_sync_time"`
 	IsSyncing    bool      `gorm:"default:false" json:"is_syncing"`
@@ -70,19 +70,19 @@ type Email struct {
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
-	AccountID     uint           `gorm:"not null;index:idx_account_message,priority:1;index:idx_account_folder_date,priority:1;index:idx_account_read,priority:1" json:"account_id"`
+	AccountID     uint           `gorm:"not null;index:idx_account_message,priority:1;index:idx_account_folder_date,priority:1;index:idx_account_folder_read_date,priority:1" json:"account_id"`
 	MessageID     string         `gorm:"not null;index:idx_account_message,priority:2" json:"message_id"`
 	From          string         `gorm:"not null" json:"from"`
 	FromName      string         `json:"from_name"`
 	To            string         `gorm:"not null" json:"to"`
 	Subject       string         `json:"subject"`
-	Date          time.Time      `gorm:"index:idx_account_folder_date,priority:2" json:"date"`
+	Date          time.Time      `gorm:"index:idx_account_folder_date,priority:3;index:idx_account_folder_read_date,priority:4" json:"date"`
 	BodyText      string         `gorm:"type:text" json:"body_text"`
 	BodyHTML      string         `gorm:"type:text" json:"body_html"`
 	HasAttachment bool           `gorm:"default:false" json:"has_attachment"`
-	IsRead        bool           `gorm:"default:false;index:idx_account_read,priority:2" json:"is_read"`
+	IsRead        bool           `gorm:"default:false;index:idx_account_folder_read_date,priority:3" json:"is_read"`
 	IsStarred     bool           `gorm:"default:false;index" json:"is_starred"`
-	Folder        string         `gorm:"default:'INBOX';index:idx_account_folder_date,priority:3;index" json:"folder"`
+	Folder        string         `gorm:"default:'INBOX';index:idx_account_folder_date,priority:2;index:idx_account_folder_read_date,priority:2;index" json:"folder"`
 	UID           uint           `gorm:"not null;index" json:"uid"`
 }
 

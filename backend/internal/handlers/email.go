@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"one-mail/backend/database"
 	"one-mail/backend/internal/models"
@@ -19,62 +21,88 @@ func NewEmailHandler() *EmailHandler {
 }
 
 type ListEmailsQuery struct {
-	AccountID uint   `form:"account_id"`
-	Folder    string `form:"folder"`
-	Page      int    `form:"page"`
-	PageSize  int    `form:"page_size"`
-	Search    string `form:"search"`
-	Unread    bool   `form:"unread"`
+	AccountID  uint   `form:"account_id"`
+	Folder     string `form:"folder"`
+	Page       int    `form:"page"`
+	PageSize   int    `form:"page_size"`
+	Search     string `form:"search"`
+	Unread     bool   `form:"unread"`
+	CursorDate string `form:"cursor_date"`
+	CursorID   uint   `form:"cursor_id"`
+}
+
+type EmailCursor struct {
+	Date time.Time `json:"date"`
+	ID   uint      `json:"id"`
 }
 
 func (h *EmailHandler) ListEmails(c *gin.Context) {
 	var query ListEmailsQuery
-	if err := c.ShouldBindQuery(&query); err != nil {
+	_ = c.ShouldBindQuery(&query)
+	if query.Page < 1 {
 		query.Page = 1
+	}
+	if query.PageSize <= 0 {
 		query.PageSize = 20
+	}
+	if query.PageSize > 100 {
+		query.PageSize = 100
 	}
 
 	userID := c.GetUint("user_id")
-
 	db := database.GetDB()
 
 	var accounts []models.EmailAccount
 	if query.AccountID > 0 {
-		accounts = []models.EmailAccount{{ID: query.AccountID}}
+		db.Select("id").Where("id = ? AND user_id = ?", query.AccountID, userID).Find(&accounts)
 	} else {
-		db.Where("user_id = ?", userID).Find(&accounts)
+		db.Select("id").Where("user_id = ?", userID).Find(&accounts)
 	}
 
 	if len(accounts) == 0 {
-		c.JSON(http.StatusOK, gin.H{"data": []interface{}{}, "total": 0})
+		c.JSON(http.StatusOK, gin.H{
+			"data":        []interface{}{},
+			"total":       0,
+			"has_more":    false,
+			"next_cursor": nil,
+		})
 		return
 	}
 
-	var accountIDs []uint
+	accountIDs := make([]uint, 0, len(accounts))
 	for _, a := range accounts {
 		accountIDs = append(accountIDs, a.ID)
 	}
 
-	db = db.Where("account_id IN ?", accountIDs)
+	q := db.Model(&models.Email{}).Where("account_id IN ?", accountIDs)
 
-	if query.Search != "" {
-		db = db.Where("subject LIKE ? OR `from` LIKE ?", "%"+query.Search+"%", "%"+query.Search+"%")
+	folder := query.Folder
+	if folder == "" {
+		folder = "INBOX"
 	}
+	q = q.Where("folder = ?", folder)
 
 	if query.Unread {
-		db = db.Where("is_read = ?", false)
+		q = q.Where("is_read = ?", false)
 	}
 
-	if query.Folder != "" {
-		db = db.Where("folder = ?", query.Folder)
-	} else {
-		db = db.Where("folder = ?", "INBOX")
+	search := strings.TrimSpace(query.Search)
+	if search != "" {
+		if database.IsFTS5Enabled() && utf8.RuneCountInString(search) >= 3 {
+			escaped := strings.ReplaceAll(search, `"`, `""`)
+			ftsExpr := `"` + escaped + `"`
+			q = q.Where("emails.id IN (SELECT rowid FROM emails_fts WHERE emails_fts MATCH ?)", ftsExpr)
+		} else {
+			pattern := "%" + search + "%"
+			q = q.Where("(subject LIKE ? OR `from` LIKE ? OR from_name LIKE ?)", pattern, pattern, pattern)
+		}
 	}
 
+	useCursor := query.CursorID > 0 && query.CursorDate != ""
 	var total int64
-	db.Model(&models.Email{}).Count(&total)
-
-	offset := (query.Page - 1) * query.PageSize
+	if !useCursor {
+		q.Count(&total)
+	}
 
 	type EmailListItem struct {
 		ID            uint      `json:"id"`
@@ -90,18 +118,57 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 		Folder        string    `json:"folder"`
 	}
 
+	listQuery := q.Select("id, created_at, account_id, `from`, from_name, `to`, subject, date, has_attachment, is_read, folder").
+		Order("date DESC, id DESC")
+
 	var emails []EmailListItem
-	if err := db.Model(&models.Email{}).
-		Select("id, created_at, account_id, `from`, from_name, `to`, subject, date, has_attachment, is_read, folder").
-		Order("date DESC").
-		Offset(offset).
-		Limit(query.PageSize).
-		Find(&emails).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	hasMore := false
+	var nextCursor *EmailCursor
+
+	if useCursor {
+		cursorTime, err := time.Parse(time.RFC3339Nano, query.CursorDate)
+		if err != nil {
+			cursorTime, err = time.Parse(time.RFC3339, query.CursorDate)
+		}
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor_date"})
+			return
+		}
+		listQuery = listQuery.Where("(date < ? OR (date = ? AND id < ?))", cursorTime, cursorTime, query.CursorID).
+			Limit(query.PageSize + 1)
+		if err := listQuery.Find(&emails).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if len(emails) > query.PageSize {
+			hasMore = true
+			emails = emails[:query.PageSize]
+		}
+	} else {
+		offset := (query.Page - 1) * query.PageSize
+		if err := listQuery.Offset(offset).Limit(query.PageSize).Find(&emails).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		hasMore = int64(offset+len(emails)) < total
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": emails, "total": total, "page": query.Page, "page_size": query.PageSize})
+	if len(emails) > 0 && hasMore {
+		last := emails[len(emails)-1]
+		nextCursor = &EmailCursor{
+			Date: last.Date,
+			ID:   last.ID,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":        emails,
+		"total":       total,
+		"page":        query.Page,
+		"page_size":   query.PageSize,
+		"has_more":    hasMore,
+		"next_cursor": nextCursor,
+	})
 }
 
 func (h *EmailHandler) GetEmail(c *gin.Context) {
@@ -118,7 +185,7 @@ func (h *EmailHandler) GetEmail(c *gin.Context) {
 	}
 
 	if email.BodyText == "" && email.BodyHTML == "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		h.fetchAndCacheBody(ctx, &email)
 	}
@@ -132,30 +199,49 @@ func (h *EmailHandler) fetchAndCacheBody(ctx context.Context, email *models.Emai
 		return
 	}
 
-	imapClient, err := imap.GetConnectionPool().GetConnection(&account)
+	pool := imap.GetConnectionPool()
+	imapClient, release, err := pool.AcquireConnection(&account)
 	if err != nil {
 		return
 	}
-	defer imap.GetConnectionPool().ReleaseConnection(account.ID)
+	healthy := true
+	defer func() {
+		release(healthy)
+	}()
 
-	bodyText, bodyHTML, fetchErr := imapClient.FetchEmailBody(email.Folder, email.UID)
-	if fetchErr != nil {
-		return
+	type fetchResult struct {
+		bodyText string
+		bodyHTML string
+		err      error
 	}
+	done := make(chan fetchResult, 1)
+	go func() {
+		bt, bh, fetchErr := imapClient.FetchEmailBody(email.Folder, email.UID)
+		done <- fetchResult{bodyText: bt, bodyHTML: bh, err: fetchErr}
+	}()
 
+	var res fetchResult
 	select {
+	case res = <-done:
 	case <-ctx.Done():
+		healthy = false
+		imapClient.ForceClose()
 		return
-	default:
+	}
+	if res.err != nil {
+		healthy = false
+		return
 	}
 
-	database.GetDB().Model(email).Updates(map[string]interface{}{
-		"body_text": bodyText,
-		"body_html": bodyHTML,
-	})
+	if res.bodyText != "" || res.bodyHTML != "" {
+		database.GetDB().Model(email).Updates(map[string]interface{}{
+			"body_text": res.bodyText,
+			"body_html": res.bodyHTML,
+		})
+	}
 
-	email.BodyText = bodyText
-	email.BodyHTML = bodyHTML
+	email.BodyText = res.bodyText
+	email.BodyHTML = res.bodyHTML
 }
 
 func (h *EmailHandler) MarkAsRead(c *gin.Context) {
@@ -179,15 +265,19 @@ func (h *EmailHandler) MarkAsRead(c *gin.Context) {
 			return
 		}
 
-		imapClient, err := imap.GetConnectionPool().GetConnection(&account)
+		imapClient, release, err := imap.GetConnectionPool().AcquireConnection(&account)
 		if err != nil {
 			return
 		}
-		defer imap.GetConnectionPool().ReleaseConnection(account.ID)
+		healthy := true
+		defer func() {
+			release(healthy)
+		}()
 
-		imapClient.MarkAsRead(email.UID, email.Folder)
+		if err := imapClient.MarkAsRead(email.UID, email.Folder); err != nil {
+			healthy = false
+		}
 	}()
-
 	c.JSON(http.StatusOK, gin.H{"message": "marked as read"})
 }
 
@@ -276,15 +366,19 @@ func (h *EmailHandler) SyncEmails(c *gin.Context) {
 		return
 	}
 
-	imapClient := imap.NewClient(&account)
-	if err := imapClient.Connect(); err != nil {
+	imapClient, release, err := imap.GetConnectionPool().AcquireConnection(&account)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	defer imapClient.Disconnect()
+	healthy := true
+	defer func() {
+		release(healthy)
+	}()
 
 	emails, err := imapClient.FetchEmails("INBOX", account.LastSyncTime, 50)
 	if err != nil {
+		healthy = false
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

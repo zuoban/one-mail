@@ -18,10 +18,11 @@ import (
 )
 
 type Client struct {
-	account  *models.EmailAccount
-	client   *imapclient.Client
-	username string
-	password string
+	account      *models.EmailAccount
+	client       *imapclient.Client
+	username     string
+	password     string
+	lastActivity time.Time
 }
 
 var ProviderConfigs = map[string]struct {
@@ -95,8 +96,8 @@ func (c *Client) Connect() error {
 		conn.Close()
 		return fmt.Errorf("failed to login: %w", err)
 	}
-
 	c.client = conn
+	c.lastActivity = time.Now()
 	return nil
 }
 
@@ -105,14 +106,31 @@ func (c *Client) Disconnect() error {
 		return nil
 	}
 
-	if err := c.client.Logout().Wait(); err != nil {
-		c.client.Close()
-		return err
+	client := c.client
+	c.client = nil
+
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Logout().Wait()
+	}()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(2 * time.Second):
 	}
 
-	c.client.Close()
+	_ = client.Close()
+	return err
+}
+
+// ForceClose immediately closes the underlying TCP/TLS connection to unblock any stalled IMAP command.
+func (c *Client) ForceClose() {
+	if c.client == nil {
+		return
+	}
+	_ = c.client.Close()
 	c.client = nil
-	return nil
 }
 
 func (c *Client) IsConnected() bool {
@@ -120,7 +138,11 @@ func (c *Client) IsConnected() bool {
 		return false
 	}
 
-	// 使用带超时的 channel 检测连接状态
+	// 刚活跃过的连接跳过无意义的 NOOP RTT
+	if !c.lastActivity.IsZero() && time.Since(c.lastActivity) < 30*time.Second {
+		return true
+	}
+
 	done := make(chan error, 1)
 	go func() {
 		done <- c.client.Noop().Wait()
@@ -128,12 +150,17 @@ func (c *Client) IsConnected() bool {
 
 	select {
 	case err := <-done:
-		return err == nil
+		if err == nil {
+			c.lastActivity = time.Now()
+			return true
+		}
+		c.ForceClose()
+		return false
 	case <-time.After(5 * time.Second):
+		c.ForceClose()
 		return false
 	}
 }
-
 func (c *Client) ListMailboxes() ([]string, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("not connected")
@@ -254,41 +281,56 @@ func (c *Client) ListFoldersWithStatus() ([]FolderStatus, error) {
 		return nil, err
 	}
 
-	result := make([]FolderStatus, 0, len(mailboxes))
+	names := make([]string, 0, len(mailboxes))
 	for _, mbox := range mailboxes {
-		if mbox.Mailbox == "" {
-			continue
+		if mbox.Mailbox != "" {
+			names = append(names, mbox.Mailbox)
 		}
-
-		status, err := c.client.Status(mbox.Mailbox, &imap.StatusOptions{
-			NumMessages: true,
-			NumUnseen:   true,
-		}).Wait()
-		if err != nil {
-			result = append(result, FolderStatus{
-				Name:     mbox.Mailbox,
-				Messages: 0,
-				Unseen:   0,
-			})
-			continue
-		}
-
-		var messages uint32
-		var unseen uint32
-		if status.NumMessages != nil {
-			messages = *status.NumMessages
-		}
-		if status.NumUnseen != nil {
-			unseen = *status.NumUnseen
-		}
-
-		result = append(result, FolderStatus{
-			Name:     mbox.Mailbox,
-			Messages: messages,
-			Unseen:   unseen,
-		})
 	}
 
+	result := make([]FolderStatus, 0, len(names))
+	const pipelineBatch = 16
+	statusOpts := &imap.StatusOptions{
+		NumMessages: true,
+		NumUnseen:   true,
+	}
+
+	for start := 0; start < len(names); start += pipelineBatch {
+		end := start + pipelineBatch
+		if end > len(names) {
+			end = len(names)
+		}
+		batch := names[start:end]
+		cmds := make([]*imapclient.StatusCommand, len(batch))
+		for i, name := range batch {
+			cmds[i] = c.client.Status(name, statusOpts)
+		}
+		for i, cmd := range cmds {
+			status, statusErr := cmd.Wait()
+			if statusErr != nil || status == nil {
+				result = append(result, FolderStatus{
+					Name:     batch[i],
+					Messages: 0,
+					Unseen:   0,
+				})
+				continue
+			}
+			var messages, unseen uint32
+			if status.NumMessages != nil {
+				messages = *status.NumMessages
+			}
+			if status.NumUnseen != nil {
+				unseen = *status.NumUnseen
+			}
+			result = append(result, FolderStatus{
+				Name:     batch[i],
+				Messages: messages,
+				Unseen:   unseen,
+			})
+		}
+	}
+
+	c.lastActivity = time.Now()
 	return result, nil
 }
 
@@ -437,28 +479,25 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 			time.Sleep(time.Second * time.Duration(1<<uint(attempt-1)))
 		}
 
-		selectedMbox, err := c.client.Select(folder, nil).Wait()
+		selectedMbox, err := c.client.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
 		if err != nil {
 			if isTemporaryIMAPError(err) {
 				continue
 			}
 			return nil, 0, fmt.Errorf("failed to select mailbox: %w", err)
 		}
+		c.lastActivity = time.Now()
 		mailboxMessages := selectedMbox.NumMessages
-		var uidNext uint32
+		uidNext := uint32(selectedMbox.UIDNext)
+
+		// 如果邮箱为空，直接返回，避免多余 STATUS / SEARCH RTT
 		if mailboxMessages == 0 {
-			status, err := c.client.Status(folder, &imap.StatusOptions{
-				NumMessages: true,
-				UIDNext:     true,
-			}).Wait()
-			if err == nil {
-				if status.NumMessages != nil {
-					mailboxMessages = *status.NumMessages
-				}
-				if status.UIDNext > 0 {
-					uidNext = uint32(status.UIDNext)
-				}
-			}
+			return []*EmailSummary{}, lastUID, nil
+		}
+
+		// 如果服务器返回的 UIDNext 不高于 lastUID+1，说明没有新邮件，跳过 SEARCH RTT
+		if lastUID > 0 && uidNext > 0 && uint(uidNext) <= lastUID+1 {
+			return []*EmailSummary{}, lastUID, nil
 		}
 
 		uidSet := imap.UIDSet{}
@@ -645,6 +684,7 @@ func (c *Client) FetchEmailsIncremental(folder string, lastUID uint, limit int) 
 		maxUID = lastUID
 	}
 
+	c.lastActivity = time.Now()
 	log.Printf("Fetch incremental done: folder=%s last_uid=%d result=%d max_uid=%d", folder, lastUID, len(results), maxUID)
 
 	return results, maxUID, nil
@@ -660,36 +700,171 @@ func isTemporaryIMAPError(err error) bool {
 		strings.Contains(message, "try again")
 }
 
+type bodyPartSelection struct {
+	isMultipart bool
+	textPath    []int
+	htmlPath    []int
+}
+
+func selectBodyParts(bs imap.BodyStructure) bodyPartSelection {
+	var sel bodyPartSelection
+	if bs == nil {
+		return sel
+	}
+	if _, ok := bs.(*imap.BodyStructureMultiPart); ok {
+		sel.isMultipart = true
+	}
+	bs.Walk(func(path []int, part imap.BodyStructure) bool {
+		sp, ok := part.(*imap.BodyStructureSinglePart)
+		if !ok {
+			return true
+		}
+		if disp := sp.Disposition(); disp != nil && strings.EqualFold(disp.Value, "attachment") {
+			return true
+		}
+		mt := sp.MediaType()
+		if mt == "text/plain" && len(sel.textPath) == 0 {
+			sel.textPath = append([]int(nil), path...)
+		} else if mt == "text/html" && len(sel.htmlPath) == 0 {
+			sel.htmlPath = append([]int(nil), path...)
+		}
+		return true
+	})
+	return sel
+}
+
+func decodeBodyPart(mimeHeaderBytes, bodyBytes []byte) string {
+	if len(bodyBytes) == 0 {
+		return ""
+	}
+	if len(mimeHeaderBytes) == 0 {
+		return string(bodyBytes)
+	}
+
+	var buf bytes.Buffer
+	buf.Write(mimeHeaderBytes)
+	if !bytes.HasSuffix(mimeHeaderBytes, []byte("\r\n\r\n")) && !bytes.HasSuffix(mimeHeaderBytes, []byte("\n\n")) {
+		if bytes.HasSuffix(mimeHeaderBytes, []byte("\r\n")) || bytes.HasSuffix(mimeHeaderBytes, []byte("\n")) {
+			buf.WriteString("\r\n")
+		} else {
+			buf.WriteString("\r\n\r\n")
+		}
+	}
+	buf.Write(bodyBytes)
+
+	mr, err := mail.CreateReader(&buf)
+	if mr != nil {
+		p, nextErr := mr.NextPart()
+		if nextErr == nil && p != nil {
+			decoded, readErr := io.ReadAll(p.Body)
+			if readErr == nil {
+				return string(decoded)
+			}
+		}
+	}
+	_ = err
+	return string(bodyBytes)
+}
+
 func (c *Client) FetchEmailBody(folder string, uid uint) (bodyText string, bodyHTML string, err error) {
 	if c.client == nil {
 		return "", "", fmt.Errorf("not connected")
 	}
 
-	_, err = c.client.Select(folder, nil).Wait()
+	_, err = c.client.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
 	if err != nil {
 		return "", "", fmt.Errorf("failed to select mailbox: %w", err)
 	}
 
 	uidSet := imap.UIDSetNum(imap.UID(uid))
-	bodySection := &imap.FetchItemBodySection{Peek: true}
-	fetchOptions := &imap.FetchOptions{
-		BodySection: []*imap.FetchItemBodySection{bodySection},
-	}
 
-	messages, err := c.client.Fetch(uidSet, fetchOptions).Collect()
+	// 先拉取 BODYSTRUCTURE，仅按需抓取 text/plain 与 text/html part，避免下载大附件
+	bsMessages, err := c.client.Fetch(uidSet, &imap.FetchOptions{
+		BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
+	}).Collect()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to fetch message body: %w", err)
+		return "", "", fmt.Errorf("failed to fetch message structure: %w", err)
+	}
+	if len(bsMessages) == 0 {
+		return "", "", fmt.Errorf("message not found")
 	}
 
+	sel := selectBodyParts(bsMessages[0].BodyStructure)
+
+	// BODYSTRUCTURE 不可用时降级到整封抓取
+	if bsMessages[0].BodyStructure == nil {
+		fullSection := &imap.FetchItemBodySection{Peek: true}
+		msgs, fetchErr := c.client.Fetch(uidSet, &imap.FetchOptions{
+			BodySection: []*imap.FetchItemBodySection{fullSection},
+		}).Collect()
+		if fetchErr != nil {
+			return "", "", fmt.Errorf("failed to fetch message body: %w", fetchErr)
+		}
+		if len(msgs) == 0 {
+			return "", "", fmt.Errorf("message not found")
+		}
+		c.lastActivity = time.Now()
+		raw := msgs[0].FindBodySection(fullSection)
+		if len(raw) > 0 {
+			bodyText, bodyHTML = parseMessageBody(raw)
+		}
+		return bodyText, bodyHTML, nil
+	}
+
+	if len(sel.textPath) == 0 && len(sel.htmlPath) == 0 {
+		c.lastActivity = time.Now()
+		return "", "", nil
+	}
+
+	if !sel.isMultipart {
+		fullSection := &imap.FetchItemBodySection{Peek: true}
+		msgs, fetchErr := c.client.Fetch(uidSet, &imap.FetchOptions{
+			BodySection: []*imap.FetchItemBodySection{fullSection},
+		}).Collect()
+		if fetchErr != nil {
+			return "", "", fmt.Errorf("failed to fetch message body: %w", fetchErr)
+		}
+		if len(msgs) == 0 {
+			return "", "", fmt.Errorf("message not found")
+		}
+		c.lastActivity = time.Now()
+		raw := msgs[0].FindBodySection(fullSection)
+		if len(raw) > 0 {
+			bodyText, bodyHTML = parseMessageBody(raw)
+		}
+		return bodyText, bodyHTML, nil
+	}
+
+	var sections []*imap.FetchItemBodySection
+	var textMimeSec, textBodySec, htmlMimeSec, htmlBodySec *imap.FetchItemBodySection
+	if len(sel.textPath) > 0 {
+		textMimeSec = &imap.FetchItemBodySection{Specifier: imap.PartSpecifierMIME, Part: sel.textPath, Peek: true}
+		textBodySec = &imap.FetchItemBodySection{Specifier: imap.PartSpecifierNone, Part: sel.textPath, Peek: true}
+		sections = append(sections, textMimeSec, textBodySec)
+	}
+	if len(sel.htmlPath) > 0 {
+		htmlMimeSec = &imap.FetchItemBodySection{Specifier: imap.PartSpecifierMIME, Part: sel.htmlPath, Peek: true}
+		htmlBodySec = &imap.FetchItemBodySection{Specifier: imap.PartSpecifierNone, Part: sel.htmlPath, Peek: true}
+		sections = append(sections, htmlMimeSec, htmlBodySec)
+	}
+
+	messages, err := c.client.Fetch(uidSet, &imap.FetchOptions{
+		BodySection: sections,
+	}).Collect()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to fetch message body parts: %w", err)
+	}
 	if len(messages) == 0 {
 		return "", "", fmt.Errorf("message not found")
 	}
 
-	raw := messages[0].FindBodySection(bodySection)
-	if len(raw) > 0 {
-		bodyText, bodyHTML = parseMessageBody(raw)
+	c.lastActivity = time.Now()
+	if textBodySec != nil {
+		bodyText = decodeBodyPart(messages[0].FindBodySection(textMimeSec), messages[0].FindBodySection(textBodySec))
 	}
-
+	if htmlBodySec != nil {
+		bodyHTML = decodeBodyPart(messages[0].FindBodySection(htmlMimeSec), messages[0].FindBodySection(htmlBodySec))
+	}
 	return bodyText, bodyHTML, nil
 }
 
@@ -698,14 +873,19 @@ func (c *Client) MarkAsRead(uid uint, folder string) error {
 		return fmt.Errorf("not connected")
 	}
 
+	if _, err := c.client.Select(folder, nil).Wait(); err != nil {
+		return fmt.Errorf("failed to select mailbox: %w", err)
+	}
+
 	uidSet := imap.UIDSetNum(imap.UID(uid))
 	storeCmd := c.client.Store(uidSet, &imap.StoreFlags{
 		Op:    imap.StoreFlagsAdd,
 		Flags: []imap.Flag{imap.FlagSeen},
 	}, nil)
 
-	_ = storeCmd.Close()
-	return nil
+	err := storeCmd.Close()
+	c.lastActivity = time.Now()
+	return err
 }
 
 func (c *Client) TestConnection() error {

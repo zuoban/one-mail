@@ -87,6 +87,17 @@ export interface Email {
   folder: string
 }
 
+export interface EmailCursor {
+  date: string
+  id: number
+}
+
+export interface EmailListResponse {
+  data: Email[]
+  total: number
+  has_more: boolean
+  next_cursor: EmailCursor | null
+}
 export interface TelegramConfig {
   enabled: boolean
   bot_token: string
@@ -137,8 +148,18 @@ export const syncApi = {
   applyToAll: () => api.post<{ message: string; updated_count: number }>('/sync/apply-to-all').then(r => r.data),
 }
 export const emailApi = {
-  list: (params?: { account_id?: number; page?: number; page_size?: number; search?: string }) =>
-    api.get<{ data: Email[]; total: number }>('/emails', { params }).then(r => r.data),
+  list: (
+    params?: {
+      account_id?: number
+      page?: number
+      page_size?: number
+      search?: string
+      unread?: boolean
+      cursor_date?: string
+      cursor_id?: number
+    },
+    signal?: AbortSignal,
+  ) => api.get<EmailListResponse>('/emails', { params, signal }).then(r => r.data),
   get: (id: number) => api.get<{ data: Email }>(`/emails/${id}`).then(r => r.data),
   markAsRead: (id: number) => api.post(`/emails/${id}/read`),
   markAsUnread: (id: number) => api.post(`/emails/${id}/unread`),

@@ -42,10 +42,10 @@ export default function Dashboard() {
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'unread'>('all')
   const [syncStatuses, setSyncStatuses] = useState<Record<string, SyncStatus>>({})
   const [syncing, setSyncing] = useState(false)
-  const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -66,8 +66,11 @@ export default function Dashboard() {
   } | null>(null)
   const [contextMenuIndex, setContextMenuIndex] = useState(0)
   const emailItemRefs = useRef<Record<number, HTMLDivElement | null>>({})
+  const listScrollRef = useRef<HTMLDivElement | null>(null)
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const [listViewportHeight, setListViewportHeight] = useState(600)
+  const [listScrollTop, setListScrollTop] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState<{ email: Email } | null>(null)
   const [confirmBatchDelete, setConfirmBatchDelete] = useState(false)
   const [sendingTelegram, setSendingTelegram] = useState(false)
@@ -136,67 +139,118 @@ export default function Dashboard() {
 
   const loadingMoreRef = useRef(false)
   const hasMoreRef = useRef(true)
+  const nextCursorRef = useRef<{ date: string; id: number } | null>(null)
+  const listAbortRef = useRef<AbortController | null>(null)
+  const activeEmailIdRef = useRef<number | null>(null)
+  const detailCacheRef = useRef<Map<number, { email: Email; sanitizedHtml: string }>>(new Map())
 
-  const loadEmails = useCallback(async (pageNum: number = 1, append: boolean = false) => {
-    if (pageNum > 1 && loadingMoreRef.current) return
-    if (pageNum > 1 && !hasMoreRef.current) return
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search)
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [search])
+
+  const loadEmails = useCallback(async (append: boolean = false) => {
+    if (append && (loadingMoreRef.current || !hasMoreRef.current)) return
+
+    if (!append) {
+      listAbortRef.current?.abort()
+    }
+    const controller = new AbortController()
+    if (!append) {
+      listAbortRef.current = controller
+    }
 
     loadingMoreRef.current = true
     setLoadingMore(true)
 
     try {
-      const res = await emailApi.list({
-        page: pageNum,
-        page_size: 50,
-        search,
-        account_id: selectedAccountId || undefined,
-      })
+      const cursor = append ? nextCursorRef.current : null
+      const res = await emailApi.list(
+        {
+          page: 1,
+          page_size: 50,
+          search: debouncedSearch || undefined,
+          account_id: selectedAccountId || undefined,
+          unread: filter === 'unread' ? true : undefined,
+          cursor_date: cursor?.date,
+          cursor_id: cursor?.id,
+        },
+        controller.signal,
+      )
 
       if (append) {
-        setEmails(prev => [...prev, ...res.data])
+        setEmails(prev => {
+          const existingIds = new Set(prev.map(item => item.id))
+          const incoming = res.data.filter(item => !existingIds.has(item.id))
+          return [...prev, ...incoming]
+        })
       } else {
         setEmails(res.data)
+        setTotal(res.total)
       }
 
-      setTotal(res.total)
-      const hasMoreVal = pageNum * 50 < res.total
+      nextCursorRef.current = res.next_cursor ?? null
+      const hasMoreVal = Boolean(res.has_more)
       hasMoreRef.current = hasMoreVal
       setHasMore(hasMoreVal)
-      setPage(pageNum)
     } catch (e) {
-      console.error(e)
+      if (!axios.isCancel(e)) {
+        console.error(e)
+      }
     } finally {
       loadingMoreRef.current = false
       setLoadingMore(false)
     }
-  }, [search, selectedAccountId])
+  }, [debouncedSearch, selectedAccountId, filter])
+
+  useEffect(() => {
+    const el = listScrollRef.current
+    if (!el) return
+    setListViewportHeight(el.clientHeight || 600)
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        if (entry.contentRect.height > 0) {
+          setListViewportHeight(entry.contentRect.height)
+        }
+      }
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const target = e.target as HTMLDivElement
     const { scrollTop, scrollHeight, clientHeight } = target
-    if (scrollHeight - scrollTop - clientHeight < 200 && !loadingMore && hasMore) {
-      loadEmails(page + 1, true)
+    setListScrollTop(scrollTop)
+    if (scrollHeight - scrollTop - clientHeight < 240 && !loadingMore && hasMore) {
+      loadEmails(true)
     }
-  }, [loadEmails, page, hasMore, loadingMore])
+  }, [loadEmails, hasMore, loadingMore])
 
   useEffect(() => {
     loadAccounts()
-    loadEmails(1, false)
     loadSyncStatuses()
     return () => {
+      listAbortRef.current?.abort()
       if (syncPollTimer.current) {
         window.clearInterval(syncPollTimer.current)
       }
     }
-  }, [loadAccounts, loadEmails, loadSyncStatuses])
+  }, [loadAccounts, loadSyncStatuses])
 
   useEffect(() => {
-    setPage(1)
     setTotal(0)
+    nextCursorRef.current = null
+    hasMoreRef.current = true
     setHasMore(true)
-    loadEmails(1, false)
-  }, [search, selectedAccountId, loadEmails])
-
+    if (listScrollRef.current) {
+      listScrollRef.current.scrollTop = 0
+      setListScrollTop(0)
+    }
+    loadEmails(false)
+  }, [debouncedSearch, selectedAccountId, filter, loadEmails])
   const showToast = useCallback((
     message: string,
     type: 'success' | 'error',
@@ -259,13 +313,13 @@ export default function Dashboard() {
         attempts += 1
         const statuses = await loadSyncStatuses()
         const stillRunning = statuses && idsToSync.some(id => statuses[String(id)]?.running)
-        if (!stillRunning || attempts >= 8) {
+        if (!stillRunning || attempts >= 20) {
           if (syncPollTimer.current) {
             window.clearInterval(syncPollTimer.current)
             syncPollTimer.current = null
           }
           setSyncing(false)
-          await Promise.all([loadEmails(1, false), loadAccounts()])
+          await Promise.all([loadEmails(false), loadAccounts()])
         }
       }, 1500)
     } catch (e) {
@@ -275,13 +329,29 @@ export default function Dashboard() {
     }
   }, [syncing, accounts, selectedAccountId, showToast, loadSyncStatuses, loadEmails, loadAccounts])
 
-  const handleRead = useCallback(async (email: Email, shouldScroll = false, scrollDetail = false) => {
-    setSelectedEmail(email)
-    setLoadingDetail(true)
-
-    if (shouldScroll) {
-      emailItemRefs.current[email.id]?.scrollIntoView({ block: 'nearest' })
+  const sanitizeEmailHtml = useCallback((rawHtml?: string) => {
+    if (!rawHtml) return ''
+    try {
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(rawHtml, 'text/html')
+      doc.querySelectorAll('style, link[rel="stylesheet"], script').forEach(node => node.remove())
+      doc.querySelectorAll('img').forEach(img => {
+        img.setAttribute('loading', 'lazy')
+      })
+      doc.querySelectorAll('a').forEach(link => {
+        link.setAttribute('target', '_blank')
+        link.setAttribute('rel', 'noopener noreferrer')
+      })
+      return doc.body?.innerHTML || ''
+    } catch (e) {
+      console.error(e)
+      return ''
     }
+  }, [])
+
+  const handleRead = useCallback(async (email: Email, shouldScroll = false, scrollDetail = false) => {
+    activeEmailIdRef.current = email.id
+
     if (scrollDetail && detailScrollRef.current) {
       detailScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' })
     }
@@ -289,17 +359,52 @@ export default function Dashboard() {
     if (!email.is_read) {
       emailApi.markAsRead(email.id).then(() => {
         setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
+        const cached = detailCacheRef.current.get(email.id)
+        if (cached) {
+          cached.email = { ...cached.email, is_read: true }
+        }
       }).catch(console.error)
     }
 
+    const cached = detailCacheRef.current.get(email.id)
+    if (cached) {
+      // LRU refresh
+      detailCacheRef.current.delete(email.id)
+      const updated = !email.is_read ? { ...cached.email, is_read: true } : cached.email
+      detailCacheRef.current.set(email.id, { ...cached, email: updated })
+      setSelectedEmail(updated)
+      setLoadingDetail(false)
+      return
+    }
+
+    setSelectedEmail(email)
+    setLoadingDetail(true)
+
+    if (shouldScroll) {
+      emailItemRefs.current[email.id]?.scrollIntoView({ block: 'nearest' })
+    }
+
     emailApi.get(email.id).then(detail => {
-      setSelectedEmail(detail.data)
-      setLoadingDetail(false)
-    }).catch(e => {
+      const fullEmail = !email.is_read ? { ...detail.data, is_read: true } : detail.data
+      const cleaned = sanitizeEmailHtml(fullEmail.body_html)
+      if (detailCacheRef.current.size >= 100) {
+        const oldestKey = detailCacheRef.current.keys().next().value
+        if (oldestKey !== undefined) {
+          detailCacheRef.current.delete(oldestKey)
+        }
+      }
+      detailCacheRef.current.set(email.id, { email: fullEmail, sanitizedHtml: cleaned })
+      if (activeEmailIdRef.current === email.id) {
+        setSelectedEmail(fullEmail)
+        setLoadingDetail(false)
+      }
+    }).catch((e: unknown) => {
       console.error('Failed to fetch email detail:', e)
-      setLoadingDetail(false)
+      if (activeEmailIdRef.current === email.id) {
+        setLoadingDetail(false)
+      }
     })
-  }, [])
+  }, [sanitizeEmailHtml])
 
   const handleMarkAsUnread = useCallback(async (email: Email) => {
     if (!email.is_read) return
@@ -345,6 +450,7 @@ export default function Dashboard() {
     const timerId = window.setTimeout(async () => {
       try {
         await emailApi.delete(email.id)
+        detailCacheRef.current.delete(email.id)
         setPendingDeletes(prev => {
           const next = { ...prev }
           delete next[email.id]
@@ -420,6 +526,7 @@ export default function Dashboard() {
     try {
       const results = await Promise.allSettled(ids.map(id => emailApi.delete(id)))
       const deletedIds = new Set(ids.filter((_, index) => results[index].status === 'fulfilled'))
+      deletedIds.forEach(id => detailCacheRef.current.delete(id))
       setEmails(prev => prev.filter(e => !deletedIds.has(e.id)))
       if (selectedEmail && deletedIds.has(selectedEmail.id)) {
         setSelectedEmail(null)
@@ -440,10 +547,7 @@ export default function Dashboard() {
     })
   }, [])
 
-  const filteredEmails = useMemo(() => {
-    if (filter === 'unread') return emails.filter(email => !email.is_read)
-    return emails
-  }, [emails, filter])
+  const filteredEmails = emails
 
   const toggleSelectAll = useCallback(() => {
     if (selectedIds.size === filteredEmails.length) {
@@ -463,14 +567,63 @@ export default function Dashboard() {
     setSelectedIds(newSelected)
   }, [selectedIds, filteredEmails])
 
+  // 预处理每封邮件的时间戳与相对时间字符串，避免排序和滚动渲染期间重复正则/Date 解析
+  const emailDateMeta = useMemo(() => {
+    const map = new Map<number, { ts: number; label: string }>()
+    for (const email of filteredEmails) {
+      const parsed = resolveEmailDate(email)
+      map.set(email.id, {
+        ts: parsed ? parsed.getTime() : 0,
+        label: formatRelativeTime(parsed),
+      })
+    }
+    return map
+  }, [filteredEmails, resolveEmailDate])
+
   const sortedFilteredEmails = useMemo(() =>
     [...filteredEmails].sort((a, b) => {
-      const dateA = resolveEmailDate(a)
-      const dateB = resolveEmailDate(b)
-      return (dateB ? dateB.getTime() : 0) - (dateA ? dateA.getTime() : 0)
+      const tsA = emailDateMeta.get(a.id)?.ts ?? 0
+      const tsB = emailDateMeta.get(b.id)?.ts ?? 0
+      if (tsB !== tsA) return tsB - tsA
+      return b.id - a.id
     }),
-    [filteredEmails, resolveEmailDate],
+    [filteredEmails, emailDateMeta],
   )
+
+  const EMAIL_ROW_STRIDE = 66
+  const VIRTUAL_OVERSCAN = 8
+  const virtualRange = useMemo(() => {
+    const totalRows = sortedFilteredEmails.length
+    if (totalRows === 0) {
+      return { start: 0, end: 0, paddingTop: 0, paddingBottom: 0 }
+    }
+    const start = Math.max(0, Math.floor(listScrollTop / EMAIL_ROW_STRIDE) - VIRTUAL_OVERSCAN)
+    const visibleCount = Math.ceil(listViewportHeight / EMAIL_ROW_STRIDE) + VIRTUAL_OVERSCAN * 2
+    const end = Math.min(totalRows, start + visibleCount)
+    return {
+      start,
+      end,
+      paddingTop: start * EMAIL_ROW_STRIDE,
+      paddingBottom: Math.max(0, (totalRows - end) * EMAIL_ROW_STRIDE),
+    }
+  }, [sortedFilteredEmails.length, listScrollTop, listViewportHeight])
+
+  const visibleEmails = useMemo(
+    () => sortedFilteredEmails.slice(virtualRange.start, virtualRange.end),
+    [sortedFilteredEmails, virtualRange.start, virtualRange.end],
+  )
+
+  const scrollToEmailIndex = useCallback((idx: number) => {
+    const container = listScrollRef.current
+    if (!container || idx < 0) return
+    const itemTop = idx * EMAIL_ROW_STRIDE
+    const itemBottom = itemTop + EMAIL_ROW_STRIDE
+    if (itemTop < container.scrollTop) {
+      container.scrollTop = itemTop
+    } else if (itemBottom > container.scrollTop + container.clientHeight) {
+      container.scrollTop = itemBottom - container.clientHeight
+    }
+  }, [])
 
   const selectedIndex = useMemo(() => {
     if (!selectedEmail) return -1
@@ -483,9 +636,11 @@ export default function Dashboard() {
       ? 0
       : Math.max(0, Math.min(sortedFilteredEmails.length - 1, selectedIndex + delta))
     const target = sortedFilteredEmails[nextIndex]
-    if (target) handleRead(target, true, true)
-  }, [sortedFilteredEmails, selectedIndex, handleRead])
-
+    if (target) {
+      scrollToEmailIndex(nextIndex)
+      handleRead(target, true, true)
+    }
+  }, [sortedFilteredEmails, selectedIndex, scrollToEmailIndex, handleRead])
   const unreadCount = useMemo(() => emails.filter(e => !e.is_read).length, [emails])
 
   const accountById = useMemo(() => {
@@ -525,13 +680,21 @@ export default function Dashboard() {
       if (event.key === 'j') {
         event.preventDefault()
         const index = sortedFilteredEmails.findIndex(email => email.id === selectedEmail?.id)
-        const nextEmail = sortedFilteredEmails[index + 1] || sortedFilteredEmails[0]
-        if (nextEmail) handleRead(nextEmail, true)
+        const nextIdx = index + 1 < sortedFilteredEmails.length ? index + 1 : 0
+        const nextEmail = sortedFilteredEmails[nextIdx]
+        if (nextEmail) {
+          scrollToEmailIndex(nextIdx)
+          handleRead(nextEmail, true)
+        }
       } else if (event.key === 'k') {
         event.preventDefault()
         const index = sortedFilteredEmails.findIndex(email => email.id === selectedEmail?.id)
-        const prevEmail = index <= 0 ? sortedFilteredEmails[sortedFilteredEmails.length - 1] : sortedFilteredEmails[index - 1]
-        if (prevEmail) handleRead(prevEmail, true)
+        const prevIdx = index <= 0 ? sortedFilteredEmails.length - 1 : index - 1
+        const prevEmail = sortedFilteredEmails[prevIdx]
+        if (prevEmail) {
+          scrollToEmailIndex(prevIdx)
+          handleRead(prevEmail, true)
+        }
       } else if (event.key === 'o' || event.key === 'O') {
         event.preventDefault()
         const targetEmail = selectedEmail || sortedFilteredEmails[0]
@@ -548,7 +711,7 @@ export default function Dashboard() {
         }
       } else if (event.key === 'r' || event.key === 'R') {
         event.preventDefault()
-        loadEmails(1, false).then(() => showToast('已刷新', 'success'))
+        loadEmails(false).then(() => showToast('已刷新', 'success'))
       } else if ((event.key === 'Backspace' || event.key === 'Delete') && selectedEmail) {
         event.preventDefault()
         setConfirmDelete({ email: selectedEmail })
@@ -562,6 +725,7 @@ export default function Dashboard() {
   }, [
     loadEmails,
     handleRead,
+    scrollToEmailIndex,
     handleMarkAsUnread,
     handleSendToTelegram,
     sendingTelegram,
@@ -591,23 +755,12 @@ export default function Dashboard() {
 
   const sanitizedHtml = useMemo(() => {
     if (!selectedEmail?.body_html) return ''
-    try {
-      const parser = new DOMParser()
-      const doc = parser.parseFromString(selectedEmail.body_html, 'text/html')
-      doc.querySelectorAll('style, link[rel="stylesheet"], script').forEach(node => node.remove())
-      doc.querySelectorAll('img').forEach(img => {
-        img.setAttribute('loading', 'lazy')
-      })
-      doc.querySelectorAll('a').forEach(link => {
-        link.setAttribute('target', '_blank')
-        link.setAttribute('rel', 'noopener noreferrer')
-      })
-      return doc.body?.innerHTML || ''
-    } catch (e) {
-      console.error(e)
-      return ''
+    const cached = detailCacheRef.current.get(selectedEmail.id)
+    if (cached && cached.email.body_html === selectedEmail.body_html) {
+      return cached.sanitizedHtml
     }
-  }, [selectedEmail?.body_html])
+    return sanitizeEmailHtml(selectedEmail.body_html)
+  }, [selectedEmail?.id, selectedEmail?.body_html, sanitizeEmailHtml])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -818,7 +971,11 @@ export default function Dashboard() {
               placeholder="搜索发件人或主题"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && loadEmails(1, false)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  setDebouncedSearch(search)
+                }
+              }}
               style={{ paddingLeft: '36px', paddingRight: search ? '36px' : '40px' }}
             />
             {search ? (
@@ -966,10 +1123,9 @@ export default function Dashboard() {
         </div>
 
         {/* Email List */}
-        <div className="flex-1 overflow-auto thin-scrollbar" onScroll={handleScroll}>
+        <div ref={listScrollRef} className="flex-1 overflow-auto thin-scrollbar" onScroll={handleScroll}>
           {loadingMore && emails.length === 0 ? (
             <div className="empty-state">
-              <Loader2 className="w-6 h-6 text-[var(--text-tertiary)] animate-spin mb-3" strokeWidth={1.5} />
               <p className="text-xs text-[var(--text-tertiary)]">正在加载邮件</p>
             </div>
           ) : filteredEmails.length === 0 ? (
@@ -997,8 +1153,14 @@ export default function Dashboard() {
               )}
             </div>
           ) : (
-            <div className="p-2 space-y-0.5">
-              {sortedFilteredEmails.map(email => {
+            <div
+              className="p-2"
+              style={{
+                paddingTop: `${virtualRange.paddingTop + 8}px`,
+                paddingBottom: `${virtualRange.paddingBottom + 8}px`,
+              }}
+            >
+              {visibleEmails.map(email => {
                 const accountColor = accountById.get(email.account_id)?.color || '#2563EB'
                 const isSelected = selectedEmail?.id === email.id
                 return (
@@ -1020,7 +1182,7 @@ export default function Dashboard() {
                       })
                       setContextMenuIndex(0)
                     }}
-                    style={isSelected ? { boxShadow: 'var(--active-highlight)' } : undefined}
+                    style={isSelected ? { boxShadow: 'var(--active-highlight)', height: '64px', marginBottom: '2px' } : { height: '64px', marginBottom: '2px' }}
                     className={`group px-3 py-2.5 rounded-[8px] border cursor-pointer transition-colors ${
                       isSelected
                         ? 'bg-[var(--bg-tertiary)] border-[var(--border-default)]'
@@ -1098,7 +1260,7 @@ export default function Dashboard() {
                               </button>
                             </div>
                             <span className="font-mono tabular-nums text-xs text-[var(--text-tertiary)] whitespace-nowrap md:group-hover:hidden">
-                              {formatRelativeTime(resolveEmailDate(email))}
+                              {emailDateMeta.get(email.id)?.label ?? '未知'}
                             </span>
                           </div>
                         </div>
