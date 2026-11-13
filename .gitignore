@@ -42,3 +42,11 @@ Thumbs.db
 *.sqlite3
 backend/server
 backend/main
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+backend/data/
+
+# Local AI/Editor State
+.serena/project.yml
