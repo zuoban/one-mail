@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
 import { emailApi, accountApi, syncApi, telegramApi } from '../api'
 import axios from 'axios'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -35,6 +35,154 @@ const providers = [
   { value: 'custom', label: '自定义' },
 ]
 
+const EMAIL_ROW_STRIDE = 66
+const VIRTUAL_OVERSCAN = 8
+
+interface EmailListRowProps {
+  email: Email
+  accountColor: string
+  dateLabel: string
+  isSelected: boolean
+  batchMode: boolean
+  isChecked: boolean
+  registerRef: (id: number, node: HTMLDivElement | null) => void
+  onSelect: (email: Email) => void
+  onContextMenu: (email: Email, x: number, y: number) => void
+  onToggleSelect: (id: number) => void
+  onToggleRead: (email: Email) => void
+  onRequestDelete: (email: Email) => void
+}
+
+const EmailListRow = memo(function EmailListRow({
+  email,
+  accountColor,
+  dateLabel,
+  isSelected,
+  batchMode,
+  isChecked,
+  registerRef,
+  onSelect,
+  onContextMenu,
+  onToggleSelect,
+  onToggleRead,
+  onRequestDelete,
+}: EmailListRowProps) {
+  return (
+    <div
+      ref={(node) => registerRef(email.id, node)}
+      onClick={() => onSelect(email)}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        const menuWidth = 176
+        const menuHeight = 160
+        const padding = 8
+        const x = Math.min(event.clientX, window.innerWidth - menuWidth - padding)
+        const y = Math.min(event.clientY, window.innerHeight - menuHeight - padding)
+        onContextMenu(email, Math.max(padding, x), Math.max(padding, y))
+      }}
+      style={isSelected ? { boxShadow: 'var(--active-highlight)', height: '64px', marginBottom: '2px' } : { height: '64px', marginBottom: '2px' }}
+      className={`group px-3 py-2.5 rounded-[8px] border cursor-pointer transition-colors ${
+        isSelected
+          ? 'bg-[var(--bg-tertiary)] border-[var(--border-default)]'
+          : 'border-transparent hover:bg-[var(--bg-nav-hover)]'
+      }`}
+    >
+      <div className="flex items-start gap-2.5">
+        {batchMode ? (
+          <input
+            type="checkbox"
+            checked={isChecked}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              e.stopPropagation()
+              onToggleSelect(email.id)
+            }}
+            className="mt-0.5 w-4 h-4 rounded border-[var(--border-default)] accent-[var(--primary-500)] cursor-pointer"
+          />
+        ) : (
+          <span className="flex w-2.5 pt-2 justify-center flex-shrink-0">
+            {!email.is_read && (
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-[var(--primary-500)]"
+                title="未读"
+              />
+            )}
+          </span>
+        )}
+
+        <div className="flex-1 min-w-0">
+          <div className="flex h-5 items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span
+                className="w-[3px] h-3 rounded-full flex-shrink-0"
+                style={{ backgroundColor: accountColor }}
+              />
+              <span
+                className={`text-sm truncate ${
+                  !email.is_read
+                    ? 'font-medium text-[var(--text-primary)]'
+                    : 'font-normal text-[var(--text-secondary)]'
+                }`}
+              >
+                {email.from_name || email.from}
+              </span>
+            </div>
+
+            <div className="flex items-center flex-shrink-0">
+              <div className="hidden md:group-hover:flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onToggleRead(email)
+                  }}
+                  className="p-0.5 rounded-[4px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] cursor-pointer"
+                  title={email.is_read ? '标为未读' : '标为已读'}
+                >
+                  {email.is_read ? (
+                    <EyeOff className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  ) : (
+                    <MailOpen className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onRequestDelete(email)
+                  }}
+                  className="p-0.5 rounded-[4px] text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] cursor-pointer"
+                  title="删除"
+                >
+                  <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
+                </button>
+              </div>
+              <span className="font-mono tabular-nums text-xs text-[var(--text-tertiary)] whitespace-nowrap md:group-hover:hidden">
+                {dateLabel}
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <p
+              className={`text-sm truncate flex-1 ${
+                !email.is_read
+                  ? 'text-[var(--text-primary)] font-medium'
+                  : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              {email.subject || '(无主题)'}
+            </p>
+            {email.has_attachment && (
+              <Paperclip className="w-3.5 h-3.5 text-[var(--text-tertiary)] flex-shrink-0" strokeWidth={1.5} />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+})
+
 export default function Dashboard() {
   const { resolvedTheme } = useTheme()
   const [emails, setEmails] = useState<Email[]>([])
@@ -69,8 +217,9 @@ export default function Dashboard() {
   const listScrollRef = useRef<HTMLDivElement | null>(null)
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
-  const [listViewportHeight, setListViewportHeight] = useState(600)
-  const [listScrollTop, setListScrollTop] = useState(0)
+  const listViewportHeightRef = useRef(600)
+  const listScrollTopRef = useRef(0)
+  const [virtualWindow, setVirtualWindow] = useState<{ start: number; end: number }>({ start: 0, end: 30 })
   const [confirmDelete, setConfirmDelete] = useState<{ email: Email } | null>(null)
   const [confirmBatchDelete, setConfirmBatchDelete] = useState(false)
   const [sendingTelegram, setSendingTelegram] = useState(false)
@@ -205,29 +354,43 @@ export default function Dashboard() {
     }
   }, [debouncedSearch, selectedAccountId, filter])
 
+  const syncVirtualWindow = useCallback((totalRows: number) => {
+    if (totalRows === 0) {
+      setVirtualWindow(prev => (prev.start === 0 && prev.end === 0 ? prev : { start: 0, end: 0 }))
+      return
+    }
+    const start = Math.max(0, Math.floor(listScrollTopRef.current / EMAIL_ROW_STRIDE) - VIRTUAL_OVERSCAN)
+    const visibleCount = Math.ceil(listViewportHeightRef.current / EMAIL_ROW_STRIDE) + VIRTUAL_OVERSCAN * 2
+    const end = Math.min(totalRows, start + visibleCount)
+    setVirtualWindow(prev => (prev.start === start && prev.end === end ? prev : { start, end }))
+  }, [])
+
   useEffect(() => {
     const el = listScrollRef.current
     if (!el) return
-    setListViewportHeight(el.clientHeight || 600)
+    listViewportHeightRef.current = el.clientHeight || 600
+    syncVirtualWindow(emails.length)
     const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
         if (entry.contentRect.height > 0) {
-          setListViewportHeight(entry.contentRect.height)
+          listViewportHeightRef.current = entry.contentRect.height
+          syncVirtualWindow(emails.length)
         }
       }
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [])
+  }, [emails.length, syncVirtualWindow])
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const target = e.target as HTMLDivElement
     const { scrollTop, scrollHeight, clientHeight } = target
-    setListScrollTop(scrollTop)
+    listScrollTopRef.current = scrollTop
+    syncVirtualWindow(emails.length)
     if (scrollHeight - scrollTop - clientHeight < 240 && !loadingMore && hasMore) {
       loadEmails(true)
     }
-  }, [loadEmails, hasMore, loadingMore])
+  }, [emails.length, syncVirtualWindow, loadEmails, hasMore, loadingMore])
 
   useEffect(() => {
     loadAccounts()
@@ -247,10 +410,11 @@ export default function Dashboard() {
     setHasMore(true)
     if (listScrollRef.current) {
       listScrollRef.current.scrollTop = 0
-      setListScrollTop(0)
     }
+    listScrollTopRef.current = 0
+    syncVirtualWindow(0)
     loadEmails(false)
-  }, [debouncedSearch, selectedAccountId, filter, loadEmails])
+  }, [debouncedSearch, selectedAccountId, filter, loadEmails, syncVirtualWindow])
   const showToast = useCallback((
     message: string,
     type: 'success' | 'error',
@@ -351,33 +515,31 @@ export default function Dashboard() {
 
   const handleRead = useCallback(async (email: Email, shouldScroll = false, scrollDetail = false) => {
     activeEmailIdRef.current = email.id
+    const wasUnread = !email.is_read
 
     if (scrollDetail && detailScrollRef.current) {
       detailScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' })
     }
 
-    if (!email.is_read) {
-      emailApi.markAsRead(email.id).then(() => {
-        setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
-        const cached = detailCacheRef.current.get(email.id)
-        if (cached) {
-          cached.email = { ...cached.email, is_read: true }
-        }
-      }).catch(console.error)
+    if (wasUnread) {
+      setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
     }
 
     const cached = detailCacheRef.current.get(email.id)
     if (cached) {
       // LRU refresh
       detailCacheRef.current.delete(email.id)
-      const updated = !email.is_read ? { ...cached.email, is_read: true } : cached.email
+      const updated = wasUnread ? { ...cached.email, is_read: true } : cached.email
       detailCacheRef.current.set(email.id, { ...cached, email: updated })
       setSelectedEmail(updated)
       setLoadingDetail(false)
+      if (wasUnread) {
+        emailApi.markAsRead(email.id).catch(console.error)
+      }
       return
     }
 
-    setSelectedEmail(email)
+    setSelectedEmail(wasUnread ? { ...email, is_read: true } : email)
     setLoadingDetail(true)
 
     if (shouldScroll) {
@@ -385,7 +547,7 @@ export default function Dashboard() {
     }
 
     emailApi.get(email.id).then(detail => {
-      const fullEmail = !email.is_read ? { ...detail.data, is_read: true } : detail.data
+      const fullEmail = wasUnread ? { ...detail.data, is_read: true } : detail.data
       const cleaned = sanitizeEmailHtml(fullEmail.body_html)
       if (detailCacheRef.current.size >= 100) {
         const oldestKey = detailCacheRef.current.keys().next().value
@@ -398,10 +560,16 @@ export default function Dashboard() {
         setSelectedEmail(fullEmail)
         setLoadingDetail(false)
       }
+      if (wasUnread) {
+        emailApi.markAsRead(email.id).catch(console.error)
+      }
     }).catch((e: unknown) => {
       console.error('Failed to fetch email detail:', e)
       if (activeEmailIdRef.current === email.id) {
         setLoadingDetail(false)
+      }
+      if (wasUnread) {
+        emailApi.markAsRead(email.id).catch(console.error)
       }
     })
   }, [sanitizeEmailHtml])
@@ -511,7 +679,8 @@ export default function Dashboard() {
     if (ids.length === 0) return
     try {
       await emailApi.batchMarkAsRead(ids)
-      setEmails(prev => prev.map(e => ids.includes(e.id) ? { ...e, is_read: true } : e))
+      const idSet = new Set(ids)
+      setEmails(prev => prev.map(e => idSet.has(e.id) ? { ...e, is_read: true } : e))
       setSelectedIds(new Set())
       showToast(`已将 ${ids.length} 封标为已读`, 'success')
     } catch {
@@ -590,29 +759,42 @@ export default function Dashboard() {
     [filteredEmails, emailDateMeta],
   )
 
-  const EMAIL_ROW_STRIDE = 66
-  const VIRTUAL_OVERSCAN = 8
   const virtualRange = useMemo(() => {
     const totalRows = sortedFilteredEmails.length
     if (totalRows === 0) {
       return { start: 0, end: 0, paddingTop: 0, paddingBottom: 0 }
     }
-    const start = Math.max(0, Math.floor(listScrollTop / EMAIL_ROW_STRIDE) - VIRTUAL_OVERSCAN)
-    const visibleCount = Math.ceil(listViewportHeight / EMAIL_ROW_STRIDE) + VIRTUAL_OVERSCAN * 2
-    const end = Math.min(totalRows, start + visibleCount)
+    const start = Math.min(virtualWindow.start, totalRows)
+    const end = Math.min(virtualWindow.end, totalRows)
     return {
       start,
       end,
       paddingTop: start * EMAIL_ROW_STRIDE,
       paddingBottom: Math.max(0, (totalRows - end) * EMAIL_ROW_STRIDE),
     }
-  }, [sortedFilteredEmails.length, listScrollTop, listViewportHeight])
+  }, [sortedFilteredEmails.length, virtualWindow.start, virtualWindow.end])
 
   const visibleEmails = useMemo(
     () => sortedFilteredEmails.slice(virtualRange.start, virtualRange.end),
     [sortedFilteredEmails, virtualRange.start, virtualRange.end],
   )
 
+  const registerEmailRef = useCallback((id: number, node: HTMLDivElement | null) => {
+    if (node) {
+      emailItemRefs.current[id] = node
+    } else {
+      delete emailItemRefs.current[id]
+    }
+  }, [])
+
+  const handleRowContextMenu = useCallback((email: Email, x: number, y: number) => {
+    setContextMenu({ email, x, y })
+    setContextMenuIndex(0)
+  }, [])
+
+  const handleRequestDeleteRow = useCallback((email: Email) => {
+    setConfirmDelete({ email })
+  }, [])
   const scrollToEmailIndex = useCallback((idx: number) => {
     const container = listScrollRef.current
     if (!container || idx < 0) return
@@ -1160,130 +1342,23 @@ export default function Dashboard() {
                 paddingBottom: `${virtualRange.paddingBottom + 8}px`,
               }}
             >
-              {visibleEmails.map(email => {
-                const accountColor = accountById.get(email.account_id)?.color || '#2563EB'
-                const isSelected = selectedEmail?.id === email.id
-                return (
-                  <div
-                    key={email.id}
-                    ref={(node) => { emailItemRefs.current[email.id] = node }}
-                    onClick={() => handleRead(email)}
-                    onContextMenu={(event) => {
-                      event.preventDefault()
-                      const menuWidth = 176
-                      const menuHeight = 160
-                      const padding = 8
-                      const x = Math.min(event.clientX, window.innerWidth - menuWidth - padding)
-                      const y = Math.min(event.clientY, window.innerHeight - menuHeight - padding)
-                      setContextMenu({
-                        email,
-                        x: Math.max(padding, x),
-                        y: Math.max(padding, y),
-                      })
-                      setContextMenuIndex(0)
-                    }}
-                    style={isSelected ? { boxShadow: 'var(--active-highlight)', height: '64px', marginBottom: '2px' } : { height: '64px', marginBottom: '2px' }}
-                    className={`group px-3 py-2.5 rounded-[8px] border cursor-pointer transition-colors ${
-                      isSelected
-                        ? 'bg-[var(--bg-tertiary)] border-[var(--border-default)]'
-                        : 'border-transparent hover:bg-[var(--bg-nav-hover)]'
-                    }`}
-                  >
-                    <div className="flex items-start gap-2.5">
-                      {batchMode ? (
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(email.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => {
-                            e.stopPropagation()
-                            toggleSelect(email.id)
-                          }}
-                          className="mt-0.5 w-4 h-4 rounded border-[var(--border-default)] accent-[var(--primary-500)] cursor-pointer"
-                        />
-                      ) : (
-                        <span className="flex w-2.5 pt-2 justify-center flex-shrink-0">
-                          {!email.is_read && (
-                            <span
-                              className="w-1.5 h-1.5 rounded-full bg-[var(--primary-500)]"
-                              title="未读"
-                            />
-                          )}
-                        </span>
-                      )}
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex h-5 items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span
-                              className="w-[3px] h-3 rounded-full flex-shrink-0"
-                              style={{ backgroundColor: accountColor }}
-                            />
-                            <span
-                              className={`text-sm truncate ${
-                                !email.is_read
-                                  ? 'font-medium text-[var(--text-primary)]'
-                                  : 'font-normal text-[var(--text-secondary)]'
-                              }`}
-                            >
-                              {email.from_name || email.from}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center flex-shrink-0">
-                            <div className="hidden md:group-hover:flex items-center gap-0.5">
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  handleToggleReadRow(email)
-                                }}
-                                className="p-0.5 rounded-[4px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] cursor-pointer"
-                                title={email.is_read ? '标为未读' : '标为已读'}
-                              >
-                                {email.is_read ? (
-                                  <EyeOff className="w-3.5 h-3.5" strokeWidth={1.5} />
-                                ) : (
-                                  <MailOpen className="w-3.5 h-3.5" strokeWidth={1.5} />
-                                )}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  setConfirmDelete({ email })
-                                }}
-                                className="p-0.5 rounded-[4px] text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] cursor-pointer"
-                                title="删除"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
-                              </button>
-                            </div>
-                            <span className="font-mono tabular-nums text-xs text-[var(--text-tertiary)] whitespace-nowrap md:group-hover:hidden">
-                              {emailDateMeta.get(email.id)?.label ?? '未知'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="mt-0.5 flex items-center gap-1.5">
-                          <p
-                            className={`text-sm truncate flex-1 ${
-                              !email.is_read
-                                ? 'text-[var(--text-primary)] font-medium'
-                                : 'text-[var(--text-secondary)]'
-                            }`}
-                          >
-                            {email.subject || '(无主题)'}
-                          </p>
-                          {email.has_attachment && (
-                            <Paperclip className="w-3.5 h-3.5 text-[var(--text-tertiary)] flex-shrink-0" strokeWidth={1.5} />
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+              {visibleEmails.map(email => (
+                <EmailListRow
+                  key={email.id}
+                  email={email}
+                  accountColor={accountById.get(email.account_id)?.color || '#2563EB'}
+                  dateLabel={emailDateMeta.get(email.id)?.label ?? '未知'}
+                  isSelected={selectedEmail?.id === email.id}
+                  batchMode={batchMode}
+                  isChecked={selectedIds.has(email.id)}
+                  registerRef={registerEmailRef}
+                  onSelect={handleRead}
+                  onContextMenu={handleRowContextMenu}
+                  onToggleSelect={toggleSelect}
+                  onToggleRead={handleToggleReadRow}
+                  onRequestDelete={handleRequestDeleteRow}
+                />
+              ))}
 
               {loadingMore && (
                 <div className="flex items-center justify-center py-4 gap-2">

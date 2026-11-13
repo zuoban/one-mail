@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -12,6 +13,7 @@ import (
 	"one-mail/backend/internal/services/imap"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type EmailHandler struct{}
@@ -100,9 +102,6 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 
 	useCursor := query.CursorID > 0 && query.CursorDate != ""
 	var total int64
-	if !useCursor {
-		q.Count(&total)
-	}
 
 	type EmailListItem struct {
 		ID            uint      `json:"id"`
@@ -118,7 +117,8 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 		Folder        string    `json:"folder"`
 	}
 
-	listQuery := q.Select("id, created_at, account_id, `from`, from_name, `to`, subject, date, has_attachment, is_read, folder").
+	listQuery := q.Session(&gorm.Session{}).
+		Select("id, created_at, account_id, `from`, from_name, `to`, subject, date, has_attachment, is_read, folder").
 		Order("date DESC, id DESC")
 
 	var emails []EmailListItem
@@ -146,11 +146,19 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 		}
 	} else {
 		offset := (query.Page - 1) * query.PageSize
-		if err := listQuery.Offset(offset).Limit(query.PageSize).Find(&emails).Error; err != nil {
+		if err := listQuery.Offset(offset).Limit(query.PageSize + 1).Find(&emails).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		hasMore = int64(offset+len(emails)) < total
+		if len(emails) > query.PageSize {
+			hasMore = true
+			emails = emails[:query.PageSize]
+			q.Session(&gorm.Session{}).Count(&total)
+		} else if offset == 0 || len(emails) > 0 {
+			total = int64(offset + len(emails))
+		} else {
+			q.Session(&gorm.Session{}).Count(&total)
+		}
 	}
 
 	if len(emails) > 0 && hasMore {
@@ -244,6 +252,48 @@ func (h *EmailHandler) fetchAndCacheBody(ctx context.Context, email *models.Emai
 	email.BodyHTML = res.bodyHTML
 }
 
+type markReadJob struct {
+	accountID uint
+	uid       uint
+	folder    string
+}
+
+var (
+	markReadQueue     chan markReadJob
+	markReadQueueOnce sync.Once
+)
+
+func enqueueMarkAsRead(accountID, uid uint, folder string) {
+	markReadQueueOnce.Do(func() {
+		markReadQueue = make(chan markReadJob, 256)
+		for range 2 {
+			go func() {
+				for job := range markReadQueue {
+					var account models.EmailAccount
+					if err := database.GetDB().First(&account, job.accountID).Error; err != nil {
+						continue
+					}
+
+					imapClient, release, err := imap.GetConnectionPool().AcquireConnection(&account)
+					if err != nil {
+						continue
+					}
+					healthy := true
+					if err := imapClient.MarkAsRead(job.uid, job.folder); err != nil {
+						healthy = false
+					}
+					release(healthy)
+				}
+			}()
+		}
+	})
+
+	select {
+	case markReadQueue <- markReadJob{accountID: accountID, uid: uid, folder: folder}:
+	default:
+	}
+}
+
 func (h *EmailHandler) MarkAsRead(c *gin.Context) {
 	id := c.Param("id")
 	userID := c.GetUint("user_id")
@@ -259,25 +309,7 @@ func (h *EmailHandler) MarkAsRead(c *gin.Context) {
 
 	database.GetDB().Model(&email).Update("is_read", true)
 
-	go func() {
-		var account models.EmailAccount
-		if err := database.GetDB().First(&account, email.AccountID).Error; err != nil {
-			return
-		}
-
-		imapClient, release, err := imap.GetConnectionPool().AcquireConnection(&account)
-		if err != nil {
-			return
-		}
-		healthy := true
-		defer func() {
-			release(healthy)
-		}()
-
-		if err := imapClient.MarkAsRead(email.UID, email.Folder); err != nil {
-			healthy = false
-		}
-	}()
+	enqueueMarkAsRead(email.AccountID, email.UID, email.Folder)
 	c.JSON(http.StatusOK, gin.H{"message": "marked as read"})
 }
 

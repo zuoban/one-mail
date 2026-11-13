@@ -39,6 +39,7 @@ func main() {
 
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware())
+	r.Use(middleware.GzipMiddleware())
 
 	accountHandler := handlers.NewAccountHandler()
 	emailHandler := handlers.NewEmailHandler()

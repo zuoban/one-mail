@@ -75,6 +75,7 @@ func UpdateTelegramConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save config"})
 		return
 	}
+	telegram.InvalidateConfigCache()
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": TelegramConfigResponse{

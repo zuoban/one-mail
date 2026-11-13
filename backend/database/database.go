@@ -156,6 +156,12 @@ func ensureEmailIndexes(db *gorm.DB) error {
 	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_account_folder_read_date ON emails(account_id, folder, is_read, date DESC, id DESC) WHERE deleted_at IS NULL").Error; err != nil {
 		return err
 	}
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_folder_date ON emails(folder, date DESC, id DESC, account_id) WHERE deleted_at IS NULL").Error; err != nil {
+		return err
+	}
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_folder_read_date ON emails(folder, is_read, date DESC, id DESC, account_id) WHERE deleted_at IS NULL").Error; err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -168,7 +168,7 @@ func (s *Scheduler) syncAllAccounts() {
 func (s *Scheduler) runAccountWithTimeout(acc models.EmailAccount) {
 	done := make(chan struct{})
 	go func() {
-		s.syncAccount(acc.ID)
+		s.syncAccount(acc)
 		close(done)
 	}()
 
@@ -204,7 +204,8 @@ func (s *Scheduler) forceResetAccountStatus(accountID uint) {
 	log.Printf("Account %d status force reset due to timeout", accountID)
 }
 
-func (s *Scheduler) syncAccount(accountID uint) {
+func (s *Scheduler) syncAccount(acc models.EmailAccount) {
+	accountID := acc.ID
 	s.mu.Lock()
 	status, exists := s.statuses[accountID]
 	if !exists {
@@ -249,7 +250,16 @@ func (s *Scheduler) syncAccount(accountID uint) {
 		status.mu.Unlock()
 	}()
 
-	newCount, err := SyncAccount(accountID)
+	var (
+		newCount int
+		err      error
+	)
+	if acc.Email != "" {
+		accCopy := acc
+		newCount, err = SyncAccountWithModel(&accCopy)
+	} else {
+		newCount, err = SyncAccount(accountID)
+	}
 
 	endTime := time.Now()
 	durationMs := endTime.Sub(startTime).Milliseconds()

@@ -75,6 +75,27 @@ func TestSetupSQLiteAndMigrateIndexes(t *testing.T) {
 		t.Fatalf("expected rebuilt index (account_id, folder, date, ...), got %+v", cols)
 	}
 
+	var folderCols []indexCol
+	if err := db.Raw("PRAGMA index_info('idx_folder_date')").Scan(&folderCols).Error; err != nil {
+		t.Fatalf("failed to inspect idx_folder_date: %v", err)
+	}
+	if len(folderCols) < 3 || folderCols[0].Name != "folder" || folderCols[1].Name != "date" {
+		t.Fatalf("expected idx_folder_date (folder, date, ...), got %+v", folderCols)
+	}
+
+	type qpRow struct {
+		Detail string
+	}
+	var qp []qpRow
+	if err := db.Raw(`EXPLAIN QUERY PLAN SELECT id FROM emails WHERE account_id IN (1, 2, 3) AND folder = 'INBOX' AND deleted_at IS NULL ORDER BY date DESC, id DESC LIMIT 50`).Scan(&qp).Error; err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN failed: %v", err)
+	}
+	for _, row := range qp {
+		if row.Detail == "USE TEMP B-TREE FOR ORDER BY" {
+			t.Fatalf("multi-account inbox query unexpectedly used temp B-tree sort: %+v", qp)
+		}
+	}
+
 	// Verify FTS5 trigger sync when FTS5 is compiled in
 	if IsFTS5Enabled() {
 		email := models.Email{

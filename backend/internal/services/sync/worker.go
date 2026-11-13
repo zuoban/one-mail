@@ -15,6 +15,13 @@ import (
 	"one-mail/backend/internal/services/telegram"
 )
 
+
+type folderSyncKey struct {
+	accountID uint
+	folder    string
+}
+
+var inFlightFolders sync.Map
 var accountLatency sync.Map // map[uint]time.Duration
 
 func isNetworkError(err error) bool {
@@ -149,6 +156,15 @@ func SyncAccount(accountID uint) (int, error) {
 		return 0, err
 	}
 
+	return SyncAccountWithModel(&account)
+}
+
+func SyncAccountWithModel(account *models.EmailAccount) (int, error) {
+	if account == nil {
+		return 0, fmt.Errorf("account is nil")
+	}
+	db := database.GetDB()
+	accountID := account.ID
 	folders := strings.Split(account.SyncFolders, ",")
 	if len(folders) == 0 {
 		folders = []string{"INBOX"}
@@ -157,7 +173,7 @@ func SyncAccount(accountID uint) (int, error) {
 	pool := imap.GetConnectionPool()
 	maxRetries := 3
 	for retry := 0; retry <= maxRetries; retry++ {
-		client, release, err := pool.AcquireConnection(&account)
+		client, release, err := pool.AcquireConnection(account)
 		if err != nil {
 			return 0, err
 		}
@@ -174,7 +190,7 @@ func SyncAccount(accountID uint) (int, error) {
 				continue
 			}
 
-			newCount, syncErr := syncFolderWithTimeout(db, &account, client, folder, 2*time.Minute)
+			newCount, syncErr := syncFolderWithTimeout(db, account, client, folder, 2*time.Minute)
 			if syncErr != nil {
 				log.Printf("Failed to sync folder %s for account %d: %v", folder, accountID, syncErr)
 				if isNetworkError(syncErr) || strings.Contains(strings.ToLower(syncErr.Error()), "timeout") {
@@ -189,7 +205,7 @@ func SyncAccount(accountID uint) (int, error) {
 		}
 
 		release(healthy)
-		db.Model(&account).Update("last_sync_time", time.Now())
+		db.Model(account).Update("last_sync_time", time.Now())
 
 		if syncedFolders > 0 {
 			log.Printf("Synced account %d, %d new emails", accountID, totalNew)
@@ -218,6 +234,13 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 		return 0, fmt.Errorf("client not connected")
 	}
 
+	lockKey := folderSyncKey{accountID: account.ID, folder: folder}
+	if _, loaded := inFlightFolders.LoadOrStore(lockKey, struct{}{}); loaded {
+		log.Printf("Skip sync due to running lock: account=%d folder=%s", account.ID, folder)
+		return 0, nil
+	}
+	defer inFlightFolders.Delete(lockKey)
+
 	var syncState models.SyncState
 	result := db.Where("account_id = ? AND folder = ?", account.ID, folder).First(&syncState)
 	if result.Error != nil {
@@ -228,24 +251,6 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 		}
 		db.Create(&syncState)
 	}
-
-	if syncState.IsSyncing {
-		staleFor := time.Since(syncState.UpdatedAt)
-		if staleFor > 10*time.Minute {
-			log.Printf("Sync lock stale, reset: account=%d folder=%s stale_for=%v", account.ID, folder, staleFor)
-			db.Model(&syncState).Updates(map[string]interface{}{
-				"is_syncing": false,
-				"error":      "stale sync lock reset",
-			})
-		} else {
-			log.Printf("Skip sync due to running lock: account=%d folder=%s running_for=%v", account.ID, folder, staleFor)
-			return 0, nil
-		}
-	}
-
-	db.Model(&syncState).Update("is_syncing", true)
-	defer db.Model(&syncState).Update("is_syncing", false)
-
 	batchSize := getBatchSize(account.ID, syncState.LastUID == 0)
 	fetchStart := time.Now()
 	emails, maxUID, err := client.FetchEmailsIncremental(folder, syncState.LastUID, batchSize)
@@ -280,17 +285,26 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 			recentIDs = append(recentIDs, emails[i].MessageID)
 		}
 
+		cacheStale := false
 		if len(recentIDs) > 0 {
 			var existingCount int64
 			db.Model(&models.Email{}).
 				Where("account_id = ? AND message_id IN ?", account.ID, recentIDs).
 				Count(&existingCount)
 			if existingCount < int64(len(recentIDs)) {
+				cacheStale = true
 				log.Printf("Bloom filter may be stale, rebuild cache: account=%d folder=%s checked=%d exists=%d", account.ID, folder, len(recentIDs), existingCount)
 				if _, err := rebuildAccountCacheBatched(db, cache, account.ID); err != nil {
 					log.Printf("Failed to rebuild cache for account %d: %v", account.ID, err)
 				}
 			}
+		}
+		if !cacheStale && maxUID > syncState.LastUID {
+			db.Model(&syncState).Updates(map[string]interface{}{
+				"last_uid":       maxUID,
+				"last_sync_time": time.Now(),
+				"error":          "",
+			})
 		}
 		return 0, nil
 	}
@@ -338,7 +352,7 @@ func SyncFolder(db *gorm.DB, account *models.EmailAccount, client *imap.Client, 
 	log.Printf("New emails prepared: account=%d folder=%s new_count=%d", account.ID, folder, len(newEmails))
 
 	if len(newEmails) > 0 {
-		if err := db.Create(&newEmails).Error; err != nil {
+		if err := db.CreateInBatches(&newEmails, 100).Error; err != nil {
 			return 0, err
 		}
 		log.Printf("Inserted new emails: account=%d folder=%s inserted=%d", account.ID, folder, len(newEmails))

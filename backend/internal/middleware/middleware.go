@@ -1,9 +1,12 @@
 package middleware
 
 import (
+	"bytes"
+	"compress/gzip"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"one-mail/backend/config"
 	"one-mail/backend/internal/utils"
@@ -119,4 +122,110 @@ func getAllowedOrigins() []string {
 
 	// 3. 返回空列表，表示允许所有
 	return nil
+}
+
+var gzipBufferPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
+
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		w, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
+		return w
+	},
+}
+
+type gzipResponseWriter struct {
+	gin.ResponseWriter
+	buf        *bytes.Buffer
+	statusCode int
+	wroteCode  bool
+}
+
+func (w *gzipResponseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.wroteCode = true
+}
+
+func (w *gzipResponseWriter) WriteHeaderNow() {}
+
+func (w *gzipResponseWriter) Write(data []byte) (int, error) {
+	return w.buf.Write(data)
+}
+
+func (w *gzipResponseWriter) WriteString(s string) (int, error) {
+	return w.buf.WriteString(s)
+}
+
+func (w *gzipResponseWriter) Status() int {
+	if w.wroteCode {
+		return w.statusCode
+	}
+	return w.ResponseWriter.Status()
+}
+
+func (w *gzipResponseWriter) Size() int {
+	return w.buf.Len()
+}
+
+func GzipMiddleware() gin.HandlerFunc {
+	const minCompressBytes = 1024
+	return func(c *gin.Context) {
+		if !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") ||
+			strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
+			c.Next()
+			return
+		}
+
+		buf := gzipBufferPool.Get().(*bytes.Buffer)
+		buf.Reset()
+		defer gzipBufferPool.Put(buf)
+
+		origWriter := c.Writer
+		gw := &gzipResponseWriter{
+			ResponseWriter: origWriter,
+			buf:            buf,
+			statusCode:     http.StatusOK,
+		}
+		c.Writer = gw
+		defer func() {
+			c.Writer = origWriter
+		}()
+
+		c.Next()
+
+		status := gw.statusCode
+		if !gw.wroteCode {
+			status = http.StatusOK
+		}
+		headers := origWriter.Header()
+		if status == http.StatusNoContent ||
+			status == http.StatusNotModified ||
+			headers.Get("Content-Encoding") != "" ||
+			buf.Len() < minCompressBytes {
+			if gw.wroteCode {
+				origWriter.WriteHeader(status)
+			}
+			if buf.Len() > 0 {
+				_, _ = origWriter.Write(buf.Bytes())
+			}
+			return
+		}
+
+		headers.Set("Content-Encoding", "gzip")
+		headers.Add("Vary", "Accept-Encoding")
+		headers.Del("Content-Length")
+		if gw.wroteCode {
+			origWriter.WriteHeader(status)
+		}
+
+		gz := gzipWriterPool.Get().(*gzip.Writer)
+		gz.Reset(origWriter)
+		_, _ = gz.Write(buf.Bytes())
+		_ = gz.Close()
+		gz.Reset(nil)
+		gzipWriterPool.Put(gz)
+	}
 }

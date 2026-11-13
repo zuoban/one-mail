@@ -276,13 +276,14 @@ func (p *ConnectionPool) ReleaseConnection(accountID uint) {
 }
 
 func (p *ConnectionPool) RemoveConnection(accountID uint) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	var toDisconnect []*Client
 
+	p.mu.Lock()
 	if wrapper, exists := p.connections[accountID]; exists {
 		wrapper.mu.Lock()
 		if wrapper.client != nil {
-			_ = wrapper.client.Disconnect()
+			toDisconnect = append(toDisconnect, wrapper.client)
+			wrapper.client = nil
 		}
 		wrapper.mu.Unlock()
 		delete(p.connections, accountID)
@@ -290,10 +291,15 @@ func (p *ConnectionPool) RemoveConnection(accountID uint) {
 	if extras, exists := p.extraIdle[accountID]; exists {
 		for _, extra := range extras {
 			if extra.client != nil {
-				_ = extra.client.Disconnect()
+				toDisconnect = append(toDisconnect, extra.client)
 			}
 		}
 		delete(p.extraIdle, accountID)
+	}
+	p.mu.Unlock()
+
+	for _, client := range toDisconnect {
+		_ = client.Disconnect()
 	}
 }
 
@@ -307,10 +313,10 @@ func (p *ConnectionPool) startCleanup() {
 }
 
 func (p *ConnectionPool) cleanup() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+	var toDisconnect []*Client
 	now := time.Now()
+
+	p.mu.Lock()
 	for id, wrapper := range p.connections {
 		if wrapper.inUse {
 			continue
@@ -318,7 +324,8 @@ func (p *ConnectionPool) cleanup() {
 		wrapper.mu.Lock()
 		if now.Sub(wrapper.lastUsed) > p.maxIdle {
 			if wrapper.client != nil {
-				_ = wrapper.client.Disconnect()
+				toDisconnect = append(toDisconnect, wrapper.client)
+				wrapper.client = nil
 			}
 			delete(p.connections, id)
 		}
@@ -329,7 +336,7 @@ func (p *ConnectionPool) cleanup() {
 		for _, extra := range extras {
 			if now.Sub(extra.lastUsed) > p.maxIdle {
 				if extra.client != nil {
-					_ = extra.client.Disconnect()
+					toDisconnect = append(toDisconnect, extra.client)
 				}
 			} else {
 				kept = append(kept, extra)
@@ -340,6 +347,11 @@ func (p *ConnectionPool) cleanup() {
 		} else {
 			p.extraIdle[id] = kept
 		}
+	}
+	p.mu.Unlock()
+
+	for _, client := range toDisconnect {
+		_ = client.Disconnect()
 	}
 }
 func (p *ConnectionPool) HealthCheck(accountID uint) error {

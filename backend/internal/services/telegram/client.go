@@ -23,6 +23,9 @@ type Client struct {
 var (
 	globalClient      *Client
 	clientOnce        sync.Once
+	configCacheMu     sync.RWMutex
+	cachedConfig      *models.TelegramConfig
+	configCached      bool
 	styleTagRegex     = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
 	multiNewlineRegex = regexp.MustCompile(`\n\s*\n\s*\n+`)
 	entityRegex       = regexp.MustCompile(`&#(\d+);`)
@@ -38,13 +41,35 @@ func GetClient() *Client {
 	return globalClient
 }
 
+// InvalidateConfigCache clears the in-memory Telegram config cache so the next send reloads from DB.
+func InvalidateConfigCache() {
+	configCacheMu.Lock()
+	cachedConfig = nil
+	configCached = false
+	configCacheMu.Unlock()
+}
+
 func getConfig() *models.TelegramConfig {
+	configCacheMu.RLock()
+	if configCached {
+		cfg := cachedConfig
+		configCacheMu.RUnlock()
+		return cfg
+	}
+	configCacheMu.RUnlock()
+
 	db := database.GetDB()
 	var cfg models.TelegramConfig
 	if err := db.First(&cfg).Error; err != nil {
 		return nil
 	}
-	return &cfg
+
+	configCacheMu.Lock()
+	cfgCopy := cfg
+	cachedConfig = &cfgCopy
+	configCached = true
+	configCacheMu.Unlock()
+	return &cfgCopy
 }
 
 func (c *Client) IsEnabled() bool {

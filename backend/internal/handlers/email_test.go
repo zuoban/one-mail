@@ -150,4 +150,27 @@ func TestListEmails_CursorUnreadOwnershipAndSearch(t *testing.T) {
 	if len(searchResp.Data) != 1 || searchResp.Data[0].Subject != "电子发票通知" {
 		t.Fatalf("expected 1 search result for 发票, got %+v", searchResp.Data)
 	}
+
+	// 5. Single-page total shortcut and out-of-range page fallback
+	req = httptest.NewRequest(http.MethodGet, "/emails?page=1&page_size=10", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var singleResp listResp
+	if err := json.Unmarshal(w.Body.Bytes(), &singleResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(singleResp.Data) != 4 || singleResp.Total != 4 || singleResp.HasMore {
+		t.Fatalf("expected single-page total=4 hasMore=false, got len=%d total=%d hasMore=%v", len(singleResp.Data), singleResp.Total, singleResp.HasMore)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/emails?page=3&page_size=10", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var emptyPageResp listResp
+	if err := json.Unmarshal(w.Body.Bytes(), &emptyPageResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(emptyPageResp.Data) != 0 || emptyPageResp.Total != 4 || emptyPageResp.HasMore {
+		t.Fatalf("expected empty page 3 with total=4, got len=%d total=%d hasMore=%v", len(emptyPageResp.Data), emptyPageResp.Total, emptyPageResp.HasMore)
+	}
 }
