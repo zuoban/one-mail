@@ -112,7 +112,7 @@ func (s *MailService) Snapshot(ctx context.Context, id uint) (*models.Email, *mo
 		}
 		return nil, nil, failure(Internal, "failed to load account", err)
 	}
-	if email.IdentityVersion != account.IdentityVersion || (account.UIDValidity != 0 && email.UIDValidity != account.UIDValidity) {
+	if email.IdentityVersion != account.IdentityVersion || email.UIDValidity != account.UIDValidity {
 		return nil, nil, failure(Conflict, "mailbox identity changed; refresh the email list before retrying", mail.ErrAccountChanged)
 	}
 	return &email, &account, nil
@@ -154,7 +154,7 @@ func (s *MailService) cacheEmailBody(ctx context.Context, account *models.EmailA
 		if err := tx.First(&current, account.ID).Error; err != nil {
 			return err
 		}
-		if current.ConfigVersion != account.ConfigVersion || current.IdentityVersion != email.IdentityVersion || (current.UIDValidity != 0 && current.UIDValidity != email.UIDValidity) {
+		if current.ConfigVersion != account.ConfigVersion || current.IdentityVersion != email.IdentityVersion || current.UIDValidity != email.UIDValidity {
 			return mail.ErrAccountChanged
 		}
 		result := tx.Model(&models.Email{}).

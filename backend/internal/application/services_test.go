@@ -214,7 +214,7 @@ func TestCustomEndpointEditsClearCacheAndAdvanceVersionsAtomically(t *testing.T)
 }
 
 func TestBodyCommitRejectsChangedAccountAndEvictedMessage(t *testing.T) {
-	for _, change := range []string{"identity", "password", "deleted", "evicted", "uidvalidity"} {
+	for _, change := range []string{"identity", "password", "deleted", "evicted", "uidvalidity", "uidvalidity_missing"} {
 		t.Run(change, func(t *testing.T) {
 			db, pool := applicationTestDB(t)
 			service := NewMailService(db, pool, false)
@@ -234,6 +234,8 @@ func TestBodyCommitRejectsChangedAccountAndEvictedMessage(t *testing.T) {
 				err = db.Model(&account).Update("config_version", 1).Error
 			case "uidvalidity":
 				err = db.Model(&account).Update("uid_validity", 10).Error
+			case "uidvalidity_missing":
+				err = db.Model(&account).Update("uid_validity", 0).Error
 			case "deleted":
 				err = db.Delete(&models.EmailAccount{}, account.ID).Error
 			case "evicted":

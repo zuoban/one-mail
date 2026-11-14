@@ -107,20 +107,34 @@ func TestPasswordRotationPreservesCachedBody(t *testing.T) {
 }
 
 func TestCachedBodyRejectsDifferentMailboxVersion(t *testing.T) {
-	db := setupEmailHandlerTestDB(t)
-	account := models.EmailAccount{IdentityVersion: 1, UIDValidity: 9}
-	if err := db.Create(&account).Error; err != nil {
-		t.Fatal(err)
-	}
-	email := models.Email{AccountID: account.ID, UID: 1, UIDValidity: 9, MessageID: "old", BodyFetched: true, BodyText: "old mailbox body"}
-	if err := db.Create(&email).Error; err != nil {
-		t.Fatal(err)
-	}
-	r := gin.New()
-	r.GET("/emails/:id", newTestEmailHandler(t, db).GetEmail)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/emails/%d", email.ID), nil))
-	if w.Code != http.StatusConflict || strings.Contains(w.Body.String(), email.BodyText) {
-		t.Fatalf("stale body exposed: %d %s", w.Code, w.Body.String())
+	for _, tc := range []struct {
+		name           string
+		accountVersion uint64
+		emailVersion   uint64
+		accountEpoch   uint32
+		emailEpoch     uint32
+	}{
+		{"identity changed", 1, 0, 9, 9},
+		{"uidvalidity changed", 0, 0, 10, 9},
+		{"account uidvalidity missing", 0, 0, 0, 9},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupEmailHandlerTestDB(t)
+			account := models.EmailAccount{IdentityVersion: tc.accountVersion, UIDValidity: tc.accountEpoch}
+			if err := db.Create(&account).Error; err != nil {
+				t.Fatal(err)
+			}
+			email := models.Email{AccountID: account.ID, UID: 1, UIDValidity: tc.emailEpoch, IdentityVersion: tc.emailVersion, MessageID: "cached", BodyFetched: true, BodyText: "cached mailbox body"}
+			if err := db.Create(&email).Error; err != nil {
+				t.Fatal(err)
+			}
+			r := gin.New()
+			r.GET("/emails/:id", newTestEmailHandler(t, db).GetEmail)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/emails/%d", email.ID), nil))
+			if w.Code != http.StatusConflict || strings.Contains(w.Body.String(), email.BodyText) {
+				t.Fatalf("stale body exposed: %d %s", w.Code, w.Body.String())
+			}
+		})
 	}
 }
