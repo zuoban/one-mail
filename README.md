@@ -261,6 +261,8 @@ mail.example.com {
 - `POST /api/accounts/:id/test` - 测试账户连接
 - `POST /api/accounts/:id/refresh` - 拉取该账户最近 50 封邮件
 
+QQ 邮箱选择「QQ 邮箱」服务商，登录用户名填写完整邮箱地址，IMAP 使用 `imap.qq.com:993`（TLS）。需先在 QQ 邮箱设置中开启 IMAP 服务，并使用授权码作为密码。客户端会等待服务器欢迎消息后再发送登录命令，避免 QQ 忽略提前发送的登录请求而超时。
+
 ### 邮件
 - `GET /api/emails` - 获取最近 50 封邮件，支持发件人、主题搜索及邮箱筛选
 - `GET /api/emails/:id` - 获取正文，本地未缓存时通过 IMAP 按需下载并落库

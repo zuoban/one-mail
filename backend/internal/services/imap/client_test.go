@@ -425,6 +425,61 @@ func TestIsAuthError_UsesIMAPStatus(t *testing.T) {
 	}
 }
 
+func TestLoginContext_WaitsForGreeting(t *testing.T) {
+	local, remote := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer remote.Close()
+		reader := bufio.NewReader(remote)
+		_ = remote.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+		if line, err := reader.ReadString('\n'); err == nil {
+			tag, _, _ := strings.Cut(line, " ")
+			_, _ = fmt.Fprintf(remote, "%s NO LOGIN before greeting\r\n", tag)
+			return
+		} else if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
+			return
+		}
+		_ = remote.SetReadDeadline(time.Time{})
+		if _, err := fmt.Fprint(remote, "* OK [CAPABILITY IMAP4rev1] QQ ready\r\n"); err != nil {
+			return
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+		tag, command, _ := strings.Cut(strings.TrimSpace(line), " ")
+		if !strings.HasPrefix(command, "LOGIN ") {
+			t.Errorf("unexpected login command: %s", command)
+			return
+		}
+		_, _ = fmt.Fprintf(remote, "%s OK [CAPABILITY IMAP4rev1] logged in\r\n", tag)
+		_, _ = io.Copy(io.Discard, remote)
+	}()
+	conn := imapclient.New(local, nil)
+	t.Cleanup(func() {
+		_ = conn.Close()
+		<-done
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := loginContext(ctx, conn, "user", "password"); err != nil {
+		t.Fatalf("server requiring greeting before LOGIN rejected login: %v", err)
+	}
+}
+
+func TestLoginContext_CancelsStalledGreeting(t *testing.T) {
+	local, remote := net.Pipe()
+	defer remote.Close()
+	conn := imapclient.New(local, nil)
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := loginContext(ctx, conn, "user", "password"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stalled greeting lost cancellation: %v", err)
+	}
+}
+
 func TestLoginContext_PreservesServerAndTransportErrors(t *testing.T) {
 	for _, tt := range []struct {
 		name     string

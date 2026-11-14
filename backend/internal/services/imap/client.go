@@ -185,6 +185,12 @@ func (c *Client) connectContext(ctx context.Context) error {
 func loginContext(ctx context.Context, conn *imapclient.Client, username, password string) error {
 	loginDone := make(chan error, 1)
 	go func() {
+		// QQ ignores LOGIN sent before its greeting, leaving the command pending.
+		// Keep the greeting wait inside the cancellable login operation.
+		if err := conn.WaitGreeting(); err != nil {
+			loginDone <- err
+			return
+		}
 		loginDone <- conn.Login(username, password).Wait()
 	}()
 
