@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import EmailBody from '../src/components/EmailBody'
 import { emailDocument, sanitizeEmailHtml } from '../src/mail/sanitize'
+import { ReadingPreferencesProvider } from '../src/context/ReadingPreferencesContext'
 
 function parsed(html: string) { return new DOMParser().parseFromString(html, 'text/html') }
 
@@ -46,9 +47,9 @@ describe('isolated HTML mail', () => {
     expect(policy).toContain('img-src https: http: data:')
   })
 
-  it('requires explicit image consent in an opaque sandbox and resets consent for another mail', () => {
+  it('loads remote images by default in an opaque sandbox without exposing active content or session credentials', () => {
     localStorage.setItem('token', 'private-session-secret')
-    const { rerender } = render(<EmailBody key={1} html={attack} light />)
+    render(<EmailBody key={1} html={attack} light />, { wrapper: ReadingPreferencesProvider })
     const frame = screen.getByTitle<HTMLIFrameElement>('邮件正文')
     const permissions = frame.getAttribute('sandbox')?.split(' ')
     expect(permissions).not.toContain('allow-scripts')
@@ -56,10 +57,26 @@ describe('isolated HTML mail', () => {
     expect(permissions).not.toContain('allow-forms')
     expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer')
     expect(frame.srcdoc).not.toContain('private-session-secret')
+    const doc = parsed(frame.srcdoc)
+    expect(doc.querySelector('img')?.getAttribute('src')).toBe('https://tracker.example/pixel')
+    expect(doc.body.querySelector('script,iframe,form,input,object,embed,svg,style,link')).toBeNull()
+    expect(doc.querySelector('img')?.hasAttribute('onerror')).toBe(false)
+    expect(screen.queryByRole('button', { name: '加载此邮件的远程图片' })).toBeNull()
+  })
+
+  it('keeps temporary image permission scoped to one email when the saved preference blocks images', () => {
+    localStorage.setItem('blockRemoteImages', 'true')
+    const { rerender } = render(<EmailBody key={1} html={attack} light />, { wrapper: ReadingPreferencesProvider })
+    const frame = screen.getByTitle<HTMLIFrameElement>('邮件正文')
     expect(parsed(frame.srcdoc).querySelector('img')?.hasAttribute('src')).toBe(false)
+    expect(frame.srcdoc).toContain('img-src data:;')
     fireEvent.click(screen.getByRole('button', { name: '加载此邮件的远程图片' }))
     expect(parsed(frame.srcdoc).querySelector('img')?.getAttribute('src')).toBe('https://tracker.example/pixel')
+    expect(localStorage.getItem('blockRemoteImages')).toBe('true')
     rerender(<EmailBody key={2} html={attack} light />)
+    expect(parsed(screen.getByTitle<HTMLIFrameElement>('邮件正文').srcdoc).querySelector('img')?.hasAttribute('src')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '加载此邮件的远程图片' }))
+    fireEvent.click(screen.getByRole('button', { name: '阻止远程图片' }))
     expect(parsed(screen.getByTitle<HTMLIFrameElement>('邮件正文').srcdoc).querySelector('img')?.hasAttribute('src')).toBe(false)
   })
 })

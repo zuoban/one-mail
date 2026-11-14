@@ -2,6 +2,7 @@ import { Suspense, lazy } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { ThemeProvider } from './context/ThemeContext'
+import { ReadingPreferencesProvider } from './context/ReadingPreferencesContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 import MailProvider from './mail/MailProvider'
@@ -32,7 +33,7 @@ function App() {
                 path="/"
                 element={
                   <ProtectedRoute>
-                    <MailProvider><Layout /></MailProvider>
+                    <ReadingPreferencesProvider><MailProvider><Layout /></MailProvider></ReadingPreferencesProvider>
                   </ProtectedRoute>
                 }
               >

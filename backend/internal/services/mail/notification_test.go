@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -94,5 +95,49 @@ func TestInitialImportAndDisabledNotificationsDoNotQueueHistory(t *testing.T) {
 	var count int64
 	if err := db.Model(&models.NotificationTask{}).Count(&count).Error; err != nil || count != 0 {
 		t.Fatalf("historical or disabled notification queued: count=%d err=%v", count, err)
+	}
+}
+
+func TestExpandedWindowBackfillDoesNotNotifyHistoricalUIDs(t *testing.T) {
+	db := setupFetcherTestDB(t)
+	account := models.EmailAccount{Email: "backfill@example.com"}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.TelegramConfig{ID: 1, Enabled: true, BotToken: "token", ChatID: "chat"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	batch := func(first, last int) []*imap.EmailSummary {
+		var result []*imap.EmailSummary
+		for uid := first; uid <= last; uid++ {
+			// Dates deliberately oppose UID order: arrival detection uses UID.
+			result = append(result, &imap.EmailSummary{UID: uint(uid), Date: base.Add(-time.Duration(uid) * time.Minute)})
+		}
+		return result
+	}
+	if count, err := ReconcileLatestEmails(db, &account, DefaultFolder, 7, batch(101, 150), 50); err != nil || count != 50 {
+		t.Fatalf("initial import: count=%d err=%v", count, err)
+	}
+	if count, err := ReconcileLatestEmails(db, &account, DefaultFolder, 7, batch(51, 150), 100); err != nil || count != 50 {
+		t.Fatalf("historical backfill: count=%d err=%v", count, err)
+	}
+	var tasks []models.NotificationTask
+	if err := db.Find(&tasks).Error; err != nil || len(tasks) != 0 {
+		t.Fatalf("backfill queued historical notifications: %+v err=%v", tasks, err)
+	}
+	// Another expansion includes both historical UIDs and one actual new arrival.
+	if count, err := ReconcileLatestEmails(db, &account, DefaultFolder, 7, batch(1, 151), 200); err != nil || count != 51 {
+		t.Fatalf("arrival with expanded window: count=%d err=%v", count, err)
+	}
+	if _, err := ReconcileLatestEmails(db, &account, DefaultFolder, 7, batch(1, 151), 200); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Find(&tasks).Error; err != nil || len(tasks) != 1 {
+		t.Fatalf("expected exactly one arrival notification: %+v err=%v", tasks, err)
+	}
+	var delivered models.Email
+	if err := json.Unmarshal([]byte(tasks[0].EmailJSON), &delivered); err != nil || delivered.UID != 151 {
+		t.Fatalf("wrong notification payload: %+v err=%v", delivered, err)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	_ "github.com/emersion/go-message/charset"
 
 	"one-mail/backend/internal/credentials"
+	"one-mail/backend/internal/mailwindow"
 	"one-mail/backend/internal/models"
 )
 
@@ -337,8 +338,9 @@ func computeLatestSeqRange(total uint32, limit int) (uint32, uint32, bool) {
 	if total == 0 {
 		return 0, 0, false
 	}
-	if limit <= 0 {
-		limit = 50
+	limit, err := mailwindow.Resolve(limit)
+	if err != nil {
+		return 0, 0, false
 	}
 	start := uint32(1)
 	if total > uint32(limit) {
@@ -348,6 +350,10 @@ func computeLatestSeqRange(total uint32, limit int) (uint32, uint32, bool) {
 }
 
 func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int) ([]*EmailSummary, uint32, error) {
+	limit, err := mailwindow.Resolve(limit)
+	if err != nil {
+		return nil, 0, err
+	}
 	finish, err := c.commandContext(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -355,9 +361,6 @@ func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int
 	defer finish()
 	if folder == "" {
 		folder = "INBOX"
-	}
-	if limit <= 0 || limit > 50 {
-		limit = 50
 	}
 
 	var messages []*imapclient.FetchMessageBuffer

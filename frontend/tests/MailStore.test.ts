@@ -139,7 +139,7 @@ describe('mail query and detail lifecycle', () => {
     expect(api.get).toHaveBeenCalledTimes(3)
   })
 
-  it('preserves cached bodies omitted by searches and combined latest-50 lists', async () => {
+  it('preserves cached bodies omitted by searches and combined limited lists', async () => {
     const { store, api } = setup()
     await store.open(summary)
     api.list.mockResolvedValue({ data: [], total: 0 })
@@ -150,6 +150,24 @@ describe('mail query and detail lifecycle', () => {
     await settle()
     await store.open(summary)
     expect(api.get).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains bodies outside a full smaller window and refreshes the configured larger window', async () => {
+    const { store, api } = setup()
+    await store.open(summary)
+    const newer = Array.from({ length: 25 }, (_, index) => ({ ...summary, id: index + 2 }))
+    api.list.mockResolvedValue({ data: newer, total: newer.length })
+    store.setQuery({ account_id: 1, limit: 25 })
+    await settle()
+    api.list.mockResolvedValue({ data: [summary], total: 1 })
+    store.setQuery({ account_id: 1, limit: 100 })
+    await settle()
+    await store.open(summary)
+    expect(store.getSnapshot().selectedDetail?.body_html).toBe(detail.body_html)
+    expect(api.get).toHaveBeenCalledTimes(1)
+    await store.refresh(1)
+    expect(api.refresh).toHaveBeenCalledExactlyOnceWith(1, 100)
+    expect(api.list.mock.calls.at(-1)?.[0]).toEqual({ account_id: 1, limit: 100 })
   })
 
   it('keeps the previous list and exposes retry after a list failure', async () => {

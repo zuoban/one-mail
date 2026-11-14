@@ -6,10 +6,10 @@ export default function useMail(query: MailQuery) {
   const store = useContext(MailContext)
   if (!store) throw new Error('useMail must be used within MailProvider')
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot)
-  const { search, account_id } = query
+  const { search, account_id, limit } = query
   useEffect(() => {
-    store.setQuery({ search, account_id })
+    store.setQuery({ search, account_id, limit })
     return store.closeDetail
-  }, [store, search, account_id])
+  }, [store, search, account_id, limit])
   return { ...state, store }
 }

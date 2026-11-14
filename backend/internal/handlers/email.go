@@ -42,12 +42,13 @@ func (h *EmailHandler) GetEmail(c *gin.Context) {
 func (h *EmailHandler) RefreshEmails(c *gin.Context) {
 	var query struct {
 		AccountID uint `form:"account_id"`
+		Limit     int  `form:"limit"`
 	}
 	if err := c.ShouldBindQuery(&query); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid refresh query"})
 		return
 	}
-	summary, err := h.service.Refresh(c.Request.Context(), query.AccountID)
+	summary, err := h.service.Refresh(c.Request.Context(), query.AccountID, query.Limit)
 	if err != nil {
 		kind, message := application.ErrorDetails(err)
 		if kind == application.Upstream {
@@ -69,7 +70,14 @@ func (h *EmailHandler) RefreshAccountEmails(c *gin.Context) {
 	if !ok {
 		return
 	}
-	count, err := h.service.RefreshAccount(c.Request.Context(), id)
+	var query struct {
+		Limit int `form:"limit"`
+	}
+	if err := c.ShouldBindQuery(&query); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid refresh query"})
+		return
+	}
+	count, err := h.service.RefreshAccount(c.Request.Context(), id, query.Limit)
 	if err != nil {
 		respondError(c, err)
 		return

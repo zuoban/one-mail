@@ -12,12 +12,12 @@ import (
 
 	"gorm.io/gorm"
 
+	"one-mail/backend/internal/mailwindow"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
 )
 
 const (
-	MaxLatestEmails   = 50
 	DefaultFolder     = "INBOX"
 	refreshTimeout    = 20 * time.Second
 	refreshAllTimeout = 35 * time.Second
@@ -78,6 +78,10 @@ func lockAccount(ctx context.Context, id uint) (func(), error) {
 }
 
 func RefreshAccount(ctx context.Context, db *gorm.DB, pool *imap.ConnectionPool, account *models.EmailAccount, limit int) (newCount int, resultErr error) {
+	limit, err := mailwindow.Resolve(limit)
+	if err != nil {
+		return 0, err
+	}
 	if account == nil {
 		return 0, errors.New("account is nil")
 	}
@@ -129,8 +133,9 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 	if epoch == 0 {
 		return 0, imap.ErrUIDValidityChanged
 	}
-	if limit <= 0 || limit > MaxLatestEmails {
-		limit = MaxLatestEmails
+	limit, err := mailwindow.Resolve(limit)
+	if err != nil {
+		return 0, err
 	}
 	if folder == "" {
 		folder = DefaultFolder
@@ -170,7 +175,7 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 	}
 	var newEmails []models.Email
 	syncTime := time.Now()
-	err := db.Transaction(func(tx *gorm.DB) error {
+	err = db.Transaction(func(tx *gorm.DB) error {
 		var current models.EmailAccount
 		if err := tx.First(&current, account.ID).Error; err != nil {
 			return err
@@ -187,9 +192,11 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 		// UIDVALIDITY changes establish a new baseline rather than replaying history.
 		notifyNew := !current.LastSyncTime.IsZero() && current.UIDValidity == epoch
 		byUID := make(map[uint]*models.Email, len(existing))
+		var maxExistingUID uint
 		for i := range existing {
 			row := &existing[i]
 			if row.UIDValidity == epoch && row.IdentityVersion == account.IdentityVersion {
+				maxExistingUID = max(maxExistingUID, row.UID)
 				if _, duplicate := byUID[row.UID]; !duplicate {
 					byUID[row.UID] = row
 				}
@@ -218,7 +225,7 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 			})
 		}
 		if len(newEmails) > 0 {
-			if err := tx.CreateInBatches(&newEmails, MaxLatestEmails).Error; err != nil {
+			if err := tx.CreateInBatches(&newEmails, mailwindow.Max).Error; err != nil {
 				return err
 			}
 			for _, email := range newEmails {
@@ -233,6 +240,11 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 				if cfg.Enabled && cfg.BotToken != "" && cfg.ChatID != "" {
 					tasks := make([]models.NotificationTask, 0, len(newEmails))
 					for _, email := range newEmails {
+						// Older UIDs appear when the requested window grows; only
+						// UIDs above the same-epoch baseline are new arrivals.
+						if email.UID <= maxExistingUID {
+							continue
+						}
 						payload, err := json.Marshal(email)
 						if err != nil {
 							return err
@@ -243,8 +255,10 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 							AccountEmail: current.Email, EmailJSON: string(payload), NextAttemptAt: syncTime,
 						})
 					}
-					if err := tx.CreateInBatches(&tasks, MaxLatestEmails).Error; err != nil {
-						return err
+					if len(tasks) > 0 {
+						if err := tx.CreateInBatches(&tasks, mailwindow.Max).Error; err != nil {
+							return err
+						}
 					}
 				}
 			}

@@ -118,7 +118,7 @@ export const accountApi = {
     api.put<{ data: EmailAccount }>(`/accounts/${id}`, data).then(r => r.data),
   delete: (id: number) => api.delete(`/accounts/${id}`),
   test: (id: number) => api.post(`/accounts/${id}/test`),
-  refresh: (id: number) => api.post<RefreshEmailsResponse>(`/accounts/${id}/refresh`, null, { timeout: 45000 }).then(r => r.data),
+  refresh: (id: number, limit?: number) => api.post<RefreshEmailsResponse>(`/accounts/${id}/refresh`, null, { params: { limit }, timeout: 45000 }).then(r => r.data),
 }
 
 export const emailApi = {
@@ -126,12 +126,13 @@ export const emailApi = {
     params?: {
       account_id?: number
       search?: string
+      limit?: number
     },
     signal?: AbortSignal,
   ) => api.get<EmailListResponse>('/emails', { params, signal }).then(r => r.data),
-  refresh: (accountId?: number) =>
+  refresh: (accountId?: number, limit?: number) =>
     api.post<RefreshEmailsResponse>('/emails/refresh', null, {
-      params: accountId ? { account_id: accountId } : undefined,
+      params: { account_id: accountId, limit },
       timeout: 45000,
     }).then(r => r.data),
   get: (id: number, signal?: AbortSignal) => api.get<{ data: EmailDetail }>(`/emails/${id}`, { signal }).then(r => r.data),

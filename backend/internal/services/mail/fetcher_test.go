@@ -35,7 +35,7 @@ func setupFetcherTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func TestReconcileLatestEmails_CapsAt50AndEvictsBodies(t *testing.T) {
+func TestReconcileLatestEmails_Default50AndEvictsBodies(t *testing.T) {
 	db := setupFetcherTestDB(t)
 	account := models.EmailAccount{Email: "retention@example.com"}
 	other := models.EmailAccount{Email: "other@example.com"}
@@ -63,8 +63,8 @@ func TestReconcileLatestEmails_CapsAt50AndEvictsBodies(t *testing.T) {
 		}
 		return summaries
 	}
-	if inserted, err := ReconcileLatestEmails(db, &account, DefaultFolder, 1, batch(1, 60), 100); err != nil || inserted != 50 {
-		t.Fatalf("oversized refresh count=%d err=%v", inserted, err)
+	if inserted, err := ReconcileLatestEmails(db, &account, DefaultFolder, 1, batch(1, 60), 0); err != nil || inserted != 50 {
+		t.Fatalf("default refresh count=%d err=%v", inserted, err)
 	}
 	var evicted, retained models.Email
 	if err := db.Where("account_id = ? AND folder = ? AND uid = ?", account.ID, DefaultFolder, 11).First(&evicted).Error; err != nil {
@@ -353,5 +353,48 @@ func TestRefreshAccount_RemoteFailurePreservesCache(t *testing.T) {
 	}
 	if current.UIDValidity != 10 || account.UIDValidity != 10 || !current.LastSyncTime.Equal(previousSync) || !account.LastSyncTime.Equal(previousSync) {
 		t.Fatalf("remote failure advanced account: %+v %+v", current, account)
+	}
+}
+
+func TestReconcileLatestEmails_ExpandedWindowPreservesCachedBodies(t *testing.T) {
+	db := setupFetcherTestDB(t)
+	account := models.EmailAccount{Email: "expanded@example.com"}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	batch := func(first, last int) []*imap.EmailSummary {
+		var result []*imap.EmailSummary
+		for uid := first; uid <= last; uid++ {
+			result = append(result, &imap.EmailSummary{UID: uint(uid), Date: base.Add(time.Duration(uid) * time.Minute)})
+		}
+		return result
+	}
+	if count, err := ReconcileLatestEmails(db, &account, DefaultFolder, 7, batch(101, 200), 100); err != nil || count != 100 {
+		t.Fatalf("100-message refresh: count=%d err=%v", count, err)
+	}
+	var cached models.Email
+	if err := db.Where("account_id = ? AND uid = ?", account.ID, 101).First(&cached).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&cached).Updates(map[string]interface{}{"body_fetched": true, "body_text": "cached plain", "body_html": "<p>cached</p>"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count, err := ReconcileLatestEmails(db, &account, DefaultFolder, 7, batch(1, 200), 200); err != nil || count != 100 {
+		t.Fatalf("200-message backfill: count=%d err=%v", count, err)
+	}
+	if count, err := ReconcileLatestEmails(db, &account, DefaultFolder, 7, batch(2, 201), 200); err != nil || count != 1 {
+		t.Fatalf("200-message sliding refresh: count=%d err=%v", count, err)
+	}
+	var stored []models.Email
+	if err := db.Where("account_id = ?", account.ID).Order("uid").Find(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 200 || stored[0].UID != 2 || stored[199].UID != 201 {
+		t.Fatalf("configured window lost: count=%d", len(stored))
+	}
+	var retained models.Email
+	if err := db.First(&retained, cached.ID).Error; err != nil || retained.UID != 101 || !retained.BodyFetched || retained.BodyText != "cached plain" || retained.BodyHTML != "<p>cached</p>" {
+		t.Fatalf("matching cached identity/body lost: %+v err=%v", retained, err)
 	}
 }

@@ -1,6 +1,7 @@
 import { emailApi, type EmailDetail, type EmailSummary } from '../api'
+import { DEFAULT_EMAIL_LIMIT } from './limits'
 
-export interface MailQuery { search?: string; account_id?: number }
+export interface MailQuery { search?: string; account_id?: number; limit?: number }
 export interface MailNotice { message: string; type: 'success' | 'error' }
 export type MailReloadResult = 'updated' | 'failed' | 'cancelled'
 interface MailState {
@@ -84,7 +85,7 @@ export class MailStore {
     void this.reload()
   }
   refresh = async (accountId?: number) => {
-    const response = await this.api.refresh(accountId)
+    const response = await this.api.refresh(accountId, this.query.limit)
     const listResult = this.active() ? await this.reload() : 'cancelled'
     return { ...response, listUpdated: listResult === 'updated' }
   }
@@ -98,9 +99,9 @@ export class MailStore {
       const response = await this.api.list(this.query, controller.signal)
       if (!this.active() || controller.signal.aborted || this.listRequest !== controller) return 'cancelled'
       const emails = response.data || []
-      // A combined list contains only the latest 50 across all accounts, so its
-      // omissions cannot tell us which other accounts still retain a message.
-      if (!this.query.search && this.query.account_id !== undefined) {
+      // Full or combined windows can omit cached messages that still exist.
+      // Only an incomplete, unsearched account window is authoritative.
+      if (!this.query.search && this.query.account_id !== undefined && emails.length < (this.query.limit ?? DEFAULT_EMAIL_LIMIT)) {
         const retained = new Set(emails.map(email => email.id))
         for (const [id, detail] of this.cache) {
           if (detail.account_id === this.query.account_id && !retained.has(id)) this.dropCached(id)

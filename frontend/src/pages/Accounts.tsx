@@ -284,7 +284,7 @@ export default function Accounts() {
         <div>
           <h1>邮箱账户</h1>
           <p>
-            管理已接入的 IMAP 邮箱，按需刷新拉取最近 50 封邮件
+            管理已接入的 IMAP 邮箱，按需刷新拉取最新邮件
           </p>
         </div>
         <button

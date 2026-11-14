@@ -135,7 +135,7 @@ func TestListEmails_Latest50SharedAccountsAndSearch(t *testing.T) {
 		t.Fatalf("expected 1 search result for 发票, got %+v", searchResp.Data)
 	}
 
-	// 5. Caps at latest 50 emails even when DB contains > 50 rows
+	// Omitting the count keeps the default window at 50.
 	extra := make([]models.Email, 0, 55)
 	for i := 1; i <= 55; i++ {
 		extra = append(extra, models.Email{
@@ -165,5 +165,55 @@ func TestListEmails_Latest50SharedAccountsAndSearch(t *testing.T) {
 	}
 	if cappedResp.Data[0].Subject != "Bulk 55" || cappedResp.Data[49].Subject != "Bulk 6" {
 		t.Fatalf("expected Bulk 55..Bulk 6, got first=%q last=%q", cappedResp.Data[0].Subject, cappedResp.Data[49].Subject)
+	}
+	for _, tc := range []struct {
+		query string
+		want  int
+	}{
+		{"limit=0", 50},
+		{"limit=25", 25},
+		{"limit=100", 60},
+		{"limit=200", 60},
+		{fmt.Sprintf("limit=100&account_id=%d", acc1.ID), 59},
+		{fmt.Sprintf("limit=100&account_id=%d&search=Bulk", acc1.ID), 55},
+	} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/emails?"+tc.query, nil))
+		var result listResp
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != http.StatusOK || len(result.Data) != tc.want || result.Total != tc.want {
+			t.Fatalf("%s: status=%d result=%+v", tc.query, w.Code, result)
+		}
+	}
+	var remaining int64
+	if err := db.Model(&models.Email{}).Count(&remaining).Error; err != nil || remaining != 60 {
+		t.Fatalf("list changed cached window: count=%d err=%v", remaining, err)
+	}
+}
+
+func TestEmailEndpointsRejectInvalidLimits(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := newTestEmailHandler(t, setupEmailHandlerTestDB(t))
+	r := gin.New()
+	r.GET("/emails", handler.ListEmails)
+	r.POST("/emails/refresh", handler.RefreshEmails)
+	r.POST("/accounts/:id/refresh", handler.RefreshAccountEmails)
+	for _, endpoint := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/emails"},
+		{http.MethodPost, "/emails/refresh"},
+		{http.MethodPost, "/accounts/1/refresh"},
+	} {
+		for _, limit := range []string{"-1", "201", "1000", "abc", "1.5", "99999999999999999999999999999999"} {
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(endpoint.method, endpoint.path+"?limit="+limit, nil))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("%s %s limit=%s: status=%d body=%s", endpoint.method, endpoint.path, limit, w.Code, w.Body.String())
+			}
+		}
 	}
 }

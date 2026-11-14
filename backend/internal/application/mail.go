@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"one-mail/backend/internal/mailwindow"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
 	"one-mail/backend/internal/services/mail"
@@ -40,6 +41,7 @@ type ListEmails struct {
 	AccountID uint   `form:"account_id"`
 	Folder    string `form:"folder"`
 	Search    string `form:"search"`
+	Limit     int    `form:"limit"`
 }
 
 type EmailListItem struct {
@@ -56,6 +58,10 @@ type EmailListItem struct {
 }
 
 func (s *MailService) List(ctx context.Context, query ListEmails) ([]EmailListItem, error) {
+	limit, err := mailwindow.Resolve(query.Limit)
+	if err != nil {
+		return nil, failure(Invalid, err.Error(), err)
+	}
 	db := s.db.WithContext(ctx)
 	accounts := db.Model(&models.EmailAccount{}).Select("id")
 	if query.AccountID > 0 {
@@ -80,7 +86,7 @@ func (s *MailService) List(ctx context.Context, query ListEmails) ([]EmailListIt
 	emails := make([]EmailListItem, 0)
 	if err := q.Select("id, created_at, account_id, `from`, from_name, `to`, subject, date, has_attachment, folder").
 		Order("date DESC, id DESC").
-		Limit(mail.MaxLatestEmails).
+		Limit(limit).
 		Find(&emails).Error; err != nil {
 		return nil, failure(Internal, "failed to load emails", err)
 	}
@@ -123,7 +129,7 @@ func (s *MailService) Get(ctx context.Context, id uint) (*models.Email, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if email.UIDValidity == 0 {
-		if _, err := s.refreshAccount(ctx, s.db, s.pool, account, mail.MaxLatestEmails); err != nil {
+		if _, err := s.refreshAccount(ctx, s.db, s.pool, account, mailwindow.Max); err != nil {
 			return nil, failure(Upstream, "unable to refresh mailbox identity; retry loading the message", err)
 		}
 		email, account, err = s.Snapshot(ctx, id)
@@ -177,7 +183,11 @@ func (s *MailService) cacheEmailBody(ctx context.Context, account *models.EmailA
 	})
 }
 
-func (s *MailService) RefreshAccount(ctx context.Context, id uint) (int, error) {
+func (s *MailService) RefreshAccount(ctx context.Context, id uint, limit int) (int, error) {
+	limit, err := mailwindow.Resolve(limit)
+	if err != nil {
+		return 0, failure(Invalid, err.Error(), err)
+	}
 	var account models.EmailAccount
 	if err := s.db.WithContext(ctx).First(&account, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -185,14 +195,18 @@ func (s *MailService) RefreshAccount(ctx context.Context, id uint) (int, error) 
 		}
 		return 0, failure(Internal, "failed to load account", err)
 	}
-	count, err := s.refreshAccount(ctx, s.db, s.pool, &account, mail.MaxLatestEmails)
+	count, err := s.refreshAccount(ctx, s.db, s.pool, &account, limit)
 	if err != nil {
 		return 0, failure(Upstream, "failed to refresh mailbox; please retry", err)
 	}
 	return count, nil
 }
 
-func (s *MailService) Refresh(ctx context.Context, accountID uint) (mail.RefreshSummary, error) {
+func (s *MailService) Refresh(ctx context.Context, accountID uint, limit int) (mail.RefreshSummary, error) {
+	limit, err := mailwindow.Resolve(limit)
+	if err != nil {
+		return mail.RefreshSummary{}, failure(Invalid, err.Error(), err)
+	}
 	var accounts []models.EmailAccount
 	q := s.db.WithContext(ctx).Where("status = ?", "active")
 	if accountID > 0 {
@@ -207,7 +221,7 @@ func (s *MailService) Refresh(ctx context.Context, accountID uint) (mail.Refresh
 		}
 		return mail.RefreshSummary{}, nil
 	}
-	summary := mail.RefreshAccounts(ctx, s.db, s.pool, accounts, mail.MaxLatestEmails)
+	summary := mail.RefreshAccounts(ctx, s.db, s.pool, accounts, limit)
 	if summary.Refreshed == 0 && len(summary.Errors) > 0 {
 		return summary, failure(Upstream, "failed to refresh mailboxes; please retry", nil)
 	}

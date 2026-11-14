@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"one-mail/backend/internal/credentials"
+	"one-mail/backend/internal/mailwindow"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
 
@@ -171,7 +172,7 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccount) (*models
 	}
 	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	_, refreshErr := s.mail.RefreshAccount(refreshCtx, account.ID)
+	_, refreshErr := s.mail.RefreshAccount(refreshCtx, account.ID, mailwindow.Default)
 	return &account, refreshErr, nil
 }
 

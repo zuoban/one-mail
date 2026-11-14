@@ -70,10 +70,10 @@ func TestVersionedStartupDoesNotRepeatSchemaOrCacheMigrations(t *testing.T) {
 	if err := db.Create(&account).Error; err != nil {
 		t.Fatal(err)
 	}
-	// Deliberately exceed the runtime cache invariant: restarting must not run
-	// the historical whole-table cleanup after its migration is recorded.
-	for uid := uint(1); uid <= 51; uid++ {
-		if err := db.Create(&models.Email{AccountID: account.ID, UID: uid, Folder: "INBOX"}).Error; err != nil {
+	// A configured 200-message window must survive startup after the
+	// historical 50-message cleanup migration has been recorded.
+	for uid := uint(1); uid <= 200; uid++ {
+		if err := db.Create(&models.Email{AccountID: account.ID, UID: uid, Folder: "INBOX", BodyFetched: true, BodyText: "cached body"}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -102,8 +102,11 @@ func TestVersionedStartupDoesNotRepeatSchemaOrCacheMigrations(t *testing.T) {
 		t.Fatalf("versioned startup changed schema: %d -> %d", schemaBefore, schemaAfter)
 	}
 	var count int64
-	if err := db.Model(&models.Email{}).Count(&count).Error; err != nil || count != 52 {
+	if err := db.Model(&models.Email{}).Count(&count).Error; err != nil || count != 201 {
 		t.Fatalf("versioned startup repeated cache pruning: count %d, error %v", count, err)
+	}
+	if err := db.Model(&models.Email{}).Where("folder = ? AND body_fetched = ? AND body_text = ?", "INBOX", true, "cached body").Count(&count).Error; err != nil || count != 200 {
+		t.Fatalf("versioned startup changed cached bodies: count %d, error %v", count, err)
 	}
 	assertMigrationVersions(t, db)
 }

@@ -3,8 +3,11 @@ import { telegramApi } from '../api'
 import { Save } from 'lucide-react'
 import axios from 'axios'
 import type { TelegramConfig } from '../api'
+import useReadingPreferences from '../context/useReadingPreferences'
+import { DEFAULT_EMAIL_LIMIT, EMAIL_LIMIT_OPTIONS, type EmailLimit } from '../mail/limits'
 
 export default function Settings() {
+  const { blockRemoteImages, setBlockRemoteImages, emailLimit, setEmailLimit } = useReadingPreferences()
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   const [telegramConfig, setTelegramConfig] = useState<TelegramConfig>({
@@ -100,9 +103,55 @@ export default function Settings() {
       <div className="page-heading">
         <h1>设置</h1>
         <p>
-          管理 Telegram 邮件推送
+          管理邮件阅读偏好和 Telegram 推送
         </p>
       </div>
+
+      <section aria-labelledby="reading-settings-title" className="mb-6 rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-4 md:p-6 shadow-[var(--shadow-sm)]">
+        <div className="pb-4 mb-5 border-b border-[var(--border-light)]">
+          <h2 id="reading-settings-title" className="text-base font-medium text-[var(--text-primary)]">邮件阅读</h2>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">偏好会自动保存到当前浏览器</p>
+        </div>
+        <div className="mb-5 pb-5 border-b border-[var(--border-light)] flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <label htmlFor="email-limit" className="block text-sm font-medium text-[var(--text-primary)]">默认加载邮件数</label>
+            <p id="email-limit-help" className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">列表和手动刷新使用此数量，调大后点击刷新可拉取更多邮件。</p>
+          </div>
+          <select
+            id="email-limit"
+            aria-describedby="email-limit-help"
+            value={emailLimit}
+            onChange={event => setEmailLimit(Number(event.target.value) as EmailLimit)}
+            className="w-full sm:w-32 flex-shrink-0"
+          >
+            {EMAIL_LIMIT_OPTIONS.map(limit => <option key={limit} value={limit}>{limit} 封{limit === DEFAULT_EMAIL_LIMIT ? '（默认）' : ''}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <span className="block text-sm font-medium text-[var(--text-primary)]">阻止远程图片</span>
+            <p id="remote-images-help" className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">默认显示远程图片。开启后阻止自动加载，减少邮件跟踪；仍可逐封临时加载。</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-label="阻止远程图片"
+            aria-describedby="remote-images-help"
+            aria-checked={blockRemoteImages}
+            onClick={() => setBlockRemoteImages(!blockRemoteImages)}
+            className="btn btn-ghost relative h-9 w-11 flex-shrink-0 p-0 rounded-lg"
+          >
+            <span
+              aria-hidden="true"
+              className={`absolute inset-x-0 top-1/2 -translate-y-1/2 h-6 rounded-full transition-colors ${
+                blockRemoteImages ? 'bg-[var(--primary-500)]' : 'bg-[var(--bg-tertiary)] shadow-[inset_0_0_0_1px_var(--border-default)]'
+              }`}
+            >
+              <span className={`toggle-thumb absolute left-0.5 top-0.5 h-5 w-5 rounded-full transition-transform ${blockRemoteImages ? 'translate-x-5' : 'translate-x-0'}`} />
+            </span>
+          </button>
+        </div>
+      </section>
 
         <section className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-4 md:p-6 shadow-[var(--shadow-sm)]">
           <div className="pb-4 mb-6 border-b border-[var(--border-light)]">

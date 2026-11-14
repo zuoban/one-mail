@@ -9,6 +9,7 @@ import ThemeContext from '../src/context/theme-context'
 import { MailContext } from '../src/mail/mail-context'
 import { MailStore } from '../src/mail/MailStore'
 import Dashboard from '../src/pages/Dashboard'
+import { ReadingPreferencesProvider } from '../src/context/ReadingPreferencesContext'
 
 const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader@example.com', status: 'active', last_sync_time: '2026-11-14T08:00:00Z', imap_host: 'imap.example.com', imap_port: 993 }
 const email: EmailSummary = { id: 1, account_id: 1, created_at: '2026-11-14', date: '2026-11-14', from: 'sender@example.com', from_name: 'Sender', to: account.email, subject: '会议安排', has_attachment: false, folder: 'INBOX' }
@@ -45,7 +46,7 @@ function renderInbox(emails = [email]) {
   }
   const store = new MailStore(api)
   stores.push(store)
-  const view = render(<ThemeContext.Provider value={{ theme: 'light', resolvedTheme: 'light', setTheme: vi.fn() }}><MailContext.Provider value={store}><AccountSession><Dashboard /></AccountSession></MailContext.Provider></ThemeContext.Provider>)
+  const view = render(<ThemeContext.Provider value={{ theme: 'light', resolvedTheme: 'light', setTheme: vi.fn() }}><MailContext.Provider value={store}><AccountSession><Dashboard /></AccountSession></MailContext.Provider></ThemeContext.Provider>, { wrapper: ReadingPreferencesProvider })
   return { pending, api, view }
 }
 
@@ -154,6 +155,21 @@ describe('read-only inbox', () => {
     expect(last.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
   })
 
+  it('loads and refreshes the saved message count above fifty', async () => {
+    localStorage.setItem('emailLimit', '100')
+    const messages = Array.from({ length: 100 }, (_, index) => ({ ...email, id: index + 1, subject: `Message ${index + 1}` }))
+    const { api, pending } = renderInbox(messages)
+    await screen.findByRole('group', { name: 'Sender，Message 1' })
+    expect(screen.getAllByRole('group')).toHaveLength(100)
+    expect(api.list.mock.calls.at(-1)?.[0]?.limit).toBe(100)
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    expect(api.refresh).toHaveBeenCalledExactlyOnceWith(undefined, 100)
+    expect(screen.getByText('正在获取最近 100 封邮件')).toBeTruthy()
+    await act(async () => pending.resolve({ message: 'ok', new_count: 0 }))
+    expect(screen.getAllByRole('group')).toHaveLength(100)
+    expect(api.list.mock.calls.at(-1)?.[0]?.limit).toBe(100)
+  })
+
   it('opens and reopens a message using only GET requests', async () => {
     const previousAdapter = apiClient.defaults.adapter
     const adapter = vi.fn<AxiosAdapter>(async config => {
@@ -166,7 +182,7 @@ describe('read-only inbox', () => {
     const store = new MailStore()
     stores.push(store)
     try {
-      render(<ThemeContext.Provider value={{ theme: 'light', resolvedTheme: 'light', setTheme: vi.fn() }}><MailContext.Provider value={store}><AccountSession><Dashboard /></AccountSession></MailContext.Provider></ThemeContext.Provider>)
+      render(<ThemeContext.Provider value={{ theme: 'light', resolvedTheme: 'light', setTheme: vi.fn() }}><MailContext.Provider value={store}><AccountSession><Dashboard /></AccountSession></MailContext.Provider></ThemeContext.Provider>, { wrapper: ReadingPreferencesProvider })
       fireEvent.click(await screen.findByRole('group', { name: 'Sender，会议安排' }))
       await screen.findByText('正文来自只读请求')
       fireEvent.keyDown(window, { key: 'Escape' })
@@ -273,7 +289,7 @@ describe('multi-account inbox', () => {
     expect(within(row).queryByText(secondAccount.email)).toBeNull()
     expect(api.list.mock.calls.at(-1)?.[0]).toMatchObject({ account_id: secondAccount.id, search: '会议' })
     fireEvent.click(screen.getByRole('button', { name: '刷新' }))
-    expect(api.refresh).toHaveBeenCalledExactlyOnceWith(secondAccount.id)
+    expect(api.refresh).toHaveBeenCalledExactlyOnceWith(secondAccount.id, 50)
     await act(async () => pending.resolve({ message: 'ok', new_count: 0 }))
     await screen.findByText('已是最新邮件')
     expect(api.list.mock.calls.at(-1)?.[0]).toMatchObject({ account_id: secondAccount.id, search: '会议' })

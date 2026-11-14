@@ -7,6 +7,7 @@ import MailList from '../mail/MailList'
 import { useInboxActions } from '../mail/useInboxActions'
 import { useInboxKeyboard } from '../mail/useInboxKeyboard'
 import { useAccounts } from '../accounts/account-context'
+import useReadingPreferences from '../context/useReadingPreferences'
 import {
   Search,
   Loader2,
@@ -18,12 +19,14 @@ import {
 
 export default function Dashboard() {
   const { accounts, loadingAccounts, accountsError, loadAccounts, providersError, loadingProviders, accountStore } = useAccounts()
+  const { emailLimit } = useReadingPreferences()
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const { emails, selectedEmail, selectedDetail, loadingList, listError, loadingDetail, detailError, notice: toast, store } = useMail({
     search: debouncedSearch || undefined,
     account_id: selectedAccountId || undefined,
+    limit: emailLimit,
   })
   const showToast = store.notify
   const emailItemRefs = useRef<Record<number, HTMLDivElement | null>>({})
@@ -108,7 +111,7 @@ export default function Dashboard() {
     await store.open(email)
   }, [store])
 
-  const filteredEmails = useMemo(() => emails.slice(0, 50), [emails])
+  const filteredEmails = useMemo(() => emails.slice(0, emailLimit), [emails, emailLimit])
 
 
   // 预处理每封邮件的时间戳与相对时间字符串，避免排序和滚动渲染期间重复正则/Date 解析
@@ -246,10 +249,10 @@ export default function Dashboard() {
           <div className="flex flex-col gap-1 min-w-0">
             <h2 className="text-lg font-medium text-[var(--text-primary)]">收件箱</h2>
             <span id="inbox-refresh-status" role="status" className={`text-xs tabular-nums ${refreshing ? 'text-[var(--primary-600)]' : 'font-mono text-[var(--text-tertiary)]'}`}>
-              {refreshing ? '正在获取最近 50 封邮件' : `${filteredEmails.length} 封`}
+              {refreshing ? `正在获取最近 ${emailLimit} 封邮件` : `${filteredEmails.length} 封`}
             </span>
           </div>
-          <Tooltip content={refreshing ? '正在连接邮箱，已有邮件可继续阅读' : '拉取最近 50 封邮件 (r)'}>
+          <Tooltip content={refreshing ? '正在连接邮箱，已有邮件可继续阅读' : `拉取最近 ${emailLimit} 封邮件 (r)`}>
             <button
               type="button"
               onClick={handleRefresh}
@@ -324,6 +327,7 @@ export default function Dashboard() {
         {/* Email List */}
         <MailList emails={sortedFilteredEmails} selectedId={selectedEmail?.id} accountById={accountById} dateLabels={emailDateMeta}
           showAccountEmail={selectedAccountId === null && accounts.length > 1}
+          limit={emailLimit}
           loading={loadingList} refreshing={refreshing} error={listError} search={search} scrollRef={listScrollRef}
           retry={loadEmails} clearSearch={() => setSearch('')} registerRef={registerEmailRef} onSelect={handleRead} />
 

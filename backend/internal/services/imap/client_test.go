@@ -339,6 +339,51 @@ func TestFetchLatestEmails_DoesNotRequestFlags(t *testing.T) {
 	}
 }
 
+func TestFetchLatestEmails_UsesRequestedWindow(t *testing.T) {
+	for _, tc := range []struct {
+		limit int
+		first int
+		count int
+	}{
+		{0, 201, 50},
+		{25, 226, 25},
+		{100, 151, 100},
+		{200, 51, 200},
+	} {
+		t.Run(strconv.Itoa(tc.limit), func(t *testing.T) {
+			client := scriptedClient(t, func(tag, command string) string {
+				if strings.HasPrefix(command, "EXAMINE ") {
+					return mailboxResponse(tag, 7, 250)
+				}
+				wantPrefix := fmt.Sprintf("FETCH %d:250 ", tc.first)
+				if !strings.HasPrefix(command, wantPrefix) || !strings.Contains(command, "ENVELOPE") || !strings.Contains(command, "BODYSTRUCTURE") || strings.Contains(command, "FLAGS") || strings.Contains(command, "BODY.PEEK") {
+					t.Errorf("unexpected summary command: %s, want prefix %s", command, wantPrefix)
+					return tag + " BAD unexpected command\r\n"
+				}
+				var response strings.Builder
+				for seq := tc.first; seq <= 250; seq++ {
+					fmt.Fprintf(&response, "* %d FETCH (UID %d)\r\n", seq, seq)
+				}
+				fmt.Fprintf(&response, "%s OK summaries\r\n", tag)
+				return response.String()
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			emails, epoch, err := client.FetchLatestEmails(ctx, "INBOX", tc.limit)
+			if err != nil || epoch != 7 || len(emails) != tc.count {
+				t.Fatalf("limit=%d: count=%d epoch=%d err=%v", tc.limit, len(emails), epoch, err)
+			}
+			seen := make(map[uint]bool)
+			for _, email := range emails {
+				seen[email.UID] = true
+			}
+			if !seen[uint(tc.first)] || !seen[250] {
+				t.Fatalf("requested window endpoints missing: %+v", seen)
+			}
+		})
+	}
+}
+
 func TestParseMessageBody_RejectsMalformedMIMEWithoutPartialBody(t *testing.T) {
 	for _, tt := range []struct {
 		name string
