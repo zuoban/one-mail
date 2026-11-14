@@ -23,14 +23,17 @@ export class MailStore {
   private listRequest: AbortController | null = null
   private detailRequest: { id: number; controller: AbortController; promise: Promise<void> } | null = null
   private cache = new Map<number, EmailDetail>()
+  private cachedBodyBytes = 0
+  private cacheBudgetBytes: number
   private noticeTimer: number | undefined
   private disposed = false
 
   private api: typeof emailApi
   private sessionValid: () => boolean
-  constructor(api = emailApi, sessionValid = () => true) {
+  constructor(api = emailApi, sessionValid = () => true, cacheBudgetBytes = 16 * 1024 * 1024) {
     this.api = api
     this.sessionValid = sessionValid
+    this.cacheBudgetBytes = cacheBudgetBytes
   }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   getSnapshot = () => this.state
@@ -45,6 +48,32 @@ export class MailStore {
     this.noticeTimer = window.setTimeout(() => this.update({ notice: null }), 4000)
   }
   private active() { return !this.disposed && this.sessionValid() }
+  private bodyBytes(detail: EmailDetail) { return 2 * (detail.body_text.length + detail.body_html.length) }
+  private dropCached(id: number) {
+    const detail = this.cache.get(id)
+    if (!detail) return
+    this.cachedBodyBytes -= this.bodyBytes(detail)
+    this.cache.delete(id)
+  }
+  private cacheDetail(detail: EmailDetail) {
+    this.dropCached(detail.id)
+    const bytes = this.bodyBytes(detail)
+    // Large bodies remain readable as the current detail without entering the
+    // cross-route cache. UTF-16 code units bound retained body strings, not heap.
+    if (bytes > Math.min(this.cacheBudgetBytes, 2 * 1024 * 1024)) return
+    while (this.cache.size && (this.cache.size >= 100 || this.cachedBodyBytes + bytes > this.cacheBudgetBytes)) {
+      this.dropCached(this.cache.keys().next().value!)
+    }
+    this.cache.set(detail.id, detail)
+    this.cachedBodyBytes += bytes
+  }
+  invalidateAccount = (accountId: number) => {
+    this.listRequest?.abort()
+    this.listRequest = null
+    for (const [id, detail] of this.cache) if (detail.account_id === accountId) this.dropCached(id)
+    if (this.state.selectedEmail?.account_id === accountId) this.closeDetail()
+    this.update({ emails: this.state.emails.filter(email => email.account_id !== accountId), loadingList: false })
+  }
   setQuery = (query: MailQuery) => {
     const key = JSON.stringify(query)
     if (key === this.queryKey) { void this.reload(); return }
@@ -74,7 +103,7 @@ export class MailStore {
       if (!this.query.search && this.query.account_id !== undefined) {
         const retained = new Set(emails.map(email => email.id))
         for (const [id, detail] of this.cache) {
-          if (detail.account_id === this.query.account_id && !retained.has(id)) this.cache.delete(id)
+          if (detail.account_id === this.query.account_id && !retained.has(id)) this.dropCached(id)
         }
       }
       emails.forEach(email => {
@@ -106,6 +135,10 @@ export class MailStore {
     this.detailRequest?.controller.abort()
     this.detailRequest = null
     const cached = this.cache.get(email.id)
+    if (cached) {
+      this.cache.delete(email.id)
+      this.cache.set(email.id, cached)
+    }
     this.update({ selectedEmail: summary, selectedDetail: cached ? { ...cached, ...summary } : null, loadingDetail: !cached, detailError: null })
     if (cached) return Promise.resolve()
     const controller = new AbortController()
@@ -115,8 +148,7 @@ export class MailStore {
       if (!this.active() || controller.signal.aborted || this.detailRequest !== request) return
       const latest = this.state.emails.find(item => item.id === email.id) || this.state.selectedEmail || summary
       const detail = { ...data, ...latest }
-      if (this.cache.size >= 100) this.cache.delete(this.cache.keys().next().value!)
-      this.cache.set(email.id, detail)
+      this.cacheDetail(detail)
       this.update({ selectedEmail: detail, selectedDetail: detail, detailError: null })
     }).catch(() => {
       if (!controller.signal.aborted && this.detailRequest === request) this.update({ detailError: '正文加载失败，请重试' })
@@ -132,6 +164,7 @@ export class MailStore {
     this.detailRequest?.controller.abort()
     window.clearTimeout(this.noticeTimer)
     this.cache.clear()
+    this.cachedBodyBytes = 0
     this.listeners.clear()
   }
 }

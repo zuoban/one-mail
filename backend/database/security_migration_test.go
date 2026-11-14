@@ -18,6 +18,9 @@ import (
 
 func openSecurityMigrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	if err := credentials.Init(base64.StdEncoding.EncodeToString(make([]byte, 32)), ""); err != nil {
+		t.Fatal(err)
+	}
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "migration.db")+"?_foreign_keys=on"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +37,8 @@ func openSecurityMigrationDB(t *testing.T) *gorm.DB {
 func securityMigrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db := openSecurityMigrationDB(t)
-	if err := MigrateAndOptimize(db); err != nil {
+	// Model the pre-versioning current schema without recording migrations.
+	if err := migratePersonalModels(db); err != nil {
 		t.Fatal(err)
 	}
 	return db
@@ -139,8 +143,18 @@ func TestPersonalTelegramConfigMerge(t *testing.T) {
 					if len(got) != 0 {
 						t.Fatalf("unexpected default Telegram configuration: %+v", got)
 					}
-				} else if len(got) != 1 || !reflect.DeepEqual(got[0], tc.want) {
-					t.Fatalf("pass %d: got %+v, want %+v", pass, got, tc.want)
+				} else {
+					if len(got) != 1 {
+						t.Fatalf("pass %d: got %d configurations", pass, len(got))
+					}
+					plain, err := credentials.Decrypt(got[0].BotToken)
+					if err != nil && got[0].BotToken != "" {
+						t.Fatal(err)
+					}
+					got[0].BotToken = plain
+					if !reflect.DeepEqual(got[0], tc.want) {
+						t.Fatalf("pass %d: got %+v, want %+v", pass, got, tc.want)
+					}
 				}
 				assertPersonalSchema(t, db)
 			}
@@ -387,6 +401,10 @@ func TestPersonalSchemaMigrationRollsBackOnInvalidEmailReference(t *testing.T) {
 	}
 	if err := MigrateAndOptimize(db); err == nil {
 		t.Fatal("invalid email reference must abort the migration")
+	}
+	var versions int64
+	if err := db.Table("schema_migrations").Count(&versions).Error; err != nil || versions != 0 {
+		t.Fatalf("failed schema migration was recorded: %d versions, %v", versions, err)
 	}
 	if !db.Migrator().HasTable("users") || !db.Migrator().HasColumn("email_accounts", "user_id") || !db.Migrator().HasColumn("telegram_configs", "user_id") {
 		t.Fatal("failed migration did not roll back the legacy schema")

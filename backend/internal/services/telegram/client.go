@@ -2,19 +2,16 @@ package telegram
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
-	"one-mail/backend/database"
-	"one-mail/backend/internal/credentials"
 	"one-mail/backend/internal/models"
 )
 
@@ -23,82 +20,19 @@ type Client struct {
 }
 
 var (
-	globalClient      *Client
-	clientOnce        sync.Once
-	configCacheMu     sync.RWMutex
-	cachedConfig      *models.TelegramConfig
 	styleTagRegex     = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
 	multiNewlineRegex = regexp.MustCompile(`\n\s*\n\s*\n+`)
 	entityRegex       = regexp.MustCompile(`&#(\d+);`)
 	hexEntityRegex    = regexp.MustCompile(`&#x([0-9a-fA-F]+);`)
 )
 
-func GetClient() *Client {
-	clientOnce.Do(func() {
-		globalClient = &Client{
-			httpClient: &http.Client{Timeout: 10 * time.Second},
-		}
-	})
-	return globalClient
+func NewClient() *Client {
+	return &Client{httpClient: &http.Client{Timeout: 10 * time.Second}}
 }
 
-// InvalidateConfigCache reloads the instance configuration on the next send.
-func InvalidateConfigCache() {
-	configCacheMu.Lock()
-	cachedConfig = nil
-	configCacheMu.Unlock()
-}
-
-func getConfig() *models.TelegramConfig {
-	configCacheMu.RLock()
-	cfg := cachedConfig
-	configCacheMu.RUnlock()
-	if cfg != nil {
-		return cfg
-	}
-
-	// Serialize cache fills with invalidation so an old DB snapshot cannot
-	// replace the configuration after it has been updated.
-	configCacheMu.Lock()
-	defer configCacheMu.Unlock()
-	if cachedConfig != nil {
-		return cachedConfig
-	}
-	db := database.GetDB()
-	if db == nil {
-		return nil
-	}
-	var loaded models.TelegramConfig
-	if err := db.Where("id = ?", 1).First(&loaded).Error; err != nil {
-		return nil
-	}
-	plain, err := credentials.Decrypt(loaded.BotToken)
-	if err != nil {
-		log.Print("Failed to unlock Telegram configuration")
-		return nil
-	}
-	loaded.BotToken = plain
-	cachedConfig = &loaded
-	return &loaded
-}
-
-func (c *Client) IsEnabled() bool {
-	cfg := getConfig()
-	return cfg != nil && cfg.Enabled && cfg.BotToken != "" && cfg.ChatID != ""
-}
-
-func (c *Client) SendNewEmail(email *models.Email, accountEmail string) error {
-	cfg := getConfig()
-	if cfg == nil || !cfg.Enabled || cfg.BotToken == "" || cfg.ChatID == "" {
-		return nil
-	}
+func (c *Client) SendNewEmailWithConfig(ctx context.Context, email *models.Email, accountEmail, botToken, chatID string) error {
 	text := c.formatMessage(email, accountEmail)
-	return c.sendMessage(cfg.BotToken, cfg.ChatID, text)
-}
-
-func (c *Client) SendNewEmailWithConfig(email *models.Email, accountEmail, botToken, chatID string) error {
-	text := c.formatMessage(email, accountEmail)
-	return c.sendMessage(botToken, chatID, text)
+	return c.sendMessage(ctx, botToken, chatID, text)
 }
 
 func (c *Client) formatMessage(email *models.Email, accountEmail string) string {
@@ -143,7 +77,7 @@ func (c *Client) formatMessage(email *models.Email, accountEmail string) string 
 	return sb.String()
 }
 
-func (c *Client) sendMessage(botToken, chatID, text string) error {
+func (c *Client) sendMessage(ctx context.Context, botToken, chatID, text string) error {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 
 	payload := map[string]interface{}{
@@ -157,7 +91,7 @@ func (c *Client) sendMessage(botToken, chatID, text string) error {
 		return errors.New("failed to encode telegram request")
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return errors.New("invalid telegram request")
 	}
@@ -185,7 +119,7 @@ func (c *Client) sendMessage(botToken, chatID, text string) error {
 	return nil
 }
 
-func (c *Client) TestConnection(botToken, chatID string) error {
+func (c *Client) TestConnection(ctx context.Context, botToken, chatID string) error {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 
 	payload := map[string]interface{}{
@@ -198,7 +132,7 @@ func (c *Client) TestConnection(botToken, chatID string) error {
 		return errors.New("failed to encode telegram request")
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return errors.New("invalid telegram request")
 	}
@@ -335,44 +269,4 @@ func decodeHTMLEntities(s string) string {
 	})
 
 	return result
-}
-
-type notifyJob struct {
-	email        models.Email
-	accountEmail string
-}
-
-var (
-	notifyQueue     chan notifyJob
-	notifyQueueOnce sync.Once
-)
-
-func initNotifyQueue() {
-	notifyQueueOnce.Do(func() {
-		notifyQueue = make(chan notifyJob, 128)
-		// 2 个限流 worker，防止首次同步大量邮件时并发打爆 Telegram API
-		for range 2 {
-			go func() {
-				client := GetClient()
-				for job := range notifyQueue {
-					emailCopy := job.email
-					if err := client.SendNewEmail(&emailCopy, job.accountEmail); err != nil {
-						log.Printf("Failed to send telegram notification: %v", err)
-					}
-				}
-			}()
-		}
-	})
-}
-
-func SendNewEmailAsync(email *models.Email, accountEmail string) {
-	if email == nil {
-		return
-	}
-	initNotifyQueue()
-	select {
-	case notifyQueue <- notifyJob{email: *email, accountEmail: accountEmail}:
-	default:
-		log.Printf("Telegram notify queue full, dropping notification for subject=%q", email.Subject)
-	}
 }

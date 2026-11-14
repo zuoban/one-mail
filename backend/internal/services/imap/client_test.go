@@ -157,7 +157,7 @@ func TestConnectContext_CancelsStalledServerAndAuthErrors(t *testing.T) {
 		IMAPPort: port,
 		Username: "u",
 		Password: "p",
-	})
+	}, NewConnectionPool())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
@@ -498,7 +498,7 @@ func TestLoginContext_CancelsStalledLogin(t *testing.T) {
 }
 
 func TestTestConnectionContext_PropagatesCancellation(t *testing.T) {
-	client := NewClient(&models.EmailAccount{IMAPHost: "127.0.0.1", IMAPPort: 993, Username: "u", Password: "p"})
+	client := NewClient(&models.EmailAccount{IMAPHost: "127.0.0.1", IMAPPort: 993, Username: "u", Password: "p"}, NewConnectionPool())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := client.TestConnectionContext(ctx); !errors.Is(err, context.Canceled) {

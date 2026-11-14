@@ -12,9 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"one-mail/backend/database"
 	"one-mail/backend/internal/access"
 	"one-mail/backend/internal/models"
+	"one-mail/backend/internal/services/imap"
+	"one-mail/backend/internal/services/telegram"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -31,6 +32,13 @@ func routerRequest(r http.Handler, method, path, authorization, body string) *ht
 	return w
 }
 
+func testRouter(t *testing.T, instanceAccess *access.Access, db *gorm.DB) *gin.Engine {
+	t.Helper()
+	pool := imap.NewConnectionPool()
+	t.Cleanup(func() { _ = pool.Close() })
+	return buildRouter(instanceAccess, db, pool, telegram.NewClient())
+}
+
 func TestRouterAuthenticationModes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "router.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
@@ -45,9 +53,6 @@ func TestRouterAuthenticationModes(t *testing.T) {
 	if err := db.AutoMigrate(&models.EmailAccount{}); err != nil {
 		t.Fatal(err)
 	}
-	oldDB := database.DB
-	database.DB = db
-	t.Cleanup(func() { database.DB = oldDB })
 
 	for _, password := range []string{"", "instance-password"} {
 		t.Run(password, func(t *testing.T) {
@@ -55,7 +60,7 @@ func TestRouterAuthenticationModes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r := buildRouter(instanceAccess)
+			r := testRouter(t, instanceAccess, db)
 			status := routerRequest(r, http.MethodGet, "/api/auth/status", "Bearer old-user-token", "")
 			var state struct {
 				PasswordRequired bool `json:"password_required"`
@@ -149,7 +154,7 @@ func TestRequestBodyLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := buildRouter(instanceAccess)
+	r := testRouter(t, instanceAccess, nil)
 	body := `{"password":"` + strings.Repeat("x", maxRequestBodyBytes) + `"}`
 	for _, contentLength := range []int64{int64(len(body)), -1} {
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
@@ -164,14 +169,11 @@ func TestRequestBodyLimit(t *testing.T) {
 
 func TestReadinessRejectsMissingAndClosedDatabase(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	oldDB := database.DB
-	t.Cleanup(func() { database.DB = oldDB })
 	instanceAccess, err := access.New("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := buildRouter(instanceAccess)
-	database.DB = nil
+	r := testRouter(t, instanceAccess, nil)
 	if w := routerRequest(r, http.MethodGet, "/health", "", ""); w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("missing database returned %d", w.Code)
 	}
@@ -184,7 +186,7 @@ func TestReadinessRejectsMissingAndClosedDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	database.DB = db
+	r = testRouter(t, instanceAccess, db)
 	if w := routerRequest(r, http.MethodGet, "/health", "", ""); w.Code != http.StatusOK {
 		t.Fatalf("healthy database returned %d", w.Code)
 	}
@@ -198,8 +200,6 @@ func TestReadinessRejectsMissingAndClosedDatabase(t *testing.T) {
 
 func TestReadinessUsesRequestCancellation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	oldDB := database.DB
-	t.Cleanup(func() { database.DB = oldDB })
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "health-cancel.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		t.Fatal(err)
@@ -215,14 +215,13 @@ func TestReadinessUsesRequestCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	database.DB = db
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	req := httptest.NewRequest(http.MethodGet, "/health", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
-	health(c)
+	health(db)(c)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("cancelled readiness returned %d", w.Code)
 	}

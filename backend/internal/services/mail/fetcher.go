@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -13,7 +14,6 @@ import (
 
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
-	"one-mail/backend/internal/services/telegram"
 )
 
 const (
@@ -77,7 +77,7 @@ func lockAccount(ctx context.Context, id uint) (func(), error) {
 	}
 }
 
-func RefreshAccount(ctx context.Context, db *gorm.DB, account *models.EmailAccount, limit int) (newCount int, resultErr error) {
+func RefreshAccount(ctx context.Context, db *gorm.DB, pool *imap.ConnectionPool, account *models.EmailAccount, limit int) (newCount int, resultErr error) {
 	if account == nil {
 		return 0, errors.New("account is nil")
 	}
@@ -106,7 +106,7 @@ func RefreshAccount(ctx context.Context, db *gorm.DB, account *models.EmailAccou
 		return 0, ErrAccountChanged
 	}
 	*account = current
-	client, release, err := imap.GetConnectionPool().AcquireConnectionContext(reqCtx, account)
+	client, release, err := pool.AcquireConnectionContext(reqCtx, account)
 	if err != nil {
 		return 0, err
 	}
@@ -169,7 +169,6 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 		latest = latest[:limit]
 	}
 	var newEmails []models.Email
-	var hadExisting bool
 	syncTime := time.Now()
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var current models.EmailAccount
@@ -184,7 +183,9 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 			Order("id DESC").Find(&existing).Error; err != nil {
 			return err
 		}
-		hadExisting = len(existing) > 0
+		// An initialized empty mailbox is still past its import baseline.
+		// UIDVALIDITY changes establish a new baseline rather than replaying history.
+		notifyNew := !current.LastSyncTime.IsZero() && current.UIDValidity == epoch
 		byUID := make(map[uint]*models.Email, len(existing))
 		for i := range existing {
 			row := &existing[i]
@@ -223,6 +224,30 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 			for _, email := range newEmails {
 				keepIDs = append(keepIDs, email.ID)
 			}
+			if notifyNew {
+				var cfg models.TelegramConfig
+				err := tx.Select("enabled, bot_token, chat_id").First(&cfg, 1).Error
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				if cfg.Enabled && cfg.BotToken != "" && cfg.ChatID != "" {
+					tasks := make([]models.NotificationTask, 0, len(newEmails))
+					for _, email := range newEmails {
+						payload, err := json.Marshal(email)
+						if err != nil {
+							return err
+						}
+						tasks = append(tasks, models.NotificationTask{
+							AccountID: account.ID, IdentityVersion: account.IdentityVersion,
+							MessageKey:   fmt.Sprintf("%d:%d:%s:%d:%d", account.ID, account.IdentityVersion, folder, epoch, email.UID),
+							AccountEmail: current.Email, EmailJSON: string(payload), NextAttemptAt: syncTime,
+						})
+					}
+					if err := tx.CreateInBatches(&tasks, MaxLatestEmails).Error; err != nil {
+						return err
+					}
+				}
+			}
 		}
 		// Remove obsolete epochs, identities, duplicate rows and their cached bodies together.
 		stale := tx.Where("account_id = ? AND folder = ?", account.ID, folder)
@@ -244,11 +269,6 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 	account.LastSyncTime = syncTime
 	if folder == DefaultFolder {
 		account.UIDValidity = epoch
-	}
-	if hadExisting {
-		for i := range newEmails {
-			telegram.SendNewEmailAsync(&newEmails[i], account.Email)
-		}
 	}
 	return len(newEmails), nil
 }
@@ -284,7 +304,7 @@ func summaryChanges(row *models.Email, summary *imap.EmailSummary, messageID str
 	return updates
 }
 
-func RefreshAccounts(ctx context.Context, db *gorm.DB, accounts []models.EmailAccount, limit int) RefreshSummary {
+func RefreshAccounts(ctx context.Context, db *gorm.DB, pool *imap.ConnectionPool, accounts []models.EmailAccount, limit int) RefreshSummary {
 	ctx, cancel := context.WithTimeout(ctx, refreshAllTimeout)
 	defer cancel()
 	summary := RefreshSummary{Errors: make(map[string]string)}
@@ -301,7 +321,7 @@ func RefreshAccounts(ctx context.Context, db *gorm.DB, accounts []models.EmailAc
 		go func() {
 			defer wg.Done()
 			for account := range jobs {
-				count, err := RefreshAccount(ctx, db, &account, limit)
+				count, err := RefreshAccount(ctx, db, pool, &account, limit)
 				mu.Lock()
 				if err != nil {
 					summary.Errors[account.Email] = err.Error()

@@ -56,3 +56,18 @@ type TelegramConfig struct {
 	BotToken  string    `gorm:"type:text" json:"bot_token"`
 	ChatID    string    `gorm:"type:text" json:"chat_id"`
 }
+
+// NotificationTask stores a delivery snapshot independently of the recent-mail
+// window, so cache eviction cannot discard a committed notification.
+type NotificationTask struct {
+	ID              uint `gorm:"primaryKey"`
+	CreatedAt       time.Time
+	AccountID       uint      `gorm:"not null;index"`
+	IdentityVersion uint64    `gorm:"not null"`
+	MessageKey      string    `gorm:"not null;uniqueIndex"`
+	AccountEmail    string    `gorm:"not null"`
+	EmailJSON       string    `gorm:"not null;type:text"`
+	Attempts        uint      `gorm:"not null;default:0"`
+	NextAttemptAt   time.Time `gorm:"not null;index"`
+	LastError       string    `gorm:"type:text"`
+}

@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"one-mail/backend/database"
+	"one-mail/backend/internal/application"
 	"one-mail/backend/internal/models"
+	"one-mail/backend/internal/services/imap"
 )
 
 func setupEmailHandlerTestDB(t *testing.T) *gorm.DB {
@@ -32,17 +34,31 @@ func setupEmailHandlerTestDB(t *testing.T) *gorm.DB {
 	if err := database.MigrateAndOptimize(db); err != nil {
 		t.Fatalf("MigrateAndOptimize failed: %v", err)
 	}
-	previous := database.DB
-	database.DB = db
 	sqlDB, err := db.DB()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		database.DB = previous
 		_ = sqlDB.Close()
 	})
 	return db
+}
+
+func newTestMailService(t *testing.T, db *gorm.DB) (*application.MailService, *imap.ConnectionPool) {
+	t.Helper()
+	pool := imap.NewConnectionPool()
+	t.Cleanup(func() { _ = pool.Close() })
+	return application.NewMailService(db, pool, false), pool
+}
+
+func newTestEmailHandler(t *testing.T, db *gorm.DB) *EmailHandler {
+	service, _ := newTestMailService(t, db)
+	return NewEmailHandler(service)
+}
+
+func newTestAccountHandler(t *testing.T, db *gorm.DB) *AccountHandler {
+	service, pool := newTestMailService(t, db)
+	return NewAccountHandler(application.NewAccountService(db, pool, service))
 }
 
 func TestListEmails_Latest50SharedAccountsAndSearch(t *testing.T) {
@@ -69,7 +85,7 @@ func TestListEmails_Latest50SharedAccountsAndSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := NewEmailHandler()
+	handler := newTestEmailHandler(t, db)
 	r := gin.New()
 	r.GET("/emails", handler.ListEmails)
 

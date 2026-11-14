@@ -31,6 +31,8 @@ type Client struct {
 	transport     net.Conn
 	credentialErr error
 	lastActivity  time.Time
+	pool          *ConnectionPool
+	release       func(bool)
 }
 
 var ProviderConfigs = map[string]struct {
@@ -77,9 +79,9 @@ var ProviderConfigs = map[string]struct {
 	},
 }
 
-func NewClient(account *models.EmailAccount) *Client {
+func NewClient(account *models.EmailAccount, pool *ConnectionPool) *Client {
 	password, err := credentials.Decrypt(account.Password)
-	return &Client{account: account, username: account.Username, password: password, credentialErr: err}
+	return &Client{account: account, pool: pool, username: account.Username, password: password, credentialErr: err}
 }
 
 const defaultConnectTimeout = 15 * time.Second
@@ -116,6 +118,30 @@ func (c *Client) Connect() error {
 }
 
 func (c *Client) ConnectContext(ctx context.Context) error {
+	if c.pool == nil {
+		return errors.New("IMAP connection pool is required")
+	}
+	if c.client != nil {
+		return errors.New("IMAP client is already connected")
+	}
+	ctx, cancel := context.WithTimeout(ctx, defaultConnectTimeout)
+	defer cancel()
+	_, release, err := c.pool.acquire(ctx, c.account, true, func(ctx context.Context, _ *models.EmailAccount) (*Client, error) {
+		if err := c.connectContext(ctx); err != nil {
+			c.closeTransport()
+			return nil, err
+		}
+		return c, nil
+	})
+	if err != nil {
+		return err
+	}
+	c.release = release
+	return nil
+}
+
+// connectContext is called only after the pool has reserved admission.
+func (c *Client) connectContext(ctx context.Context) error {
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, defaultConnectTimeout)
@@ -176,6 +202,7 @@ func loginContext(ctx context.Context, conn *imapclient.Client, username, passwo
 }
 
 func (c *Client) Disconnect() error {
+	defer c.ForceClose()
 	if c.client == nil {
 		return nil
 	}
@@ -199,6 +226,13 @@ func (c *Client) Disconnect() error {
 
 // ForceClose immediately closes the underlying TCP/TLS connection to unblock any stalled IMAP command.
 func (c *Client) ForceClose() {
+	c.closeTransport()
+	if c.release != nil {
+		c.release(false)
+	}
+}
+
+func (c *Client) closeTransport() {
 	// imapclient.Close waits for its decoder, which can be waiting for the current
 	// literal consumer. Closing just the transport lets that consumer unwind first.
 	if c.transport != nil {
@@ -210,29 +244,30 @@ func (c *Client) IsConnected() bool {
 	if c.client == nil {
 		return false
 	}
-
-	// 刚活跃过的连接跳过无意义的 NOOP RTT
 	if !c.lastActivity.IsZero() && time.Since(c.lastActivity) < 30*time.Second {
 		return true
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return c.noopContext(ctx) == nil
+}
 
-	done := make(chan error, 1)
-	go func() {
-		done <- c.client.Noop().Wait()
-	}()
-
-	select {
-	case err := <-done:
-		if err == nil {
-			c.lastActivity = time.Now()
-			return true
-		}
-		c.ForceClose()
-		return false
-	case <-time.After(5 * time.Second):
-		c.ForceClose()
-		return false
+func (c *Client) noopContext(ctx context.Context) error {
+	finish, err := c.commandContext(ctx)
+	if err != nil {
+		return err
 	}
+	defer finish()
+	err = c.client.Noop().Wait()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		c.ForceClose()
+		return err
+	}
+	c.lastActivity = time.Now()
+	return nil
 }
 
 type EmailSummary struct {
@@ -751,26 +786,8 @@ func (c *Client) fetchBodySections(uids imap.UIDSet, sections []*imap.FetchItemB
 }
 
 func (c *Client) TestConnectionContext(ctx context.Context) error {
-	if c.account.IMAPHost == "" || c.account.Username == "" || c.account.Password == "" {
-		return fmt.Errorf("invalid configuration")
+	if c.pool == nil {
+		return errors.New("IMAP connection pool is required")
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, defaultConnectTimeout)
-	defer cancel()
-
-	testClient := NewClient(c.account)
-	if err := testClient.ConnectContext(ctx); err != nil {
-		return err
-	}
-	finish, err := testClient.commandContext(ctx)
-	if err != nil {
-		testClient.ForceClose()
-		return err
-	}
-	defer finish()
-	err = testClient.Disconnect()
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	return err
+	return c.pool.TestConnectionContext(ctx, c.account)
 }

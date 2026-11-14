@@ -286,6 +286,7 @@ input[type="text"],
 input[type="email"],
 input[type="password"],
 input[type="search"],
+input[type="number"],
 select,
 textarea {
   width: 100%;
@@ -926,6 +927,7 @@ textarea:disabled {
   input[type="email"],
   input[type="password"],
   input[type="search"],
+  input[type="number"],
   select {
     height: 44px;
     font-size: 16px;

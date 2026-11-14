@@ -84,5 +84,9 @@ export default defineConfig([
 - Each account caches its latest 50 inbox messages, and the combined list shows the latest 50 across accounts. Opening a message loads its body on demand without changing its remote read state.
 - Account reads distinguish loading, failure, and an empty result, with cancellation and request ordering to ignore stale responses. Failed reads provide a retry without repeating successful mutations.
 - Account submissions and deletions have explicit pending states; concurrent refreshes track each account independently. A server sync followed by a failed list read reports the two outcomes separately and keeps the current messages readable.
+- `MailProvider` owns both `MailStore` and `AccountStore` for one authenticated session. Routes reuse loaded accounts/providers; mutations invalidate shared state, cancelled reads restart on the next subscriber, and session changes dispose pending work.
+- Provider options come from `/api/providers`. Custom accounts expose labelled IMAP host and port fields for both creation and editing. Endpoint changes invalidate old message bodies; initial-sync failures remain distinct from a successfully saved account.
+- The latest-50 list renders ordinary rows. `MailList`, `MailReader`, inbox actions, and keyboard handling are separate from the page composition.
+- The body cache uses recent-access eviction, a 100-message ceiling, and a 16 MiB budget for UTF-16 body strings. A body larger than 2 MiB remains available only as the current reader detail; these limits are not a total browser heap measurement.
 
 The refinement follows [unslop](https://heydamir.design/unslop) by Damir Sokolovsky ([@heydamir](https://x.com/heydamir)), licensed under CC BY 4.0.

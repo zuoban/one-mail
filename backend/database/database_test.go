@@ -252,6 +252,11 @@ func TestFTSSetupFailuresDisableAndRollBack(t *testing.T) {
 			if err := db.Exec("DELETE FROM emails_fts WHERE rowid = 2").Error; err != nil {
 				t.Fatal(err)
 			}
+			if phase == "trigger" {
+				if err := db.Exec("DROP TRIGGER emails_fts_au").Error; err != nil {
+					t.Fatal(err)
+				}
+			}
 			injected := false
 			fail := func(tx *gorm.DB) {
 				sql := tx.Statement.SQL.String()

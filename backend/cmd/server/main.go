@@ -10,17 +10,22 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"one-mail/backend/config"
 	"one-mail/backend/database"
 	"one-mail/backend/internal/access"
+	"one-mail/backend/internal/application"
 	"one-mail/backend/internal/handlers"
 	"one-mail/backend/internal/middleware"
+	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
+	"one-mail/backend/internal/services/telegram"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const (
@@ -50,21 +55,37 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("initialize access: %w", err)
 	}
-	if err := database.InitDatabase(); err != nil {
+	db, err := database.InitDatabase()
+	if err != nil {
 		return fmt.Errorf("initialize database: %w", err)
 	}
-	sqlDB, err := database.DB.DB()
+	sqlDB, err := db.DB()
 	if err != nil {
 		return fmt.Errorf("get database pool: %w", err)
 	}
 	defer sqlDB.Close()
+	pool := imap.NewConnectionPool()
+	defer pool.Close()
+	telegramClient := telegram.NewClient()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	statsCtx, cancelStats := context.WithCancel(context.Background())
-	defer cancelStats()
-	go logResourceStats(statsCtx, sqlDB)
-	server := newHTTPServer(fmt.Sprintf(":%d", cfg.Server.Port), buildRouter(instanceAccess))
+	workersCtx, cancelWorkers := context.WithCancel(context.Background())
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		logResourceStats(workersCtx, sqlDB, db, pool)
+	}()
+	go func() {
+		defer workers.Done()
+		telegram.NewDispatcher(db, telegramClient).Run(workersCtx)
+	}()
+	defer func() {
+		cancelWorkers()
+		workers.Wait()
+	}()
+	server := newHTTPServer(fmt.Sprintf(":%d", cfg.Server.Port), buildRouter(instanceAccess, db, pool, telegramClient))
 	return serve(ctx, server)
 }
 
@@ -107,7 +128,7 @@ func serve(ctx context.Context, server *http.Server) error {
 	return nil
 }
 
-func logResourceStats(ctx context.Context, db *sql.DB) {
+func logResourceStats(ctx context.Context, db *sql.DB, appDB *gorm.DB, pool *imap.ConnectionPool) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -116,9 +137,13 @@ func logResourceStats(ctx context.Context, db *sql.DB) {
 			return
 		case <-ticker.C:
 			stats := db.Stats()
-			imapStats := imap.GetConnectionPool().GetStats()
-			log.Printf("event=resource_stats db_open=%d db_in_use=%d db_idle=%d db_wait_count=%d db_wait_duration_ms=%d imap_connections=%v imap_wait_count=%v imap_wait_duration_ms=%v",
-				stats.OpenConnections, stats.InUse, stats.Idle, stats.WaitCount, stats.WaitDuration.Milliseconds(), imapStats["total_connections"], imapStats["wait_count"], imapStats["wait_duration_ms"])
+			imapStats := pool.GetStats()
+			var pending int64
+			countCtx, cancel := context.WithTimeout(ctx, readinessTimeout)
+			err := appDB.WithContext(countCtx).Model(&models.NotificationTask{}).Count(&pending).Error
+			cancel()
+			log.Printf("event=resource_stats db_open=%d db_in_use=%d db_idle=%d db_wait_count=%d db_wait_duration_ms=%d imap_connections=%v imap_wait_count=%v imap_wait_duration_ms=%v notification_pending=%d notification_stats_ok=%t",
+				stats.OpenConnections, stats.InUse, stats.Idle, stats.WaitCount, stats.WaitDuration.Milliseconds(), imapStats["total_connections"], imapStats["wait_count"], imapStats["wait_duration_ms"], pending, err == nil)
 		}
 	}
 }
@@ -144,25 +169,27 @@ func requestLogger() gin.HandlerFunc {
 	}
 }
 
-func health(c *gin.Context) {
-	if database.DB == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
-		return
+func health(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if db == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
+			return
+		}
+		sqlDB, err := db.DB()
+		if err == nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), readinessTimeout)
+			defer cancel()
+			err = sqlDB.PingContext(ctx)
+		}
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	}
-	db, err := database.DB.DB()
-	if err == nil {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), readinessTimeout)
-		defer cancel()
-		err = db.PingContext(ctx)
-	}
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func buildRouter(instanceAccess *access.Access) *gin.Engine {
+func buildRouter(instanceAccess *access.Access, db *gorm.DB, pool *imap.ConnectionPool, telegramClient *telegram.Client) *gin.Engine {
 	r := gin.New()
 	r.Use(requestLogger())
 	r.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, _ interface{}) {
@@ -173,8 +200,10 @@ func buildRouter(instanceAccess *access.Access) *gin.Engine {
 	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.GzipMiddleware())
 
-	accountHandler := handlers.NewAccountHandler()
-	emailHandler := handlers.NewEmailHandler()
+	mailService := application.NewMailService(db, pool, database.IsFTS5Enabled())
+	accountHandler := handlers.NewAccountHandler(application.NewAccountService(db, pool, mailService))
+	emailHandler := handlers.NewEmailHandler(mailService)
+	telegramHandler := handlers.NewTelegramHandler(application.NewTelegramService(db, mailService, telegramClient))
 	authHandler := handlers.NewAuthHandler(instanceAccess)
 	auth := r.Group("/api/auth")
 	{
@@ -186,6 +215,7 @@ func buildRouter(instanceAccess *access.Access) *gin.Engine {
 	api.Use(middleware.AuthMiddleware(instanceAccess))
 	{
 
+		api.GET("/providers", accountHandler.ListProviders)
 		api.GET("/accounts", accountHandler.ListAccounts)
 		api.POST("/accounts", accountHandler.AddAccount)
 		api.PUT("/accounts/:id", accountHandler.UpdateAccount)
@@ -196,13 +226,13 @@ func buildRouter(instanceAccess *access.Access) *gin.Engine {
 		api.GET("/emails", emailHandler.ListEmails)
 		api.POST("/emails/refresh", emailHandler.RefreshEmails)
 		api.GET("/emails/:id", emailHandler.GetEmail)
-		api.GET("/telegram/config", handlers.GetTelegramConfig)
-		api.PUT("/telegram/config", handlers.UpdateTelegramConfig)
-		api.POST("/telegram/test", handlers.TestTelegramConnection)
-		api.POST("/telegram/send/:id", handlers.SendEmailToTelegram)
+		api.GET("/telegram/config", telegramHandler.GetTelegramConfig)
+		api.PUT("/telegram/config", telegramHandler.UpdateTelegramConfig)
+		api.POST("/telegram/test", telegramHandler.TestTelegramConnection)
+		api.POST("/telegram/send/:id", telegramHandler.SendEmailToTelegram)
 	}
 
-	r.GET("/health", health)
+	r.GET("/health", health(db))
 
 	return r
 }

@@ -1,48 +1,30 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import axios from 'axios'
-import { accountApi } from '../api'
+import { accountApi, type AccountInput } from '../api'
+import { useAccounts } from '../accounts/account-context'
+import AccountDrawer, { type AccountFormState } from '../accounts/AccountDrawer'
 import type { EmailAccount } from '../api'
-import { Plus, Trash2, X, Mail, Plug, Pencil, RefreshCw, Loader2 } from 'lucide-react'
+import { Plus, Trash2, Mail, Plug, Pencil, RefreshCw, Loader2 } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 
-const providers = [
-  { value: 'gmail', label: 'Gmail' },
-  { value: 'qq', label: 'QQ邮箱' },
-  { value: 'outlook', label: 'Outlook' },
-  { value: 'qq-work', label: 'QQ企业邮' },
-  { value: '163', label: '163邮箱' },
-  { value: 'custom', label: '自定义' },
-]
-
-const accountColors = [
-  '#2563eb',
-  '#059669',
-  '#d97706',
-  '#dc2626',
-  '#0891b2',
-  '#4f46e5',
-  '#db2777',
-  '#65a30d',
-]
-
 export default function Accounts() {
-  const [accounts, setAccounts] = useState<EmailAccount[]>([])
+  const { accounts, providers, loadingAccounts, accountsError, loadAccounts, accountStore } = useAccounts()
   const [loading, setLoading] = useState(false)
-  const [loadingAccounts, setLoadingAccounts] = useState(true)
-  const [accountsError, setAccountsError] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editingAccount, setEditingAccount] = useState<EmailAccount | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<EmailAccount | null>(null)
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<AccountFormState>({
     email: '',
-    provider: 'gmail',
+    provider: '',
     username: '',
     password: '',
     color: '',
+    imap_host: '',
+    imap_port: '993',
   })
   const [error, setError] = useState('')
   const [usernameEdited, setUsernameEdited] = useState(false)
@@ -53,7 +35,6 @@ export default function Accounts() {
   const formInstance = useRef(0)
   const mounted = useRef(false)
   const lifecycle = useRef(0)
-  const accountsRequest = useRef<AbortController | null>(null)
   const toastTimer = useRef<number | undefined>(undefined)
   const drawerRef = useRef<HTMLDivElement>(null)
 
@@ -61,41 +42,14 @@ export default function Accounts() {
     mounted.current = false
     lifecycle.current++
     formInstance.current++
-    accountsRequest.current?.abort()
     window.clearTimeout(toastTimer.current)
-  }, [])
-
-  const loadAccounts = useCallback(async (): Promise<boolean> => {
-    if (!mounted.current) return false
-    accountsRequest.current?.abort()
-    const controller = new AbortController()
-    accountsRequest.current = controller
-    setLoadingAccounts(true)
-    setAccountsError('')
-    try {
-      const res = await accountApi.list(controller.signal)
-      if (!mounted.current || controller.signal.aborted || accountsRequest.current !== controller) return false
-      setAccounts(res.data)
-      return true
-    } catch {
-      if (mounted.current && !controller.signal.aborted && accountsRequest.current === controller) {
-        setAccountsError('账户列表加载失败，请重试')
-      }
-      return false
-    } finally {
-      if (mounted.current && accountsRequest.current === controller) {
-        accountsRequest.current = null
-        setLoadingAccounts(false)
-      }
-    }
   }, [])
 
   useEffect(() => {
     mounted.current = true
     lifecycle.current++
-    void loadAccounts()
     return invalidateLifecycle
-  }, [loadAccounts, invalidateLifecycle])
+  }, [invalidateLifecycle])
 
   const closeModal = () => {
     if (submission.current !== null) return
@@ -122,7 +76,7 @@ export default function Accounts() {
       }
       if (event.key !== 'Tab' || !drawer) return
 
-      const controls = drawer.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])')
+      const controls = drawer.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled])')
       const first = controls[0]
       const last = controls[controls.length - 1]
       if (!first || !last) {
@@ -161,24 +115,47 @@ export default function Accounts() {
     setError('')
     setLoading(true)
     try {
+      const provider = providers.find(provider => provider.id === form.provider)
+      if (!provider) { setError('请先读取并选择邮箱服务商'); return }
+      const input: AccountInput = { email: form.email, provider: form.provider, username: form.username, password: form.password, color: form.color }
+      if (provider.custom) {
+        const port = Number(form.imap_port)
+        if (!form.imap_host.trim() || !Number.isInteger(port) || port < 1 || port > 65535) {
+          setError('请填写 IMAP 主机和有效端口（1–65535）')
+          return
+        }
+        input.imap_host = form.imap_host.trim()
+        input.imap_port = port
+      }
+      let mutation: { response: { data: EmailAccount; refresh_error?: string }; updated: Promise<boolean> }
       if (editingAccount) {
-        const updateData: Partial<typeof form> = {}
+        const updateData: Partial<AccountInput> = {}
         if (form.email !== editingAccount.email) updateData.email = form.email
         if (form.provider !== editingAccount.provider) updateData.provider = form.provider
         if (form.username !== editingAccount.username) updateData.username = form.username
         if (form.password) updateData.password = form.password
         if (form.color !== editingAccount.color) updateData.color = form.color
-        await accountApi.update(editingAccount.id, updateData)
+        if (provider.custom) {
+          updateData.imap_host = input.imap_host
+          updateData.imap_port = input.imap_port
+        }
+        mutation = await accountStore.update(editingAccount.id, updateData)
       } else {
-        await accountApi.add(form)
+        mutation = await accountStore.add(input)
       }
       if (!current()) return
       submission.current = null
       setLoading(false)
       closeModal()
-      setForm({ email: '', provider: 'gmail', username: '', password: '', color: '' })
-      const updated = await loadAccounts()
-      if (mounted.current && formInstance.current === instance + 1) showToast(updated ? (editingAccount ? '账户已更新' : '账户已添加') : '账户已保存，但账户列表读取失败，请重试读取列表', updated ? 'success' : 'error')
+      setForm({ email: '', provider: providers[0]?.id || '', username: '', password: '', color: '', imap_host: '', imap_port: '993' })
+      const updated = await mutation.updated
+      if (mounted.current && formInstance.current === instance + 1) {
+        const initialSyncFailed = !editingAccount && Boolean(mutation.response.refresh_error)
+        const message = initialSyncFailed
+          ? `账户已添加，但首次同步失败，可手动刷新${updated ? '' : '；账户列表读取失败，请重试读取列表'}`
+          : updated ? (editingAccount ? '账户已更新' : '账户已添加') : '账户已保存，但账户列表读取失败，请重试读取列表'
+        showToast(message, updated && !initialSyncFailed ? 'success' : 'error')
+      }
     } catch (err: unknown) {
       if (!current()) return
       const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
@@ -196,7 +173,7 @@ export default function Accounts() {
     formInstance.current++
     setEditingAccount(null)
     setUsernameEdited(false)
-    setForm({ email: '', provider: 'gmail', username: '', password: '', color: '' })
+    setForm({ email: '', provider: providers[0]?.id || '', username: '', password: '', color: '', imap_host: '', imap_port: '993' })
     setError('')
     setShowModal(true)
   }
@@ -212,6 +189,8 @@ export default function Accounts() {
       username: account.username,
       password: '',
       color: account.color || '',
+      imap_host: account.imap_host || '',
+      imap_port: String(account.imap_port || 993),
     })
     setError('')
     setShowModal(true)
@@ -224,10 +203,10 @@ export default function Accounts() {
     setDeleting(true)
     setDeleteError('')
     try {
-      await accountApi.delete(confirmDelete.id)
+      const mutation = await accountStore.remove(confirmDelete.id)
       if (!mounted.current || lifecycle.current !== generation) return
       setConfirmDelete(null)
-      const updated = await loadAccounts()
+      const updated = await mutation.updated
       if (mounted.current && lifecycle.current === generation) showToast(updated ? '账户已删除' : '账户已删除，但账户列表读取失败，请重试读取列表', updated ? 'success' : 'error')
     } catch (err: unknown) {
       if (!mounted.current || lifecycle.current !== generation) return
@@ -259,9 +238,9 @@ export default function Accounts() {
     pendingRefreshes.current.add(id)
     setRefreshingAccountIds(new Set(pendingRefreshes.current))
     try {
-      const res = await accountApi.refresh(id)
+      const { response: res, updated: listUpdate } = await accountStore.refresh(id)
       if (!mounted.current || lifecycle.current !== generation) return
-      const updated = await loadAccounts()
+      const updated = await listUpdate
       if (!mounted.current || lifecycle.current !== generation) return
       showToast(updated ? (res.new_count > 0 ? `已刷新，新增 ${res.new_count} 封邮件` : '已是最新邮件') : '邮箱同步已完成，但账户列表读取失败，请重试读取列表', updated ? 'success' : 'error')
     } catch (err: unknown) {
@@ -374,7 +353,7 @@ export default function Accounts() {
                   </div>
 
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-tertiary)]">
-                    <span>{providers.find(p => p.value === account.provider)?.label || account.provider}</span>
+                    <span>{providers.find(p => p.id === account.provider)?.label || account.provider}</span>
                     <span className="inline-flex items-center gap-2">
                       <span className={`status-dot ${account.status === 'active' ? 'status-dot-success' : 'status-dot-warning'}`} />
                       <span className={account.status === 'active' ? 'text-[var(--text-secondary)]' : ''}>
@@ -443,186 +422,8 @@ export default function Accounts() {
 
       {/* Add / Edit Account Drawer */}
       {showModal && (
-        <>
-          <div
-            className="overlay-backdrop fixed inset-0 z-40"
-            onClick={closeModal}
-          />
-          <div
-            ref={drawerRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="account-drawer-title"
-            aria-describedby="account-drawer-description"
-            tabIndex={-1}
-            className="fixed inset-y-0 right-0 w-full sm:w-[480px] bg-[var(--bg-primary)] border-l border-[var(--border-default)] shadow-[var(--shadow-xl)] z-50 flex flex-col"
-          >
-            <div className="h-16 px-6 border-b border-[var(--border-light)] flex items-center justify-between">
-              <div className="min-w-0">
-                <h2 id="account-drawer-title" className="text-base font-medium text-[var(--text-primary)]">
-                  {editingAccount ? '编辑邮箱账户' : '添加邮箱账户'}
-                </h2>
-                <p id="account-drawer-description" className="text-xs text-[var(--text-tertiary)] truncate">
-                  {editingAccount ? editingAccount.email : '配置 IMAP 邮箱接入信息'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeModal}
-                disabled={loading}
-                className="btn btn-ghost w-9 h-9 p-0"
-                aria-label="关闭"
-              >
-                <X className="w-4 h-4" strokeWidth={1.5} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} aria-busy={loading} className="flex-1 overflow-auto flex flex-col">
-              <fieldset disabled={loading} className="min-w-0 flex-1 overflow-auto p-6 space-y-6 thin-scrollbar">
-                <fieldset className="min-w-0">
-                  <legend className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                    邮箱服务商
-                  </legend>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {providers.map(p => (
-                      <button
-                        key={p.value}
-                        type="button"
-                        onClick={() => setForm({ ...form, provider: p.value })}
-                        aria-pressed={form.provider === p.value}
-                        className={`btn h-9 px-3 rounded-[8px] text-sm border transition-colors cursor-pointer ${
-                          form.provider === p.value
-                            ? 'bg-[var(--bg-accent-soft)] text-[var(--text-primary)] font-medium border-[var(--primary-200)]'
-                            : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-light)] hover:border-[var(--border-hover)]'
-                        }`}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </fieldset>
-
-                <div>
-                  <label htmlFor="account-email" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                    邮箱地址
-                  </label>
-                  <input
-                    id="account-email"
-                    type="email"
-                    value={form.email}
-                    onChange={e => {
-                      const email = e.target.value
-                      setForm(prev => ({
-                        ...prev,
-                        email,
-                        username: !editingAccount && !usernameEdited ? email : prev.username,
-                      }))
-                    }}
-                    placeholder="name@example.com"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="account-username" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                    登录用户名
-                  </label>
-                  <input
-                    id="account-username"
-                    type="text"
-                    value={form.username}
-                    onChange={e => {
-                      setUsernameEdited(true)
-                      setForm({ ...form, username: e.target.value })
-                    }}
-                    placeholder="通常与邮箱地址一致"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="account-password" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                    密码 / 授权码
-                    {editingAccount && (
-                      <span id="account-password-help" className="text-xs text-[var(--text-tertiary)] font-normal ml-2">留空则保持不变</span>
-                    )}
-                  </label>
-                  <input
-                    id="account-password"
-                    aria-describedby={editingAccount ? 'account-password-help' : undefined}
-                    type="password"
-                    value={form.password}
-                    onChange={e => setForm({ ...form, password: e.target.value })}
-                    placeholder={editingAccount ? '留空保持原密码' : '输入应用专用密码或授权码'}
-                    required={!editingAccount}
-                  />
-                </div>
-
-                <fieldset className="min-w-0">
-                  <legend className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                    账户标识色
-                  </legend>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {accountColors.map(color => (
-                      <button
-                        key={color}
-                        type="button"
-                        onClick={() => setForm({ ...form, color })}
-                        className={`btn btn-ghost w-9 h-9 p-0 rounded-lg border transition-colors cursor-pointer ${
-                          form.color === color
-                            ? 'bg-[var(--bg-secondary)] border-[var(--text-secondary)]'
-                            : 'border-transparent hover:border-[var(--border-hover)]'
-                        }`}
-                        aria-label={`选择颜色 ${color}`}
-                        aria-pressed={form.color === color}
-                      >
-                        <span aria-hidden="true" className="h-4 w-4 rounded-full" style={{ backgroundColor: color }} />
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setForm({ ...form, color: '' })}
-                      aria-pressed={form.color === ''}
-                      className={`btn h-9 px-3 rounded-[8px] text-sm border transition-colors cursor-pointer ${
-                        form.color === ''
-                          ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-medium border-[var(--border-default)]'
-                          : 'bg-transparent text-[var(--text-tertiary)] border-[var(--border-light)] hover:border-[var(--border-hover)]'
-                      }`}
-                    >
-                      自动
-                    </button>
-                  </div>
-                </fieldset>
-
-
-                {error && (
-                  <div role="alert" className="alert alert-error flex items-center gap-2">
-                    <X className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
-                    <span>{error}</span>
-                  </div>
-                )}
-              </fieldset>
-
-              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 px-6 py-4 border-t border-[var(--border-light)]">
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  disabled={loading}
-                  className="btn btn-secondary w-full sm:w-auto"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="btn btn-primary w-full sm:w-auto"
-                >
-                  {loading ? '处理中' : editingAccount ? '保存修改' : '添加账户'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </>
+        <AccountDrawer drawerRef={drawerRef} editingAccount={editingAccount} loading={loading} form={form} setForm={setForm}
+          usernameEdited={usernameEdited} setUsernameEdited={setUsernameEdited} error={error} closeModal={closeModal} handleSubmit={handleSubmit} />
       )}
 
     </div>

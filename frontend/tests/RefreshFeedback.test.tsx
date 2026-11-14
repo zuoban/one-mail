@@ -1,14 +1,17 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AxiosAdapter } from 'axios'
-import apiClient, { accountApi, emailApi, type EmailAccount, type EmailSummary, type RefreshEmailsResponse } from '../src/api'
+import { useState, type ReactNode } from 'react'
+import { AccountStore } from '../src/accounts/AccountStore'
+import { AccountContext } from '../src/accounts/account-context'
+import apiClient, { accountApi, emailApi, providerApi, type EmailAccount, type EmailSummary, type RefreshEmailsResponse } from '../src/api'
 import ThemeContext from '../src/context/theme-context'
 import { MailContext } from '../src/mail/mail-context'
 import { MailStore } from '../src/mail/MailStore'
 import Dashboard from '../src/pages/Dashboard'
 import Accounts from '../src/pages/Accounts'
 
-const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader@example.com', status: 'active', last_sync_time: '2026-11-14T08:00:00Z', color: '#2563eb' }
+const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader@example.com', status: 'active', last_sync_time: '2026-11-14T08:00:00Z', color: '#2563eb', imap_host: 'imap.example.com', imap_port: 993 }
 const email: EmailSummary = { id: 1, account_id: 1, created_at: '2026-11-14', date: '2026-11-14', from: 'sender@example.com', from_name: 'Sender', to: account.email, subject: '会议安排', has_attachment: false, folder: 'INBOX' }
 const stores: MailStore[] = []
 
@@ -19,6 +22,7 @@ beforeEach(() => {
     unobserve() {}
   })
   vi.spyOn(accountApi, 'list').mockResolvedValue({ data: [account] })
+  vi.spyOn(providerApi, 'list').mockResolvedValue({ data: [{ id: 'custom', label: '自定义', custom: true, imap_host: '', imap_port: 993 }] })
 })
 
 afterEach(() => {
@@ -26,6 +30,11 @@ afterEach(() => {
   stores.length = 0
   vi.unstubAllGlobals()
 })
+
+function AccountSession({ children }: { children: ReactNode }) {
+  const [store] = useState(() => new AccountStore())
+  return <AccountContext.Provider value={store}>{children}</AccountContext.Provider>
+}
 
 function renderInbox(emails = [email]) {
   const pending = Promise.withResolvers<RefreshEmailsResponse>()
@@ -37,7 +46,7 @@ function renderInbox(emails = [email]) {
   }
   const store = new MailStore(api)
   stores.push(store)
-  const view = render(<ThemeContext.Provider value={{ theme: 'light', resolvedTheme: 'light', setTheme: vi.fn() }}><MailContext.Provider value={store}><Dashboard /></MailContext.Provider></ThemeContext.Provider>)
+  const view = render(<ThemeContext.Provider value={{ theme: 'light', resolvedTheme: 'light', setTheme: vi.fn() }}><MailContext.Provider value={store}><AccountSession><Dashboard /></AccountSession></MailContext.Provider></ThemeContext.Provider>)
   return { pending, api, view }
 }
 
@@ -81,7 +90,7 @@ describe('refresh feedback', () => {
   it.each(['success', 'failure'] as const)('clears account progress after %s', async outcome => {
     const pending = Promise.withResolvers<RefreshEmailsResponse>()
     vi.spyOn(accountApi, 'refresh').mockReturnValue(pending.promise)
-    render(<Accounts />)
+    render(<AccountSession><Accounts /></AccountSession>)
     const refresh = await screen.findByRole('button', { name: '刷新' }) as HTMLButtonElement
     fireEvent.click(refresh)
     expect(refresh.disabled).toBe(true)
@@ -154,6 +163,18 @@ describe('refresh feedback', () => {
 })
 
 describe('read-only inbox', () => {
+  it('renders the latest 50 rows directly and scrolls keyboard selection into view', async () => {
+    const messages = Array.from({ length: 50 }, (_, index) => ({ ...email, id: index + 1, subject: `Message ${index + 1}` }))
+    renderInbox(messages)
+    await screen.findByRole('group', { name: 'Sender，Message 1' })
+    expect(screen.getAllByRole('group')).toHaveLength(50)
+    const last = screen.getByRole('group', { name: 'Sender，Message 1' })
+    last.scrollIntoView = vi.fn()
+    fireEvent.keyDown(window, { key: 'k' })
+    await waitFor(() => expect(last.getAttribute('aria-current')).toBe('true'))
+    expect(last.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+  })
+
   it('opens and reopens a message using only GET requests', async () => {
     const previousAdapter = apiClient.defaults.adapter
     const adapter = vi.fn<AxiosAdapter>(async config => {
@@ -166,7 +187,7 @@ describe('read-only inbox', () => {
     const store = new MailStore()
     stores.push(store)
     try {
-      render(<ThemeContext.Provider value={{ theme: 'light', resolvedTheme: 'light', setTheme: vi.fn() }}><MailContext.Provider value={store}><Dashboard /></MailContext.Provider></ThemeContext.Provider>)
+      render(<ThemeContext.Provider value={{ theme: 'light', resolvedTheme: 'light', setTheme: vi.fn() }}><MailContext.Provider value={store}><AccountSession><Dashboard /></AccountSession></MailContext.Provider></ThemeContext.Provider>)
       fireEvent.click(await screen.findByRole('group', { name: 'Sender，会议安排' }))
       await screen.findByText('正文来自只读请求')
       fireEvent.keyDown(window, { key: 'Escape' })

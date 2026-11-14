@@ -32,7 +32,7 @@ func TestAccountUpdateEncryptsPasswordAndDeleteCleansMessages(t *testing.T) {
 	if err := db.Create(&email).Error; err != nil {
 		t.Fatal(err)
 	}
-	h := NewAccountHandler()
+	h := newTestAccountHandler(t, db)
 	r := gin.New()
 	r.PUT("/accounts/:id", h.UpdateAccount)
 	r.DELETE("/accounts/:id", h.DeleteAccount)
@@ -82,7 +82,7 @@ func TestBodyFetchFailureDoesNotReturnEmptySuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	r.GET("/emails/:id", NewEmailHandler().GetEmail)
+	r.GET("/emails/:id", newTestEmailHandler(t, db).GetEmail)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/emails/%d", email.ID), nil))
 	if w.Code != http.StatusBadGateway {
@@ -107,8 +107,8 @@ func TestMissingAndDeletedAccountsRemainUnavailable(t *testing.T) {
 	if err := db.Delete(&account).Error; err != nil {
 		t.Fatal(err)
 	}
-	h := NewAccountHandler()
-	emails := NewEmailHandler()
+	h := newTestAccountHandler(t, db)
+	emails := newTestEmailHandler(t, db)
 	r := gin.New()
 	r.GET("/accounts", h.ListAccounts)
 	r.PUT("/accounts/:id", h.UpdateAccount)
@@ -166,7 +166,7 @@ func TestAccountDeleteRollsBackCacheCleanupOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	r.DELETE("/accounts/:id", NewAccountHandler().DeleteAccount)
+	r.DELETE("/accounts/:id", newTestAccountHandler(t, db).DeleteAccount)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/accounts/%d", account.ID), nil))
 	if w.Code != http.StatusInternalServerError {

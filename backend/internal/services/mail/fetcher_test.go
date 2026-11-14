@@ -335,7 +335,9 @@ func TestRefreshAccount_RemoteFailurePreservesCache(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if count, err := RefreshAccount(ctx, db, &account, 50); count != 0 || err == nil {
+	pool := imap.NewConnectionPool()
+	t.Cleanup(func() { _ = pool.Close() })
+	if count, err := RefreshAccount(ctx, db, pool, &account, 50); count != 0 || err == nil {
 		t.Fatalf("remote failure count=%d err=%v", count, err)
 	}
 	var stored []models.Email

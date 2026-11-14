@@ -12,7 +12,7 @@ import (
 )
 
 func testPool() *ConnectionPool {
-	p := newConnectionPool()
+	p := NewConnectionPool()
 	p.dial = func(context.Context, *models.EmailAccount) (*Client, error) { return &Client{}, nil }
 	return p
 }

@@ -102,7 +102,9 @@ func TestRefreshRejectsStaleSnapshotBeforeConnecting(t *testing.T) {
 	if err := db.Model(&models.EmailAccount{}).Where("id = ?", account.ID).Update("config_version", 1).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RefreshAccount(context.Background(), db, &account, 50); !errors.Is(err, ErrAccountChanged) {
+	pool := imap.NewConnectionPool()
+	t.Cleanup(func() { _ = pool.Close() })
+	if _, err := RefreshAccount(context.Background(), db, pool, &account, 50); !errors.Is(err, ErrAccountChanged) {
 		t.Fatalf("stale snapshot reached network: %v", err)
 	}
 }
@@ -115,7 +117,9 @@ func TestRefreshAccountsCancellationCoversQueuedAccounts(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	summary := RefreshAccounts(ctx, db, accounts, 50)
+	pool := imap.NewConnectionPool()
+	t.Cleanup(func() { _ = pool.Close() })
+	summary := RefreshAccounts(ctx, db, pool, accounts, 50)
 	if summary.Refreshed != 0 || summary.NewCount != 0 || len(summary.Errors) != len(accounts) {
 		t.Fatalf("cancelled queue reported success: %+v", summary)
 	}

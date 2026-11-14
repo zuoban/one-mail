@@ -1,9 +1,7 @@
 package handlers
 
 import (
-	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +11,6 @@ import (
 
 	"one-mail/backend/internal/credentials"
 	"one-mail/backend/internal/models"
-	"one-mail/backend/internal/services/mail"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,7 +33,7 @@ func TestAccountIdentityUpdateClearsCacheAtomically(t *testing.T) {
 				}
 			}
 			r := gin.New()
-			r.PUT("/accounts/:id", NewAccountHandler().UpdateAccount)
+			r.PUT("/accounts/:id", newTestAccountHandler(t, db).UpdateAccount)
 			req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/accounts/%d", account.ID), strings.NewReader(`{"username":"new"}`))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
@@ -74,7 +71,7 @@ func TestPasswordRotationPreservesCachedBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	r.PUT("/accounts/:id", NewAccountHandler().UpdateAccount)
+	r.PUT("/accounts/:id", newTestAccountHandler(t, db).UpdateAccount)
 	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/accounts/%d", account.ID), strings.NewReader(`{"password":"rotated-password"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -92,47 +89,6 @@ func TestPasswordRotationPreservesCachedBody(t *testing.T) {
 	}
 }
 
-func TestBodyCommitRejectsChangedAccountAndEvictedMessage(t *testing.T) {
-	for _, change := range []string{"identity", "password", "deleted", "evicted"} {
-		t.Run(change, func(t *testing.T) {
-			db := setupEmailHandlerTestDB(t)
-			account := models.EmailAccount{UIDValidity: 9}
-			if err := db.Create(&account).Error; err != nil {
-				t.Fatal(err)
-			}
-			email := models.Email{AccountID: account.ID, UID: 1, UIDValidity: 9, MessageID: "same"}
-			if err := db.Create(&email).Error; err != nil {
-				t.Fatal(err)
-			}
-			var changeErr error
-			switch change {
-			case "identity":
-				changeErr = db.Model(&models.EmailAccount{}).Where("id = ?", account.ID).Updates(map[string]interface{}{"identity_version": 1, "config_version": 1}).Error
-			case "password":
-				changeErr = db.Model(&models.EmailAccount{}).Where("id = ?", account.ID).Update("config_version", 1).Error
-			case "deleted":
-				changeErr = db.Delete(&models.EmailAccount{}, account.ID).Error
-			case "evicted":
-				changeErr = db.Delete(&models.Email{}, email.ID).Error
-			}
-			if changeErr != nil {
-				t.Fatal(changeErr)
-			}
-			err := cacheEmailBody(context.Background(), db, &account, &email, "obsolete fetched body", "")
-			if err == nil {
-				t.Fatal("obsolete body committed")
-			}
-			if (change == "identity" || change == "password") && !errors.Is(err, mail.ErrAccountChanged) {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			var fetched int64
-			if err := db.Model(&models.Email{}).Where("body_fetched = ?", true).Count(&fetched).Error; err != nil || fetched != 0 {
-				t.Fatalf("obsolete body was persisted: %d %v", fetched, err)
-			}
-		})
-	}
-}
-
 func TestCachedBodyRejectsDifferentMailboxVersion(t *testing.T) {
 	db := setupEmailHandlerTestDB(t)
 	account := models.EmailAccount{IdentityVersion: 1, UIDValidity: 9}
@@ -144,7 +100,7 @@ func TestCachedBodyRejectsDifferentMailboxVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	r.GET("/emails/:id", NewEmailHandler().GetEmail)
+	r.GET("/emails/:id", newTestEmailHandler(t, db).GetEmail)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/emails/%d", email.ID), nil))
 	if w.Code != http.StatusConflict || strings.Contains(w.Body.String(), email.BodyText) {

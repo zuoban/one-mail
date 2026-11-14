@@ -9,11 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"one-mail/backend/internal/application"
 	"one-mail/backend/internal/credentials"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/telegram"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func telegramRequest(r *gin.Engine, method, path, body string) *httptest.ResponseRecorder {
@@ -24,12 +26,14 @@ func telegramRequest(r *gin.Engine, method, path, body string) *httptest.Respons
 	return w
 }
 
-func telegramTestRouter() *gin.Engine {
+func telegramTestRouter(t *testing.T, db *gorm.DB) *gin.Engine {
+	service, _ := newTestMailService(t, db)
+	h := NewTelegramHandler(application.NewTelegramService(db, service, telegram.NewClient()))
 	r := gin.New()
-	r.GET("/telegram", GetTelegramConfig)
-	r.PUT("/telegram", UpdateTelegramConfig)
-	r.POST("/telegram/test", TestTelegramConnection)
-	r.POST("/emails/:id/telegram", SendEmailToTelegram)
+	r.GET("/telegram", h.GetTelegramConfig)
+	r.PUT("/telegram", h.UpdateTelegramConfig)
+	r.POST("/telegram/test", h.TestTelegramConnection)
+	r.POST("/emails/:id/telegram", h.SendEmailToTelegram)
 	return r
 }
 
@@ -39,16 +43,14 @@ func TestTelegramConfigurationUsesInstanceSingleton(t *testing.T) {
 	if err := credentials.Init(base64.StdEncoding.EncodeToString(make([]byte, 32)), ""); err != nil {
 		t.Fatal(err)
 	}
-	telegram.InvalidateConfigCache()
-	t.Cleanup(telegram.InvalidateConfigCache)
 	extra := models.TelegramConfig{ID: 2, Enabled: true, BotToken: "unrelated-token", ChatID: "unrelated-chat"}
 	if err := db.Create(&extra).Error; err != nil {
 		t.Fatal(err)
 	}
-	r := telegramTestRouter()
+	r := telegramTestRouter(t, db)
 	w := telegramRequest(r, http.MethodGet, "/telegram", "")
 	var response struct {
-		Data TelegramConfigResponse `json:"data"`
+		Data application.TelegramConfig `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
@@ -56,16 +58,10 @@ func TestTelegramConfigurationUsesInstanceSingleton(t *testing.T) {
 	if w.Code != http.StatusOK || response.Data.Enabled || response.Data.BotToken != "" || response.Data.ChatID != "" {
 		t.Fatalf("new instance did not receive an empty singleton: %d %s", w.Code, w.Body.String())
 	}
-	if telegram.GetClient().IsEnabled() {
-		t.Fatal("empty singleton used another configuration")
-	}
 	const bot = "instance-private-bot-token"
 	w = telegramRequest(r, http.MethodPut, "/telegram", fmt.Sprintf(`{"enabled":true,"bot_token":%q,"chat_id":"instance-chat"}`, bot))
 	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), bot) {
 		t.Fatalf("config update failed or exposed the complete token: %d %s", w.Code, w.Body.String())
-	}
-	if !telegram.GetClient().IsEnabled() {
-		t.Fatal("configuration update did not invalidate the cached singleton")
 	}
 	var stored models.TelegramConfig
 	if err := db.First(&stored, 1).Error; err != nil {
@@ -80,12 +76,12 @@ func TestTelegramConfigurationUsesInstanceSingleton(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != http.StatusOK || response.Data.ChatID != stored.ChatID || response.Data.BotToken != maskToken(bot) {
+	if w.Code != http.StatusOK || response.Data.ChatID != stored.ChatID || response.Data.BotToken != application.MaskToken(bot) {
 		t.Fatalf("singleton read returned wrong configuration: %s", w.Body.String())
 	}
-	w = telegramRequest(r, http.MethodPut, "/telegram", fmt.Sprintf(`{"enabled":false,"bot_token":%q,"chat_id":"updated-chat"}`, maskToken(bot)))
-	if w.Code != http.StatusOK || telegram.GetClient().IsEnabled() {
-		t.Fatalf("disabling singleton did not invalidate cache: %d %s", w.Code, w.Body.String())
+	w = telegramRequest(r, http.MethodPut, "/telegram", fmt.Sprintf(`{"enabled":false,"bot_token":%q,"chat_id":"updated-chat"}`, application.MaskToken(bot)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("disabling singleton failed: %d %s", w.Code, w.Body.String())
 	}
 	if err := db.First(&stored, 1).Error; err != nil {
 		t.Fatal(err)
@@ -128,7 +124,7 @@ func TestTelegramForwardingRejectsMissingEvictedAndRemovedAccountEmails(t *testi
 	if err := db.Delete(&evictedEmail).Error; err != nil {
 		t.Fatal(err)
 	}
-	r := telegramTestRouter()
+	r := telegramTestRouter(t, db)
 	for _, id := range []uint{deletedAccountEmail.ID, evictedEmail.ID, evictedEmail.ID + 100} {
 		w := telegramRequest(r, http.MethodPost, fmt.Sprintf("/emails/%d/telegram", id), "")
 		if w.Code != http.StatusNotFound || w.Body.String() != `{"error":"email not found"}` {
@@ -168,9 +164,8 @@ func TestTelegramEncryptedTokenWithWrongKeyIsNotExposed(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_ = credentials.Init(base64.StdEncoding.EncodeToString(make([]byte, 32)), "")
-		telegram.InvalidateConfigCache()
 	})
-	r := telegramTestRouter()
+	r := telegramTestRouter(t, db)
 	for _, req := range []struct{ method, path, body string }{
 		{http.MethodGet, "/telegram", ""},
 		{http.MethodPut, "/telegram", `{"enabled":false}`},

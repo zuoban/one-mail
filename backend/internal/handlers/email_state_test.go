@@ -27,7 +27,7 @@ func TestDeletedAccountEmailsAreInaccessible(t *testing.T) {
 	if err := db.Delete(&account).Error; err != nil {
 		t.Fatal(err)
 	}
-	h := NewEmailHandler()
+	h := newTestEmailHandler(t, db)
 	r := gin.New()
 	r.GET("/emails/:id", h.GetEmail)
 	r.GET("/emails", h.ListEmails)
@@ -64,7 +64,7 @@ func TestMissingAndEvictedEmailsRemainUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	r.GET("/emails/:id", NewEmailHandler().GetEmail)
+	r.GET("/emails/:id", newTestEmailHandler(t, db).GetEmail)
 	for _, id := range []uint{email.ID, email.ID + 100} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/emails/%d", id), nil))
@@ -89,7 +89,7 @@ func TestCachedBodiesDoNotRequireIMAP(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	r.GET("/emails/:id", NewEmailHandler().GetEmail)
+	r.GET("/emails/:id", newTestEmailHandler(t, db).GetEmail)
 	for _, body := range []string{"cached content", ""} {
 		email := models.Email{AccountID: account.ID, MessageID: "cached", UID: uint(len(body) + 1), UIDValidity: 11, BodyFetched: true, BodyText: body}
 		if err := db.Create(&email).Error; err != nil {

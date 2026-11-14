@@ -44,6 +44,30 @@ export interface EmailAccount {
   status: string
   last_sync_time: string
   color: string
+  imap_host: string
+  imap_port: number
+}
+
+export interface EmailProvider {
+  id: string
+  label: string
+  custom: boolean
+  imap_host: string
+  imap_port: number
+}
+
+export interface AccountInput {
+  email: string
+  provider: string
+  username: string
+  password: string
+  color?: string
+  imap_host?: string
+  imap_port?: number
+}
+
+export const providerApi = {
+  list: (signal?: AbortSignal) => api.get<{ data: EmailProvider[] }>('/providers', { signal }).then(r => r.data),
 }
 
 export interface EmailSummary {
@@ -90,9 +114,9 @@ export const authApi = {
 
 export const accountApi = {
   list: (signal?: AbortSignal) => api.get<{ data: EmailAccount[] }>('/accounts', { signal }).then(r => r.data),
-  add: (data: { email: string; provider: string; username: string; password: string; color?: string }) =>
-    api.post<{ data: EmailAccount }>('/accounts', data).then(r => r.data),
-  update: (id: number, data: { email?: string; provider?: string; username?: string; password?: string; color?: string }) =>
+  add: (data: AccountInput) =>
+    api.post<{ data: EmailAccount; refresh_error?: string }>('/accounts', data).then(r => r.data),
+  update: (id: number, data: Partial<AccountInput>) =>
     api.put<{ data: EmailAccount }>(`/accounts/${id}`, data).then(r => r.data),
   delete: (id: number) => api.delete(`/accounts/${id}`),
   test: (id: number) => api.post(`/accounts/${id}/test`),
