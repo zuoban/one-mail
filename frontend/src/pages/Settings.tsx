@@ -157,7 +157,7 @@ export default function Settings() {
         <section className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-4 md:p-6 shadow-[var(--shadow-sm)]">
           <div className="pb-4 mb-6 border-b border-[var(--border-light)]">
             <h2 className="text-base font-medium text-[var(--text-primary)]">Telegram 通知</h2>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">连接 Bot 后可将新邮件推送到指定会话</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">手动刷新邮箱后发现新邮件，后台将摘要推送到指定会话，并重试临时失败的通知。</p>
           </div>
 
           {telegramError && (
@@ -174,7 +174,7 @@ export default function Settings() {
               <div>
                 <span className="block text-sm font-medium text-[var(--text-primary)]">启用自动推送</span>
                 <span id="telegram-enabled-help" className="block text-xs text-[var(--text-tertiary)] mt-1">
-                  收到新邮件时自动转发摘要到 Telegram
+                  刷新发现新邮件后自动转发摘要到 Telegram
                 </span>
               </div>
               <button

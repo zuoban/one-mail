@@ -1,6 +1,10 @@
-.PHONY: run build frontend backend clean docker-build docker-run docker-start docker-stop docker-logs
+.PHONY: run build frontend backend test-dev clean docker-build docker-run docker-start docker-stop docker-logs
 
-run: backend frontend
+run:
+	node scripts/dev.mjs
+
+test-dev:
+	node --test scripts/dev.test.mjs
 
 backend:
 	cd backend && CGO_ENABLED=1 go run -tags fts5 ./cmd/server/main.go

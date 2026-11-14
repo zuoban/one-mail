@@ -93,8 +93,9 @@ func (s *MailService) List(ctx context.Context, query ListEmails) ([]EmailListIt
 			expr := `"` + strings.ReplaceAll(search, `"`, `""`) + `"`
 			q = q.Where("emails.id IN (SELECT rowid FROM emails_fts WHERE emails_fts MATCH ?)", expr)
 		} else {
-			pattern := "%" + search + "%"
-			q = q.Where("(subject LIKE ? OR `from` LIKE ? OR from_name LIKE ?)", pattern, pattern, pattern)
+			literal := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(search)
+			pattern := "%" + literal + "%"
+			q = q.Where(`(subject LIKE ? ESCAPE '\' OR "from" LIKE ? ESCAPE '\' OR from_name LIKE ? ESCAPE '\')`, pattern, pattern, pattern)
 		}
 	}
 	emails := make([]EmailListItem, 0)
