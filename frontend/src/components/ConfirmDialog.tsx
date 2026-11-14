@@ -6,6 +6,8 @@ interface ConfirmDialogProps {
   message: string
   confirmLabel?: string
   cancelLabel?: string
+  pending?: boolean
+  error?: string
   onConfirm: () => void
   onCancel: () => void
 }
@@ -16,32 +18,40 @@ export default function ConfirmDialog({
   message,
   confirmLabel = '确认',
   cancelLabel = '取消',
+  pending = false,
+  error,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
   const onCancelRef = useRef(onCancel)
+  const pendingRef = useRef(pending)
   const titleId = useId()
   const messageId = useId()
   useEffect(() => { onCancelRef.current = onCancel }, [onCancel])
+  useEffect(() => { pendingRef.current = pending }, [pending])
   useEffect(() => {
     if (!open) return
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     cancelRef.current?.focus()
     const containFocus = (event: FocusEvent) => {
-      if (event.target instanceof Node && !dialogRef.current?.contains(event.target)) cancelRef.current?.focus()
+      if (event.target instanceof Node && !dialogRef.current?.contains(event.target)) {
+        if (pendingRef.current) dialogRef.current?.focus()
+        else cancelRef.current?.focus()
+      }
     }
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
-        onCancelRef.current()
+        if (!pendingRef.current) onCancelRef.current()
       }
       if (event.key === 'Tab') {
         const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), [tabindex="0"]') || [])
         const first = controls[0]
         const last = controls[controls.length - 1]
+        if (!first || !last) { event.preventDefault(); dialogRef.current?.focus(); return }
         if ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
           event.preventDefault()
           ;(event.shiftKey ? last : first)?.focus()
@@ -62,12 +72,14 @@ export default function ConfirmDialog({
   return (
     <div
       className="overlay-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
-      onClick={onCancel}
+      onClick={() => { if (!pending) onCancel() }}
     >
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
+        aria-busy={pending}
+        tabIndex={-1}
         aria-labelledby={titleId}
         aria-describedby={messageId}
         className="w-full max-w-sm rounded-xl border border-[var(--border-default)] bg-[var(--bg-primary)] p-6 shadow-[var(--shadow-lg)]"
@@ -77,11 +89,13 @@ export default function ConfirmDialog({
           {title}
         </h3>
         <p id={messageId} className="mt-2 text-sm text-[var(--text-secondary)]">{message}</p>
+        {error && <p role="alert" className="mt-3 text-sm text-[var(--error-700)]">{error}</p>}
         <div className="mt-6 flex justify-end gap-2">
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
+            disabled={pending}
             className="btn btn-secondary btn-sm"
           >
             {cancelLabel}
@@ -89,9 +103,10 @@ export default function ConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
+            disabled={pending}
             className="btn btn-danger btn-sm"
           >
-            {confirmLabel}
+            {pending ? '删除中…' : confirmLabel}
           </button>
         </div>
       </div>

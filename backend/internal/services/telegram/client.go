@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"one-mail/backend/database"
+	"one-mail/backend/internal/credentials"
 	"one-mail/backend/internal/models"
 )
 
@@ -71,6 +72,12 @@ func getConfig() *models.TelegramConfig {
 	if err := db.Where("id = ?", 1).First(&loaded).Error; err != nil {
 		return nil
 	}
+	plain, err := credentials.Decrypt(loaded.BotToken)
+	if err != nil {
+		log.Print("Failed to unlock Telegram configuration")
+		return nil
+	}
+	loaded.BotToken = plain
 	cachedConfig = &loaded
 	return &loaded
 }

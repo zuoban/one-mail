@@ -76,8 +76,13 @@ export default defineConfig([
 
 - The workspace keeps the existing graphite palette, cobalt accent, fonts, and light/dark themes. Shared tokens and responsive workspace styles live in `src/index.css`.
 - At 1280px and above, navigation uses the full sidebar. Between 768px and 1279px, an icon rail leaves more room for mail. Below 1024px, opening a message switches from the list to the reader; use **返回** or **Esc** to return.
-- Search supports `/`; `j` and `k` move between messages; `?` opens the shortcut reference. Mail-row actions appear on hover and keyboard focus. Tab focus is visible across navigation and controls.
+- Search supports `/`; `j` and `k` move between messages; `?` opens the shortcut reference. Navigation and reading are keyboard accessible, with visible focus across controls. Mail is read-only: there are no delete, read/unread, or batch mutation controls.
+- Hover tooltips flip above or below their trigger to fit the viewport, keep an 8px edge inset, and wrap long content on narrow screens.
 - Desktop inputs and primary controls are 36px high. Touch and phone layouts provide 44px action targets. Mobile navigation has three equal columns and respects device safe areas.
+- Refresh buttons keep their width and show a readable busy state with a continuously rotating loading icon; reduced-motion mode slows the rotation. The inbox header and account row announce progress while existing messages remain readable; an empty inbox shows a loading state until refresh completes.
 - Account form labels target their inputs; provider and color selectors expose their selected state. The account drawer contains keyboard focus and restores it when closed.
+- Each account caches its latest 50 inbox messages, and the combined list shows the latest 50 across accounts. Opening a message loads its body on demand without changing its remote read state.
+- Account reads distinguish loading, failure, and an empty result, with cancellation and request ordering to ignore stale responses. Failed reads provide a retry without repeating successful mutations.
+- Account submissions and deletions have explicit pending states; concurrent refreshes track each account independently. A server sync followed by a failed list read reports the two outcomes separately and keeps the current messages readable.
 
 The refinement follows [unslop](https://heydamir.design/unslop) by Damir Sokolovsky ([@heydamir](https://x.com/heydamir)), licensed under CC BY 4.0.

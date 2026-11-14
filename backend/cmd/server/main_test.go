@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"one-mail/backend/database"
 	"one-mail/backend/internal/access"
@@ -110,6 +114,10 @@ func TestRouterAuthenticationModes(t *testing.T) {
 				{http.MethodGet, "/api/auth/me"},
 				{http.MethodPut, "/api/auth/profile"},
 				{http.MethodPut, "/api/auth/password"},
+				{http.MethodPost, "/api/emails/1/read"},
+				{http.MethodPost, "/api/emails/1/unread"},
+				{http.MethodPost, "/api/emails/batch/read"},
+				{http.MethodDelete, "/api/emails/1"},
 			} {
 				for _, header := range []string{"", "Bearer " + session.Token} {
 					w := routerRequest(r, removed.method, removed.path, header, `{}`)
@@ -122,5 +130,132 @@ func TestRouterAuthenticationModes(t *testing.T) {
 				t.Fatalf("public health endpoint returned %d", w.Code)
 			}
 		})
+	}
+}
+
+func TestHTTPServerBudgets(t *testing.T) {
+	server := newHTTPServer(":8080", http.NotFoundHandler())
+	if server.ReadHeaderTimeout != 5*time.Second || server.ReadTimeout != 15*time.Second || server.IdleTimeout != 60*time.Second {
+		t.Fatalf("unexpected read/idle timeouts: %+v", server)
+	}
+	if server.WriteTimeout <= 35*time.Second || shutdownTimeout <= 35*time.Second {
+		t.Fatal("HTTP and shutdown budgets must allow a complete 35-second refresh")
+	}
+}
+
+func TestRequestBodyLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	instanceAccess, err := access.New("instance-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := buildRouter(instanceAccess)
+	body := `{"password":"` + strings.Repeat("x", maxRequestBodyBytes) + `"}`
+	for _, contentLength := range []int64{int64(len(body)), -1} {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
+		req.ContentLength = contentLength
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("content length %d returned %d", contentLength, w.Code)
+		}
+	}
+}
+
+func TestReadinessRejectsMissingAndClosedDatabase(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldDB := database.DB
+	t.Cleanup(func() { database.DB = oldDB })
+	instanceAccess, err := access.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := buildRouter(instanceAccess)
+	database.DB = nil
+	if w := routerRequest(r, http.MethodGet, "/health", "", ""); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("missing database returned %d", w.Code)
+	}
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "health.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	database.DB = db
+	if w := routerRequest(r, http.MethodGet, "/health", "", ""); w.Code != http.StatusOK {
+		t.Fatalf("healthy database returned %d", w.Code)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if w := routerRequest(r, http.MethodGet, "/health", "", ""); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("closed database returned %d", w.Code)
+	}
+}
+
+func TestReadinessUsesRequestCancellation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldDB := database.DB
+	t.Cleanup(func() { database.DB = oldDB })
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "health-cancel.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	sqlDB.SetMaxOpenConns(1)
+	conn, err := sqlDB.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	database.DB = db
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+	health(c)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("cancelled readiness returned %d", w.Code)
+	}
+}
+
+func TestServeShutsDownOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := serve(ctx, newHTTPServer("127.0.0.1:0", http.NotFoundHandler())); err != nil {
+		t.Fatalf("cancelled server failed to shut down: %v", err)
+	}
+}
+
+func TestRequestLogOmitsSecrets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var output bytes.Buffer
+	oldOutput := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(oldOutput) })
+	r := gin.New()
+	r.Use(requestLogger())
+	r.POST("/api/accounts/:id", func(c *gin.Context) { c.Status(http.StatusOK) })
+	req := httptest.NewRequest(http.MethodPost, "/api/accounts/private-id?subject=private-subject&token=private-token", strings.NewReader(`{"password":"private-password"}`))
+	req.Header.Set("Authorization", "Bearer private-authorization")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	line := output.String()
+	for _, secret := range []string{"private-id", "private-subject", "private-token", "private-password", "private-authorization"} {
+		if strings.Contains(line, secret) {
+			t.Fatalf("request log disclosed %q", secret)
+		}
+	}
+	if !strings.Contains(line, `route="/api/accounts/:id"`) || !strings.Contains(line, "status=200") || !strings.Contains(line, "duration_ms=") {
+		t.Fatalf("request log lacks operational fields: %s", line)
 	}
 }

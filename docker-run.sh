@@ -38,6 +38,7 @@ docker run -d \
     --env "TZ=${TZ:-Asia/Shanghai}" \
     --name "${CONTAINER_NAME}" \
     --restart unless-stopped \
+    --stop-timeout 100 \
     "${IMAGE_NAME}:${IMAGE_TAG}"
 
 echo "等待容器启动..."

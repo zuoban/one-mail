@@ -1,7 +1,7 @@
 # One-Mail
 
 <p align="center">
-  <strong>供个人使用的全栈邮件客户端，支持接入多个邮箱</strong>
+  <strong>供个人使用的最近邮件阅读器，支持接入多个邮箱</strong>
 </p>
 
 <p align="center">
@@ -114,6 +114,7 @@ make frontend  # 前端 :5173
 docker run -d \
   --name one-mail \
   --env ADMIN_PASSWORD \
+  --stop-timeout 100 \
   -p 80:80 \
   -v one-mail-data:/app/data \
   ghcr.io/zuoban/one-mail:latest
@@ -134,12 +135,14 @@ services:
     image: ghcr.io/zuoban/one-mail:latest
     container_name: one-mail
     restart: unless-stopped
+    stop_grace_period: 100s
     ports:
       - "80:80"
     volumes:
       - one-mail-data:/app/data
     environment:
       - TZ=Asia/Shanghai
+      - GIN_MODE=${GIN_MODE:-release}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - CREDENTIALS_KEY=${CREDENTIALS_KEY:-}
 
@@ -199,11 +202,12 @@ docker run --env ADMIN_PASSWORD -v /path/to/data:/app/data ghcr.io/zuoban/one-ma
 |------|------|--------|
 | `TZ` | 时区设置 | `UTC` |
 | `ADMIN_PASSWORD` | 可选的管理员访问密码，非空时需要登录；修改后重启生效 | 空，直接使用 |
-| `CREDENTIALS_KEY` | 建议显式提供的 32 字节 Base64 密钥，用于 AES-GCM 加密邮箱凭证 | 未设置时在数据库旁生成权限 `600` 的 `.key` 文件 |
+| `CREDENTIALS_KEY` | 建议显式提供的 32 字节 Base64 密钥，用于 AES-GCM 加密邮箱凭证和 Telegram Bot Token | 未设置时在数据库旁生成权限 `600` 的 `.key` 文件 |
+| `GIN_MODE` | 覆盖 Gin 运行模式 | Docker 为 `release`；本地使用配置文件 |
 
-邮箱凭证以 AES-GCM 加密保存，已有明文凭证会在首次升级时迁移。必须备份数据库及其独立密钥；旧备份可能仍含明文凭证，密钥遗失将无法恢复邮箱授权码。
+邮箱凭证和 Telegram Bot Token 以 AES-GCM 加密保存，已有明文凭证会在首次升级时迁移。必须备份数据库及其独立密钥；旧备份可能仍含明文凭证，密钥遗失将无法恢复邮箱授权码和 Bot Token。
 
-应用为单人模式，没有注册、用户资料或应用内修改密码功能。升级会保留全部邮箱与邮件，并移除旧用户数据及所有权字段。Telegram 使用一份全局配置；旧库存在多份时保留最近更新的一份完整配置，无完整配置时保留最新记录。
+应用为单人模式，没有注册、用户资料或应用内修改密码功能。升级保留邮箱配置和最近邮件的正文缓存，并移除旧用户数据及所有权字段。Telegram 使用一份全局配置；旧库存在多份时保留最近更新的一份完整配置，无完整配置时保留最新记录。
 
 ### 反向代理配置
 
@@ -244,6 +248,8 @@ mail.example.com {
 
 设置了管理员密码时，业务接口需要 `Authorization: Bearer <token>`；未设置时无需鉴权。会话最多有效 7 天，服务重启后失效。
 
+密码登录在实例范围内累计失败 10 次后返回 HTTP 429 和 `Retry-After`，一分钟窗口结束后恢复。默认无密码模式不受此限流影响。
+
 ### 邮箱账户
 - `GET /api/accounts` - 获取账户列表
 - `POST /api/accounts` - 添加邮箱账户
@@ -252,15 +258,17 @@ mail.example.com {
 - `POST /api/accounts/:id/refresh` - 拉取该账户最近 50 封邮件
 
 ### 邮件
-- `GET /api/emails` - 获取最近 50 封邮件列表
-- `POST /api/emails/refresh` - 手动刷新邮件（拉取最近 50 封）
-- `POST /api/emails/:id/read` - 标记已读
-- `POST /api/emails/:id/unread` - 标记未读
-- `DELETE /api/emails/:id` - 删除邮件
+- `GET /api/emails` - 获取最近 50 封邮件，支持发件人、主题搜索及邮箱筛选
+- `GET /api/emails/:id` - 获取正文，本地未缓存时通过 IMAP 按需下载并落库
+- `POST /api/emails/refresh` - 手动刷新全部或指定邮箱的最近 50 封邮件
 
-刷新按账户、文件夹、UIDVALIDITY 与 UID 核对本批邮件身份，旧邮件由数据库直接清理。新增邮件、已读/星标状态、旧邮件清理和刷新时间在同一事务中提交；任一步骤失败都会回滚并返回错误。Telegram 新邮件通知在事务提交后发送，本地删除的邮件不会因普通刷新恢复。
+每个邮箱只缓存收件箱最近 50 封，汇总列表显示所有邮箱中最新的 50 封。刷新按账户身份版本、文件夹、UIDVALIDITY 与 UID 核对邮件身份，保留身份未变的正文缓存，物理清理窗口外的邮件及正文。更换服务商或用户名时原子清理旧缓存；轮换密码保留同一邮箱的缓存，并拒绝旧配置任务提交。新增摘要、旧缓存清理和刷新时间在同一事务中提交；无变化摘要不重复写入，获取或提交失败时保留原缓存，Telegram 新邮件通知在提交后发送。
 
-已读、未读和批量已读都会持久化待同步状态，并尝试写回 IMAP；远端不可用时响应包含 `sync_pending: true`，下次刷新继续同步，刷新不会覆盖待提交的用户操作。邮件通过 UIDVALIDITY 与 UID 校验远端身份；连接和刷新并发受全局及每账户限制。
+邮件为只读浏览：没有删除、已读/未读筛选或状态写回，打开正文不会修改远端已读状态。连接和刷新并发受全局及每账户限制。邮箱账户仍可删除，删除账户时清理其邮件缓存。
+
+全部账户刷新最多执行 35 秒，每账户最多 20 秒，未完成账户返回明确错误。正文解析失败不会标记为已获取；摘要根据 MIME 结构显示附件标识，不下载附件正文。FTS 初始化检查索引完整性，失败时回退 LIKE。部署权限、日志、健康检查和优雅停止预算见 [Docker 部署文档](DOCKER.md)。
+
+启动升级会清除旧的邮件删除标记及其正文、已删除账户和非收件箱的邮件缓存，按列依赖清理旧索引后移除已读、星标及待同步状态，并将每个账户的收件箱缓存裁剪到最近 50 封。窗口内正常邮件的 ID 和已下载正文继续保留。
 
 HTML 邮件在隔离文档中显示，清洗危险标签、属性及 URL，默认阻止远程资源，用户可按邮件选择加载远程图片。
 

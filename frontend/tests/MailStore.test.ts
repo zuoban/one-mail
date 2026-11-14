@@ -1,11 +1,9 @@
-import { AxiosError, AxiosHeaders, type AxiosResponse } from 'axios'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { emailApi, type EmailDetail, type EmailSummary, type EmailListResponse, type RefreshEmailsResponse } from '../src/api'
 import { MailStore } from '../src/mail/MailStore'
 
-const summary: EmailSummary = { id: 1, account_id: 1, created_at: '2026-01-01', date: '2026-01-01', from: 'sender@example.com', from_name: 'Sender', to: 'me@example.com', subject: 'First', has_attachment: false, is_read: true, folder: 'INBOX' }
+const summary: EmailSummary = { id: 1, account_id: 1, created_at: '2026-01-01', date: '2026-01-01', from: 'sender@example.com', from_name: 'Sender', to: 'me@example.com', subject: 'First', has_attachment: false, folder: 'INBOX' }
 const detail: EmailDetail = { ...summary, body_html: '<p>完整正文</p>', body_text: '完整正文' }
-const response: AxiosResponse = { data: null, status: 200, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() } }
 const stores: MailStore[] = []
 
 afterEach(() => { stores.forEach(store => store.dispose()); stores.length = 0 })
@@ -18,9 +16,6 @@ function setup() {
     ...emailApi,
     list: vi.fn<typeof emailApi.list>().mockResolvedValue({ data: [summary], total: 1 }),
     get: vi.fn<typeof emailApi.get>().mockResolvedValue({ data: detail }),
-    delete: vi.fn<typeof emailApi.delete>().mockResolvedValue(response),
-    markAsRead: vi.fn<typeof emailApi.markAsRead>().mockResolvedValue({ message: 'ok', sync_pending: false }),
-    markAsUnread: vi.fn<typeof emailApi.markAsUnread>().mockResolvedValue({ message: 'ok', sync_pending: false }),
     refresh: vi.fn<typeof emailApi.refresh>().mockResolvedValue({ message: 'ok', new_count: 0 }),
   }
   const store = new MailStore(api)
@@ -49,33 +44,32 @@ describe('mail query and detail lifecycle', () => {
     expect(store.getSnapshot().emails.map(email => email.subject)).toEqual(['new'])
   })
 
-  it('finishes refresh against the current query and clears selection on scope changes', async () => {
+  it('finishes refresh against the current query and closes detail on scope changes', async () => {
     const { store, api } = setup()
     store.setQuery({ search: 'old' })
     await settle()
-    store.setSelectedIds(new Set([1]))
+    await store.open(summary)
     const refresh = deferred<RefreshEmailsResponse>()
     api.refresh.mockReturnValueOnce(refresh.promise)
     const running = store.refresh()
-    store.setQuery({ search: 'new', account_id: 2, unread: true })
-    expect(store.getSnapshot().selectedIds.size).toBe(0)
+    store.setQuery({ search: 'new', account_id: 2 })
+    expect(store.getSnapshot().selectedEmail).toBeNull()
     refresh.resolve({ message: 'ok', new_count: 1 })
     await running
-    expect(api.list.mock.calls.at(-1)?.[0]).toEqual({ search: 'new', account_id: 2, unread: true })
+    expect(api.list.mock.calls.at(-1)?.[0]).toEqual({ search: 'new', account_id: 2 })
   })
 
   it('patches selected detail and its cache without replacing the body with a summary', async () => {
     const { store, api } = setup()
     await store.reload()
     await store.open(summary)
-    await store.setRead(summary, false)
     expect(store.getSnapshot().selectedDetail?.body_html).toBe(detail.body_html)
     store.closeDetail()
-    await store.open(summary, false)
-    expect(store.getSnapshot().selectedDetail).toMatchObject({ body_html: detail.body_html, is_read: false })
-    api.list.mockResolvedValue({ data: [{ ...summary, is_read: false, subject: 'Updated' }], total: 1 })
+    await store.open(summary)
+    expect(store.getSnapshot().selectedDetail).toMatchObject({ body_html: detail.body_html })
+    api.list.mockResolvedValue({ data: [{ ...summary, subject: 'Updated' }], total: 1 })
     await store.reload()
-    expect(store.getSnapshot().selectedDetail).toMatchObject({ body_html: detail.body_html, is_read: false, subject: 'Updated' })
+    expect(store.getSnapshot().selectedDetail).toMatchObject({ body_html: detail.body_html, subject: 'Updated' })
     expect(api.get).toHaveBeenCalledTimes(1)
   })
 
@@ -83,8 +77,8 @@ describe('mail query and detail lifecycle', () => {
     const { store, api } = setup()
     const first = deferred<{ data: EmailDetail }>()
     api.get.mockReturnValueOnce(first.promise)
-    const loading = store.open(summary, false)
-    expect(store.open(summary, false)).toBe(loading)
+    const loading = store.open(summary)
+    expect(store.open(summary)).toBe(loading)
     expect(api.get).toHaveBeenCalledTimes(1)
     store.closeDetail()
     expect(api.get.mock.calls[0][1]?.aborted).toBe(true)
@@ -92,7 +86,7 @@ describe('mail query and detail lifecycle', () => {
     await loading
     expect(store.getSnapshot().selectedDetail).toBeNull()
     api.get.mockRejectedValueOnce(new Error('offline'))
-    await store.open(summary, false)
+    await store.open(summary)
     expect(store.getSnapshot().detailError).toContain('重试')
     expect(store.getSnapshot().selectedDetail).toBeNull()
     await store.retryDetail()
@@ -101,123 +95,153 @@ describe('mail query and detail lifecycle', () => {
     expect(store.getSnapshot().detailError).toBeNull()
   })
 
-  it('rolls back failed optimistic read and prevents a late body response from restoring stale state', async () => {
+  it('keeps the latest summary when a detail response arrives after refresh', async () => {
     const { store, api } = setup()
-    const unread = { ...summary, is_read: false }
     const body = deferred<{ data: EmailDetail }>()
-    api.list.mockResolvedValue({ data: [unread], total: 1 })
     api.get.mockReturnValueOnce(body.promise)
-    api.markAsRead.mockRejectedValueOnce(new Error('offline'))
     await store.reload()
-    const loading = store.open(unread)
-    expect(store.getSnapshot().selectedEmail?.is_read).toBe(true)
-    await settle()
-    expect(store.getSnapshot().selectedEmail?.is_read).toBe(false)
-    body.resolve({ data: { ...detail, is_read: true } })
+    const loading = store.open(summary)
+    api.list.mockResolvedValue({ data: [{ ...summary, subject: 'Updated' }], total: 1 })
+    await store.reload()
+    body.resolve({ data: detail })
     await loading
-    expect(store.getSnapshot().selectedDetail?.is_read).toBe(false)
-    expect(store.getSnapshot().notice?.type).toBe('error')
+    expect(store.getSnapshot().selectedDetail).toMatchObject({ subject: 'Updated', body_html: detail.body_html })
   })
 
-  it('rolls back queued read failures to confirmed server state', async () => {
+  it('cancels detail for a message omitted by a refreshed account list', async () => {
     const { store, api } = setup()
-    const unread = { ...summary, is_read: false }
-    api.list.mockResolvedValue({ data: [unread], total: 1 })
-    api.markAsRead.mockRejectedValue(new Error('offline'))
-    api.markAsUnread.mockRejectedValue(new Error('offline'))
-    await store.reload()
-    const first = store.setRead(unread, true)
-    const second = store.setRead(unread, false)
-    await Promise.all([first, second])
-    expect(store.getSnapshot().emails[0].is_read).toBe(false)
-  })
-
-  it('reports saved pending synchronization and handles mailbox epoch conflicts', async () => {
-    const { store, api } = setup()
-    await store.reload()
-    api.markAsUnread.mockResolvedValueOnce({ message: 'ok', sync_pending: true })
-    await store.setRead(summary, false)
-    expect(store.getSnapshot().notice?.message).toBe('已保存，等待同步')
-    api.markAsRead.mockRejectedValueOnce(new AxiosError('conflict', '409', undefined, undefined, { ...response, status: 409 }))
-    api.list.mockResolvedValue({ data: [{ ...summary, id: 2 }], total: 1 })
-    await store.setRead(summary, true)
+    const body = deferred<{ data: EmailDetail }>()
+    store.setQuery({ account_id: 1 })
     await settle()
-    expect(store.getSnapshot().notice?.message).toContain('邮箱已变化')
-    expect(store.getSnapshot().emails.map(email => email.id)).toEqual([2])
+    api.get.mockReturnValueOnce(body.promise)
+    const loading = store.open(summary)
+    api.list.mockResolvedValue({ data: [], total: 0 })
+    await store.reload()
+    expect(api.get.mock.calls[0][1]?.aborted).toBe(true)
+    body.resolve({ data: detail })
+    await loading
     expect(store.getSnapshot().selectedEmail).toBeNull()
+    expect(store.getSnapshot().selectedDetail).toBeNull()
   })
-})
 
-describe('mail deletion lifecycle', () => {
-  it('keeps pending deletion hidden during refresh and supports undo', async () => {
-    vi.useFakeTimers()
+  it('prunes only the refreshed account cache and preserves other account bodies', async () => {
+    const { store, api } = setup()
+    const second = { ...summary, id: 2, account_id: 2 }
+    api.get.mockImplementation(async id => ({ data: { ...detail, ...(id === 2 ? second : summary) } }))
+    await store.open(summary)
+    await store.open(second)
+    api.list.mockResolvedValue({ data: [], total: 0 })
+    store.setQuery({ account_id: 1 })
+    await settle()
+    await store.open(second)
+    expect(api.get).toHaveBeenCalledTimes(2)
+    await store.open(summary)
+    expect(api.get).toHaveBeenCalledTimes(3)
+  })
+
+  it('preserves cached bodies omitted by searches and combined latest-50 lists', async () => {
+    const { store, api } = setup()
+    await store.open(summary)
+    api.list.mockResolvedValue({ data: [], total: 0 })
+    store.setQuery({ search: 'different', account_id: 1 })
+    await settle()
+    await store.open(summary)
+    store.setQuery({})
+    await settle()
+    await store.open(summary)
+    expect(api.get).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the previous list and exposes retry after a list failure', async () => {
     const { store, api } = setup()
     await store.reload()
-    store.scheduleDelete(summary)
+    api.list.mockRejectedValueOnce(new Error('offline'))
     await store.reload()
+    expect(store.getSnapshot().emails).toEqual([summary])
+    expect(store.getSnapshot().listError).toContain('重试')
+    await store.reload()
+    expect(store.getSnapshot().listError).toBeNull()
+  })
+
+  it('reports a completed sync separately from a failed list read and retries only GET', async () => {
+    const { store, api } = setup()
+    await store.reload()
+    api.list.mockRejectedValueOnce(new Error('list offline'))
+    const result = await store.refresh()
+    expect(result.listUpdated).toBe(false)
+    expect(store.getSnapshot().emails).toEqual([summary])
+    expect(store.getSnapshot().listError).toContain('重试')
+    expect(await store.reload()).toBe('updated')
+    expect(api.refresh).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot().listError).toBeNull()
+  })
+
+  it('does not call a superseded list response a successful page update', async () => {
+    const { store, api } = setup()
+    const old = deferred<EmailListResponse>()
+    api.list.mockReturnValueOnce(old.promise)
+    const pending = store.refresh()
+    await settle()
+    store.setQuery({ search: 'current' })
+    await settle()
+    old.resolve({ data: [{ ...summary, subject: 'stale' }], total: 1 })
+    expect((await pending).listUpdated).toBe(false)
+    expect(store.getSnapshot().emails).toEqual([summary])
+  })
+
+  it('preserves partial sync errors when the following list GET also fails', async () => {
+    const { store, api } = setup()
+    api.refresh.mockResolvedValueOnce({ message: 'partial', new_count: 1, errors: { 'offline@example.com': 'timeout' } })
+    api.list.mockRejectedValueOnce(new Error('list offline'))
+    expect(await store.refresh()).toMatchObject({ listUpdated: false, new_count: 1, errors: { 'offline@example.com': 'timeout' } })
+    expect(store.getSnapshot().listError).toContain('重试')
+  })
+
+  it('aborts requests on disposal and ignores late transport responses', async () => {
+    const { store, api } = setup()
+    const list = deferred<EmailListResponse>()
+    const body = deferred<{ data: EmailDetail }>()
+    api.list.mockReturnValueOnce(list.promise)
+    api.get.mockReturnValueOnce(body.promise)
+    const listing = store.reload()
+    const opening = store.open(summary)
+    const listener = vi.fn()
+    store.subscribe(listener)
+    store.dispose()
+    expect(api.list.mock.calls[0][1]?.aborted).toBe(true)
+    expect(api.get.mock.calls[0][1]?.aborted).toBe(true)
+    list.resolve({ data: [summary], total: 1 })
+    body.resolve({ data: detail })
+    await Promise.all([listing, opening])
+    expect(listener).not.toHaveBeenCalled()
     expect(store.getSnapshot().emails).toEqual([])
-    store.getSnapshot().notice?.onAction?.()
-    await settle()
-    await vi.advanceTimersByTimeAsync(2300)
-    expect(api.delete).not.toHaveBeenCalled()
-    expect(store.getSnapshot().emails.map(email => email.id)).toEqual([1])
+    expect(store.getSnapshot().selectedDetail).toBeNull()
   })
 
-  it('restores a failed queued delete even if the recovery request is offline', async () => {
-    vi.useFakeTimers()
-    const { store, api } = setup()
+  it('ignores responses and prevents new requests immediately when the session expires', async () => {
+    let valid = true
+    const api = {
+      ...emailApi,
+      list: vi.fn<typeof emailApi.list>(),
+      get: vi.fn<typeof emailApi.get>(),
+    }
+    const list = deferred<EmailListResponse>()
+    const body = deferred<{ data: EmailDetail }>()
+    api.list.mockReturnValue(list.promise)
+    api.get.mockReturnValue(body.promise)
+    const store = new MailStore(api, () => valid)
+    stores.push(store)
+    const listing = store.reload()
+    const opening = store.open(summary)
+    valid = false
+    list.resolve({ data: [summary], total: 1 })
+    body.resolve({ data: detail })
+    await Promise.all([listing, opening])
     await store.reload()
-    store.scheduleDelete(summary)
-    api.delete.mockRejectedValueOnce(new Error('offline'))
-    api.list.mockRejectedValue(new Error('offline'))
-    await vi.advanceTimersByTimeAsync(2300)
-    expect(store.getSnapshot().emails.map(email => email.id)).toEqual([1])
-    expect(store.getSnapshot().notice?.type).toBe('error')
-  })
-
-  it('retains failed batch selection and accurately reports partial failure', async () => {
-    const { store, api } = setup()
-    const second = { ...summary, id: 2 }
-    api.list.mockResolvedValue({ data: [summary, second], total: 2 })
-    api.delete.mockImplementation(async id => { if (id === 2) throw new Error('offline'); return response })
-    await store.reload()
-    store.setSelectedIds(new Set([1, 2]))
-    await store.batchDelete()
-    expect([...store.getSnapshot().selectedIds]).toEqual([2])
-    expect(store.getSnapshot().emails.map(email => email.id)).toEqual([2])
-    expect(store.getSnapshot().notice).toMatchObject({ type: 'error', message: '已删除 1 封，1 封删除失败，请重试' })
-  })
-
-  it('restores failed deletion rows even when the recovery reload fails', async () => {
-    const { store, api } = setup()
-    await store.reload()
-    store.setSelectedIds(new Set([1]))
-    const deletion = deferred<AxiosResponse>()
-    api.delete.mockReturnValueOnce(deletion.promise)
-    const running = store.batchDelete()
-    await store.reload()
+    await store.open(summary)
+    expect(api.list).toHaveBeenCalledTimes(1)
+    expect(api.get).toHaveBeenCalledTimes(1)
     expect(store.getSnapshot().emails).toEqual([])
-    api.list.mockRejectedValue(new Error('offline'))
-    deletion.reject(new Error('offline'))
-    await running
-    expect(store.getSnapshot().emails.map(email => email.id)).toEqual([1])
-    expect([...store.getSnapshot().selectedIds]).toEqual([1])
-  })
-
-  it('does not attach old batch failures to a new query selection', async () => {
-    const { store, api } = setup()
-    store.setQuery({ search: 'old' })
-    await settle()
-    store.setSelectedIds(new Set([1]))
-    const deletion = deferred<AxiosResponse>()
-    api.delete.mockReturnValueOnce(deletion.promise)
-    const running = store.batchDelete()
-    api.list.mockResolvedValue({ data: [{ ...summary, id: 2 }], total: 1 })
-    store.setQuery({ search: 'new' })
-    await settle()
-    deletion.reject(new Error('offline'))
-    await running
-    expect([...store.getSnapshot().selectedIds]).toEqual([])
-    expect(store.getSnapshot().emails.map(email => email.id)).toEqual([2])
+    expect(store.getSnapshot().selectedDetail).toBeNull()
   })
 })

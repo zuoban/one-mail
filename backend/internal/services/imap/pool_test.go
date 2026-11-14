@@ -106,7 +106,8 @@ func TestConnectionPool_RemoveInvalidatesLeasedAndDialingClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.RemoveConnection(account.ID)
+	account.ConfigVersion++
+	p.RemoveConnection(account.ID, account.ConfigVersion)
 	release(true)
 	if count := p.GetStats()["total_connections"].(int); count != 0 {
 		t.Fatalf("invalid lease returned to pool: %d", count)
@@ -128,7 +129,7 @@ func TestConnectionPool_RemoveInvalidatesLeasedAndDialingClients(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, _, err := p.AcquireConnectionContext(context.Background(), account); done <- err }()
 	<-started
-	p.RemoveConnection(account.ID)
+	p.RemoveConnection(account.ID, account.ConfigVersion+1)
 	select {
 	case err := <-done:
 		if err == nil {
@@ -159,5 +160,30 @@ func TestConnectionPool_ExpiresIdleWithoutBackgroundWorkers(t *testing.T) {
 	defer releaseFresh(false)
 	if fresh == old {
 		t.Fatal("expired connection reused")
+	}
+}
+
+func TestConnectionPool_RejectsOldSnapshotAfterInvalidation(t *testing.T) {
+	p := testPool()
+	stale := &models.EmailAccount{ID: 1, ConfigVersion: 1}
+	p.RemoveConnection(stale.ID, 2)
+	if _, _, err := p.AcquireConnectionContext(context.Background(), stale); !errors.Is(err, ErrConnectionInvalidated) {
+		t.Fatalf("old snapshot dialed after invalidation: %v", err)
+	}
+	current := &models.EmailAccount{ID: 1, ConfigVersion: 2}
+	fresh, release, err := p.AcquireConnectionContext(context.Background(), current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release(true)
+	// A delayed invalidation must not close a connection for the committed version.
+	p.RemoveConnection(current.ID, current.ConfigVersion)
+	reused, releaseAgain, err := p.AcquireConnectionContext(context.Background(), current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseAgain(false)
+	if reused != fresh {
+		t.Fatal("delayed invalidation closed the new connection")
 	}
 }

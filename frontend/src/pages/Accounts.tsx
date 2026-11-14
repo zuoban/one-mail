@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import axios from 'axios'
 import { accountApi } from '../api'
 import type { EmailAccount } from '../api'
-import { Plus, Trash2, X, Mail, Plug, Pencil, RefreshCw } from 'lucide-react'
+import { Plus, Trash2, X, Mail, Plug, Pencil, RefreshCw, Loader2 } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 
@@ -29,6 +29,10 @@ const accountColors = [
 export default function Accounts() {
   const [accounts, setAccounts] = useState<EmailAccount[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadingAccounts, setLoadingAccounts] = useState(true)
+  const [accountsError, setAccountsError] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editingAccount, setEditingAccount] = useState<EmailAccount | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
@@ -42,12 +46,63 @@ export default function Accounts() {
   })
   const [error, setError] = useState('')
   const [usernameEdited, setUsernameEdited] = useState(false)
-  const [refreshingAccountId, setRefreshingAccountId] = useState<number | null>(null)
+  const [refreshingAccountIds, setRefreshingAccountIds] = useState<Set<number>>(new Set())
+  const pendingRefreshes = useRef(new Set<number>())
+  const deletePending = useRef(false)
+  const submission = useRef<number | null>(null)
+  const formInstance = useRef(0)
+  const mounted = useRef(false)
+  const lifecycle = useRef(0)
+  const accountsRequest = useRef<AbortController | null>(null)
+  const toastTimer = useRef<number | undefined>(undefined)
   const drawerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    loadAccounts()
+  const invalidateLifecycle = useCallback(() => {
+    mounted.current = false
+    lifecycle.current++
+    formInstance.current++
+    accountsRequest.current?.abort()
+    window.clearTimeout(toastTimer.current)
   }, [])
+
+  const loadAccounts = useCallback(async (): Promise<boolean> => {
+    if (!mounted.current) return false
+    accountsRequest.current?.abort()
+    const controller = new AbortController()
+    accountsRequest.current = controller
+    setLoadingAccounts(true)
+    setAccountsError('')
+    try {
+      const res = await accountApi.list(controller.signal)
+      if (!mounted.current || controller.signal.aborted || accountsRequest.current !== controller) return false
+      setAccounts(res.data)
+      return true
+    } catch {
+      if (mounted.current && !controller.signal.aborted && accountsRequest.current === controller) {
+        setAccountsError('账户列表加载失败，请重试')
+      }
+      return false
+    } finally {
+      if (mounted.current && accountsRequest.current === controller) {
+        accountsRequest.current = null
+        setLoadingAccounts(false)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    mounted.current = true
+    lifecycle.current++
+    void loadAccounts()
+    return invalidateLifecycle
+  }, [loadAccounts, invalidateLifecycle])
+
+  const closeModal = () => {
+    if (submission.current !== null) return
+    formInstance.current++
+    setShowModal(false)
+    setEditingAccount(null)
+  }
 
   useEffect(() => {
     if (!showModal) return
@@ -58,8 +113,11 @@ export default function Accounts() {
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setShowModal(false)
-        setEditingAccount(null)
+        if (submission.current === null) {
+          formInstance.current++
+          setShowModal(false)
+          setEditingAccount(null)
+        }
         return
       }
       if (event.key !== 'Tab' || !drawer) return
@@ -86,22 +144,20 @@ export default function Accounts() {
     }
   }, [showModal])
 
-  const loadAccounts = async () => {
-    try {
-      const res = await accountApi.list()
-      setAccounts(res.data)
-    } catch (e) {
-      console.error(e)
-    }
-  }
 
   const showToast = (message: string, type: 'success' | 'error') => {
+    if (!mounted.current) return
+    window.clearTimeout(toastTimer.current)
     setToast({ message, type })
-    window.setTimeout(() => setToast(null), 2000)
+    toastTimer.current = window.setTimeout(() => { if (mounted.current) setToast(null) }, 4000)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (submission.current !== null) return
+    const instance = formInstance.current
+    submission.current = instance
+    const current = () => mounted.current && formInstance.current === instance && submission.current === instance
     setError('')
     setLoading(true)
     try {
@@ -112,26 +168,32 @@ export default function Accounts() {
         if (form.username !== editingAccount.username) updateData.username = form.username
         if (form.password) updateData.password = form.password
         if (form.color !== editingAccount.color) updateData.color = form.color
-
         await accountApi.update(editingAccount.id, updateData)
-        showToast('账户已更新', 'success')
       } else {
         await accountApi.add(form)
-        showToast('账户已添加', 'success')
       }
-      setShowModal(false)
-      setEditingAccount(null)
+      if (!current()) return
+      submission.current = null
+      setLoading(false)
+      closeModal()
       setForm({ email: '', provider: 'gmail', username: '', password: '', color: '' })
-      loadAccounts()
+      const updated = await loadAccounts()
+      if (mounted.current && formInstance.current === instance + 1) showToast(updated ? (editingAccount ? '账户已更新' : '账户已添加') : '账户已保存，但账户列表读取失败，请重试读取列表', updated ? 'success' : 'error')
     } catch (err: unknown) {
+      if (!current()) return
       const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
       setError(message || (editingAccount ? '更新失败' : '添加失败'))
     } finally {
-      setLoading(false)
+      if (current()) {
+        submission.current = null
+        setLoading(false)
+      }
     }
   }
 
   const openAddModal = () => {
+    if (submission.current !== null) return
+    formInstance.current++
     setEditingAccount(null)
     setUsernameEdited(false)
     setForm({ email: '', provider: 'gmail', username: '', password: '', color: '' })
@@ -140,6 +202,8 @@ export default function Accounts() {
   }
 
   const openEditModal = (account: EmailAccount) => {
+    if (submission.current !== null) return
+    formInstance.current++
     setEditingAccount(account)
     setUsernameEdited(true)
     setForm({
@@ -154,35 +218,61 @@ export default function Accounts() {
   }
 
   const confirmDeleteAccount = async () => {
-    if (!confirmDelete) return
-    await accountApi.delete(confirmDelete.id)
-    setConfirmDelete(null)
-    showToast('账户已删除', 'success')
-    loadAccounts()
+    if (!confirmDelete || deletePending.current) return
+    const generation = lifecycle.current
+    deletePending.current = true
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      await accountApi.delete(confirmDelete.id)
+      if (!mounted.current || lifecycle.current !== generation) return
+      setConfirmDelete(null)
+      const updated = await loadAccounts()
+      if (mounted.current && lifecycle.current === generation) showToast(updated ? '账户已删除' : '账户已删除，但账户列表读取失败，请重试读取列表', updated ? 'success' : 'error')
+    } catch (err: unknown) {
+      if (!mounted.current || lifecycle.current !== generation) return
+      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
+      setDeleteError(message || '删除失败，请重试')
+    } finally {
+      if (mounted.current && lifecycle.current === generation) {
+        deletePending.current = false
+        setDeleting(false)
+      }
+    }
   }
 
   const handleTest = async (id: number) => {
+    const generation = lifecycle.current
     try {
       await accountApi.test(id)
-      showToast('连接测试通过', 'success')
+      if (mounted.current && lifecycle.current === generation) showToast('连接测试通过', 'success')
     } catch (err: unknown) {
+      if (!mounted.current || lifecycle.current !== generation) return
       const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
       showToast(message || '连接失败', 'error')
     }
   }
 
   const handleRefresh = async (id: number) => {
-    if (refreshingAccountId === id) return
-    setRefreshingAccountId(id)
+    if (pendingRefreshes.current.has(id)) return
+    const generation = lifecycle.current
+    pendingRefreshes.current.add(id)
+    setRefreshingAccountIds(new Set(pendingRefreshes.current))
     try {
       const res = await accountApi.refresh(id)
-      showToast(res.new_count > 0 ? `已刷新，新增 ${res.new_count} 封邮件` : '已是最新邮件', 'success')
-      loadAccounts()
+      if (!mounted.current || lifecycle.current !== generation) return
+      const updated = await loadAccounts()
+      if (!mounted.current || lifecycle.current !== generation) return
+      showToast(updated ? (res.new_count > 0 ? `已刷新，新增 ${res.new_count} 封邮件` : '已是最新邮件') : '邮箱同步已完成，但账户列表读取失败，请重试读取列表', updated ? 'success' : 'error')
     } catch (err: unknown) {
+      if (!mounted.current || lifecycle.current !== generation) return
       const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
       showToast(message || '刷新失败', 'error')
     } finally {
-      setRefreshingAccountId(null)
+      if (mounted.current && lifecycle.current === generation) {
+        pendingRefreshes.current.delete(id)
+        setRefreshingAccountIds(new Set(pendingRefreshes.current))
+      }
     }
   }
 
@@ -205,15 +295,17 @@ export default function Accounts() {
         message={confirmDelete ? `确定要删除 ${confirmDelete.email} 吗？` : '确定要删除该账户吗？'}
         confirmLabel="删除"
         cancelLabel="取消"
+        pending={deleting}
+        error={deleteError}
         onConfirm={confirmDeleteAccount}
-        onCancel={() => setConfirmDelete(null)}
+        onCancel={() => { if (!deletePending.current) { setConfirmDelete(null); setDeleteError('') } }}
       />
 
       {/* Toast */}
       {toast && (
         <div className="fixed left-4 right-4 top-4 z-50 md:left-auto md:right-4">
           <div
-            role="status"
+            role={toast.type === 'error' ? 'alert' : 'status'}
             className={`flex items-center gap-3 px-4 py-3 rounded-[8px] text-sm border shadow-[var(--shadow-md)] ${
               toast.type === 'success'
                 ? 'bg-[var(--bg-primary)] text-[var(--text-primary)] border-[var(--border-default)]'
@@ -237,6 +329,7 @@ export default function Accounts() {
         <button
           type="button"
           onClick={openAddModal}
+          disabled={loading}
           className="btn btn-primary w-full sm:w-auto"
         >
           <Plus className="w-4 h-4" strokeWidth={1.5} />
@@ -244,19 +337,22 @@ export default function Accounts() {
         </button>
       </div>
 
+      {loadingAccounts && <p role="status" className="py-3 text-sm text-[var(--text-secondary)]">正在加载账户列表…</p>}
+      {accountsError && <div role="alert" className="alert alert-error mb-4 flex flex-wrap items-center gap-2"><span>{accountsError}</span><button type="button" disabled={loadingAccounts} onClick={() => void loadAccounts()} className="btn btn-secondary btn-sm">重试读取账户</button></div>}
       {/* Account List */}
-      {accounts.length === 0 ? (
+      {accounts.length === 0 ? (!loadingAccounts && !accountsError && (
         <div className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] shadow-[var(--shadow-sm)] empty-state">
           <Mail className="empty-state-icon" strokeWidth={1.5} />
           <p className="text-base font-medium text-[var(--text-primary)]">暂无邮箱账户</p>
           <p className="text-sm mt-1 text-[var(--text-tertiary)]">点击右上角添加你的第一个邮箱账户</p>
         </div>
-      ) : (
+      )) : (
         <div className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] shadow-[var(--shadow-sm)] divide-y divide-[var(--border-light)] overflow-hidden">
           {accounts.map(account => (
             <div
               key={account.id}
-              className="p-4 md:p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between hover:bg-[var(--bg-nav-hover)] transition-colors"
+              data-refreshing={refreshingAccountIds.has(account.id)}
+              className="account-row p-4 md:p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between hover:bg-[var(--bg-nav-hover)] transition-colors"
             >
               <div className="flex items-center gap-4 min-w-0">
                 <div
@@ -285,8 +381,8 @@ export default function Accounts() {
                         {account.status === 'active' ? '已连接' : '未连接'}
                       </span>
                     </span>
-                    <span className="font-mono tabular-nums">
-                      上次刷新: {formatTime(account.last_sync_time)}
+                    <span id={`account-refresh-status-${account.id}`} role="status" className={refreshingAccountIds.has(account.id) ? 'text-[var(--primary-600)]' : 'font-mono tabular-nums'}>
+                      {refreshingAccountIds.has(account.id) ? '正在获取最近 50 封邮件' : `上次刷新: ${formatTime(account.last_sync_time)}`}
                     </span>
                   </div>
                 </div>
@@ -296,11 +392,14 @@ export default function Accounts() {
                 <button
                   type="button"
                   onClick={() => handleRefresh(account.id)}
-                  disabled={refreshingAccountId === account.id}
-                  className="btn btn-secondary btn-sm"
+                  disabled={refreshingAccountIds.has(account.id)}
+                  aria-busy={refreshingAccountIds.has(account.id)}
+                  aria-describedby={refreshingAccountIds.has(account.id) ? `account-refresh-status-${account.id}` : undefined}
+                  data-refreshing={refreshingAccountIds.has(account.id)}
+                  className="refresh-button btn btn-secondary"
                 >
-                  <RefreshCw className={`w-4 h-4 ${refreshingAccountId === account.id ? 'animate-spin' : ''}`} strokeWidth={1.5} />
-                  <span>刷新</span>
+                  {refreshingAccountIds.has(account.id) ? <Loader2 aria-hidden="true" className="w-4 h-4 animate-spin" strokeWidth={1.5} /> : <RefreshCw aria-hidden="true" className="w-4 h-4" strokeWidth={1.5} />}
+                  <span>{refreshingAccountIds.has(account.id) ? '刷新中' : '刷新'}</span>
                 </button>
 
                 <div className="flex items-center gap-1 ml-1 pl-2 border-l border-[var(--border-light)]">
@@ -327,7 +426,7 @@ export default function Accounts() {
                   <Tooltip content="删除账户">
                     <button
                       type="button"
-                      onClick={() => setConfirmDelete(account)}
+                      onClick={() => { if (!deletePending.current) { setDeleteError(''); setConfirmDelete(account) } }}
                       className="btn btn-ghost w-9 h-9 p-0 hover:text-[var(--error-600)] hover:bg-[var(--error-50)]"
                       aria-label="删除账户"
                     >
@@ -347,10 +446,7 @@ export default function Accounts() {
         <>
           <div
             className="overlay-backdrop fixed inset-0 z-40"
-            onClick={() => {
-              setShowModal(false)
-              setEditingAccount(null)
-            }}
+            onClick={closeModal}
           />
           <div
             ref={drawerRef}
@@ -372,10 +468,8 @@ export default function Accounts() {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setShowModal(false)
-                  setEditingAccount(null)
-                }}
+                onClick={closeModal}
+                disabled={loading}
                 className="btn btn-ghost w-9 h-9 p-0"
                 aria-label="关闭"
               >
@@ -383,8 +477,8 @@ export default function Accounts() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="flex-1 overflow-auto flex flex-col">
-              <div className="flex-1 overflow-auto p-6 space-y-6 thin-scrollbar">
+            <form onSubmit={handleSubmit} aria-busy={loading} className="flex-1 overflow-auto flex flex-col">
+              <fieldset disabled={loading} className="min-w-0 flex-1 overflow-auto p-6 space-y-6 thin-scrollbar">
                 <fieldset className="min-w-0">
                   <legend className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                     邮箱服务商
@@ -507,15 +601,13 @@ export default function Accounts() {
                     <span>{error}</span>
                   </div>
                 )}
-              </div>
+              </fieldset>
 
               <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 px-6 py-4 border-t border-[var(--border-light)]">
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowModal(false)
-                    setEditingAccount(null)
-                  }}
+                  onClick={closeModal}
+                  disabled={loading}
                   className="btn btn-secondary w-full sm:w-auto"
                 >
                   取消

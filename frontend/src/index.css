@@ -376,6 +376,12 @@ textarea:disabled {
     animation-iteration-count: 1 !important;
     transition-duration: 0s !important;
   }
+
+  /* Keep ongoing refresh feedback visible, with a slower rotation. */
+  .refresh-button[aria-busy="true"] .animate-spin {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
 
 /* ============================================
@@ -755,17 +761,59 @@ textarea:disabled {
   outline-offset: -2px;
 }
 
-.mail-row:focus-within .mail-row-actions {
-  display: flex;
-}
-
-.mail-row:focus-within .mail-row-date {
-  visibility: hidden;
-}
-
 .reading-toolbar .btn {
   min-width: 36px;
   min-height: 36px;
+}
+
+.btn.refresh-button {
+  min-width: 96px;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.refresh-button[data-refreshing="true"]:disabled {
+  opacity: 1;
+  cursor: wait;
+  background-color: var(--bg-accent-soft);
+  border-color: var(--primary-200);
+  color: var(--primary-600);
+}
+
+.mail-list-header {
+  position: relative;
+}
+
+.mail-list-header::after {
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 2px;
+  background-color: var(--primary-500);
+  opacity: 0;
+  content: '';
+  transition: opacity var(--transition-fast);
+}
+
+.mail-list-header[data-refreshing="true"]::after {
+  opacity: 1;
+}
+
+.refresh-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.account-row[data-refreshing="true"] {
+  box-shadow: inset 2px 0 var(--primary-500);
+  background-color: var(--bg-accent-soft);
 }
 
 .mail-reader > div,
@@ -776,16 +824,6 @@ textarea:disabled {
 
 .sender-address {
   overflow-wrap: anywhere;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .mail-row:hover .mail-row-actions {
-    display: flex;
-  }
-
-  .mail-row:hover .mail-row-date {
-    visibility: hidden;
-  }
 }
 
 @media (min-width: 768px) {

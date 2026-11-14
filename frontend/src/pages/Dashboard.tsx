@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
 import { accountApi, telegramApi } from '../api'
 import axios from 'axios'
-import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 import useTheme from '../context/useTheme'
 import type { EmailSummary, EmailAccount } from '../api'
@@ -10,16 +9,12 @@ import EmailBody from '../components/EmailBody'
 import {
   Search,
   Mail,
-  MailOpen,
   Paperclip,
-  Trash2,
-  EyeOff,
   Loader2,
   Send,
   ArrowLeft,
   RefreshCw,
   X,
-  Check,
   ChevronUp,
   ChevronDown,
   Sun,
@@ -47,14 +42,8 @@ interface EmailListRowProps {
   accountColor: string
   dateLabel: string
   isSelected: boolean
-  batchMode: boolean
-  isChecked: boolean
   registerRef: (id: number, node: HTMLDivElement | null) => void
   onSelect: (email: EmailSummary) => void
-  onContextMenu: (email: EmailSummary, x: number, y: number) => void
-  onToggleSelect: (id: number) => void
-  onToggleRead: (email: EmailSummary) => void
-  onRequestDelete: (email: EmailSummary) => void
 }
 
 const EmailListRow = memo(function EmailListRow({
@@ -62,21 +51,15 @@ const EmailListRow = memo(function EmailListRow({
   accountColor,
   dateLabel,
   isSelected,
-  batchMode,
-  isChecked,
   registerRef,
   onSelect,
-  onContextMenu,
-  onToggleSelect,
-  onToggleRead,
-  onRequestDelete,
 }: EmailListRowProps) {
   return (
     <div
       ref={(node) => registerRef(email.id, node)}
       role="group"
       tabIndex={0}
-      aria-label={`${email.is_read ? '已读' : '未读'}，${email.from_name || email.from}，${email.subject || '无主题'}`}
+      aria-label={`${email.from_name || email.from}，${email.subject || '无主题'}`}
       aria-current={isSelected ? 'true' : undefined}
       onKeyDown={event => {
         if (event.target !== event.currentTarget) return
@@ -86,15 +69,6 @@ const EmailListRow = memo(function EmailListRow({
         }
       }}
       onClick={() => onSelect(email)}
-      onContextMenu={(event) => {
-        event.preventDefault()
-        const menuWidth = 176
-        const menuHeight = 160
-        const padding = 8
-        const x = Math.min(event.clientX, window.innerWidth - menuWidth - padding)
-        const y = Math.min(event.clientY, window.innerHeight - menuHeight - padding)
-        onContextMenu(email, Math.max(padding, x), Math.max(padding, y))
-      }}
       style={{ height: EMAIL_ROW_HEIGHT, marginBottom: EMAIL_ROW_GAP }}
       className={`mail-row group px-3 py-3 rounded-[8px] border cursor-pointer transition-colors ${
         isSelected
@@ -103,29 +77,6 @@ const EmailListRow = memo(function EmailListRow({
       }`}
     >
       <div className="flex items-start gap-2">
-        {batchMode ? (
-          <input
-            type="checkbox"
-            aria-label={`选择邮件：${email.subject || '无主题'}，${email.from_name || email.from}`}
-            checked={isChecked}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => {
-              e.stopPropagation()
-              onToggleSelect(email.id)
-            }}
-            className="mt-0.5 w-4 h-4 rounded border-[var(--border-default)] accent-[var(--primary-500)] cursor-pointer"
-          />
-        ) : (
-          <span className="flex w-2 pt-2 justify-center flex-shrink-0">
-            {!email.is_read && (
-              <span
-                className="w-1.5 h-1.5 rounded-full bg-[var(--primary-500)]"
-                title="未读"
-              />
-            )}
-          </span>
-        )}
-
         <div className="flex-1 min-w-0">
           <div className="flex h-5 items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
@@ -134,48 +85,14 @@ const EmailListRow = memo(function EmailListRow({
                 style={{ backgroundColor: accountColor }}
               />
               <span
-                className={`text-[13px] truncate ${
-                  !email.is_read
-                    ? 'font-medium text-[var(--text-primary)]'
-                    : 'font-normal text-[var(--text-secondary)]'
-                }`}
+                className="text-[13px] truncate text-[var(--text-secondary)]"
               >
                 {email.from_name || email.from}
               </span>
             </div>
 
             <div className="relative flex items-center justify-end flex-shrink-0 min-w-12">
-              <div className="mail-row-actions hidden absolute right-0 items-center gap-1 bg-[var(--bg-primary)] rounded-[6px]">
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onToggleRead(email)
-                  }}
-                  className="flex w-7 h-7 items-center justify-center rounded-[4px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] cursor-pointer"
-                  title={email.is_read ? '标为未读' : '标为已读'}
-                  aria-label={email.is_read ? '标为未读' : '标为已读'}
-                >
-                  {email.is_read ? (
-                    <EyeOff className="w-4 h-4" strokeWidth={1.5} />
-                  ) : (
-                    <MailOpen className="w-4 h-4" strokeWidth={1.5} />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onRequestDelete(email)
-                  }}
-                  className="flex w-7 h-7 items-center justify-center rounded-[4px] text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] cursor-pointer"
-                  title="删除"
-                  aria-label="删除"
-                >
-                  <Trash2 className="w-4 h-4" strokeWidth={1.5} />
-                </button>
-              </div>
-              <span className="mail-row-date font-mono tabular-nums text-xs text-[var(--text-tertiary)] whitespace-nowrap">
+              <span className="font-mono tabular-nums text-xs text-[var(--text-tertiary)] whitespace-nowrap">
                 {dateLabel}
               </span>
             </div>
@@ -183,11 +100,7 @@ const EmailListRow = memo(function EmailListRow({
 
           <div className="mt-1 flex items-center gap-2">
             <p
-              className={`text-sm truncate flex-1 ${
-                !email.is_read
-                  ? 'text-[var(--text-primary)] font-medium'
-                  : 'text-[var(--text-primary)]'
-              }`}
+              className="text-sm truncate flex-1 text-[var(--text-primary)]"
             >
               {email.subject || '(无主题)'}
             </p>
@@ -204,24 +117,21 @@ const EmailListRow = memo(function EmailListRow({
 export default function Dashboard() {
   const { resolvedTheme } = useTheme()
   const [accounts, setAccounts] = useState<EmailAccount[]>([])
+  const [loadingAccounts, setLoadingAccounts] = useState(true)
+  const [accountsError, setAccountsError] = useState('')
+  const accountsRequest = useRef<AbortController | null>(null)
+  const mounted = useRef(false)
+  const lifecycle = useRef(0)
+  const refreshPending = useRef(false)
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [filter, setFilter] = useState<'all' | 'unread'>('all')
   const [refreshing, setRefreshing] = useState(false)
-  const { emails, selectedEmail, selectedDetail, loadingList, listError, loadingDetail, detailError, selectedIds, notice: toast, busyBatch, store } = useMail({
+  const { emails, selectedEmail, selectedDetail, loadingList, listError, loadingDetail, detailError, notice: toast, store } = useMail({
     search: debouncedSearch || undefined,
     account_id: selectedAccountId || undefined,
-    unread: filter === 'unread' ? true : undefined,
   })
-  const setSelectedIds = store.setSelectedIds
   const showToast = store.notify
-  const [contextMenu, setContextMenu] = useState<{
-    email: EmailSummary
-    x: number
-    y: number
-  } | null>(null)
-  const [contextMenuIndex, setContextMenuIndex] = useState(0)
   const emailItemRefs = useRef<Record<number, HTMLDivElement | null>>({})
   const listScrollRef = useRef<HTMLDivElement | null>(null)
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
@@ -229,10 +139,7 @@ export default function Dashboard() {
   const listViewportHeightRef = useRef(600)
   const listScrollTopRef = useRef(0)
   const [virtualWindow, setVirtualWindow] = useState<{ start: number; end: number }>({ start: 0, end: 30 })
-  const [confirmDelete, setConfirmDelete] = useState<{ email: EmailSummary } | null>(null)
-  const [confirmBatchDelete, setConfirmBatchDelete] = useState(false)
   const [sendingTelegram, setSendingTelegram] = useState(false)
-  const [batchMode, setBatchMode] = useState(false)
   const [paperLight, setPaperLight] = useState(true)
   const [showShortcuts, setShowShortcuts] = useState(false)
 
@@ -273,12 +180,32 @@ export default function Dashboard() {
     return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
   }
 
-  const loadAccounts = useCallback(async () => {
+  const invalidateLifecycle = useCallback(() => {
+    mounted.current = false
+    lifecycle.current++
+    accountsRequest.current?.abort()
+  }, [])
+
+  const loadAccounts = useCallback(async (): Promise<boolean> => {
+    if (!mounted.current) return false
+    accountsRequest.current?.abort()
+    const controller = new AbortController()
+    accountsRequest.current = controller
+    setLoadingAccounts(true)
+    setAccountsError('')
     try {
-      const res = await accountApi.list()
+      const res = await accountApi.list(controller.signal)
+      if (!mounted.current || controller.signal.aborted || accountsRequest.current !== controller) return false
       setAccounts(res.data)
-    } catch (e) {
-      console.error(e)
+      return true
+    } catch {
+      if (mounted.current && !controller.signal.aborted && accountsRequest.current === controller) setAccountsError('账户列表加载失败，请重试')
+      return false
+    } finally {
+      if (mounted.current && accountsRequest.current === controller) {
+        accountsRequest.current = null
+        setLoadingAccounts(false)
+      }
     }
   }, [])
 
@@ -326,7 +253,12 @@ export default function Dashboard() {
     syncVirtualWindow(emails.length)
   }, [emails.length, syncVirtualWindow])
 
-  useEffect(() => { void loadAccounts() }, [loadAccounts])
+  useEffect(() => {
+    mounted.current = true
+    lifecycle.current++
+    void loadAccounts()
+    return invalidateLifecycle
+  }, [loadAccounts, invalidateLifecycle])
 
   useEffect(() => {
     if (listScrollRef.current) {
@@ -334,7 +266,7 @@ export default function Dashboard() {
     }
     listScrollTopRef.current = 0
     syncVirtualWindow(0)
-  }, [debouncedSearch, selectedAccountId, filter, syncVirtualWindow])
+  }, [debouncedSearch, selectedAccountId, syncVirtualWindow])
 
   const parseEmailDate = useCallback((value?: string | null) => {
     if (!value) return null
@@ -364,54 +296,44 @@ export default function Dashboard() {
   }, [parseEmailDate])
 
   const handleRefresh = useCallback(async () => {
-    if (refreshing || accounts.length === 0) return
+    if (refreshPending.current || accounts.length === 0) return
+    const generation = lifecycle.current
+    refreshPending.current = true
     setRefreshing(true)
     try {
       const res = await store.refresh(selectedAccountId || undefined)
-      await loadAccounts()
+      if (!mounted.current || lifecycle.current !== generation) return
+      const accountsUpdated = await loadAccounts()
+      if (!mounted.current || lifecycle.current !== generation) return
       const errorEntries = res.errors ? Object.entries(res.errors) : []
+      const messages: string[] = []
       if (errorEntries.length > 0) {
         const [failedAccount, failedReason] = errorEntries[0]
-        showToast(
-          errorEntries.length === 1
-            ? `${failedAccount} 刷新失败: ${failedReason}`
-            : `刷新完成（${errorEntries.length} 个账户失败，如 ${failedAccount}）`,
-          'error',
-        )
-      } else if (res.new_count > 0) {
-        showToast(`已刷新，新增 ${res.new_count} 封邮件`, 'success')
-      } else {
-        showToast('已是最新邮件', 'success')
+        messages.push(errorEntries.length === 1
+          ? `${failedAccount} 刷新失败: ${failedReason}`
+          : `刷新完成（${errorEntries.length} 个账户失败，如 ${failedAccount}）`)
       }
+      if (!res.listUpdated) messages.push('邮箱同步请求已完成，但邮件列表未能更新，请重试读取邮件列表')
+      if (!accountsUpdated) messages.push('账户列表未能更新，请重试读取账户')
+      if (messages.length > 0) showToast(messages.join('；'), 'error')
+      else showToast(res.new_count > 0 ? `已刷新，新增 ${res.new_count} 封邮件` : '已是最新邮件', 'success')
     } catch (e) {
+      if (!mounted.current || lifecycle.current !== generation) return
       const message = axios.isAxiosError(e) ? e.response?.data?.error : undefined
       showToast(message || '刷新失败', 'error')
     } finally {
-      setRefreshing(false)
+      if (mounted.current && lifecycle.current === generation) {
+        refreshPending.current = false
+        setRefreshing(false)
+      }
     }
-  }, [refreshing, accounts.length, selectedAccountId, showToast, store, loadAccounts])
+  }, [accounts.length, selectedAccountId, showToast, store, loadAccounts])
 
   const handleRead = useCallback(async (email: EmailSummary, shouldScroll = false, scrollDetail = false) => {
     if (scrollDetail) detailScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
     if (shouldScroll) emailItemRefs.current[email.id]?.scrollIntoView({ block: 'nearest' })
     await store.open(email)
   }, [store])
-
-  const handleMarkAsUnread = useCallback(async (email: EmailSummary) => {
-    await store.setRead(email, false)
-  }, [store])
-
-  const handleToggleReadRow = useCallback(async (email: EmailSummary) => {
-    await store.setRead(email, !email.is_read)
-  }, [store])
-
-  const handleDeleteEmail = store.scheduleDelete
-
-  const confirmDeleteEmail = useCallback(() => {
-    if (!confirmDelete) return
-    handleDeleteEmail(confirmDelete.email)
-    setConfirmDelete(null)
-  }, [confirmDelete, handleDeleteEmail])
 
   const handleSendToTelegram = useCallback(async (email: EmailSummary) => {
     setSendingTelegram(true)
@@ -426,41 +348,8 @@ export default function Dashboard() {
     }
   }, [showToast])
 
-  const handleBatchMarkAsRead = store.batchRead
-
-  const handleBatchDelete = useCallback(async () => {
-    setConfirmBatchDelete(false)
-    await store.batchDelete()
-  }, [store])
-
-  const toggleSelect = useCallback((id: number) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [setSelectedIds])
-
   const filteredEmails = emails
 
-  const toggleSelectAll = useCallback(() => {
-    if (selectedIds.size === filteredEmails.length) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(filteredEmails.map(e => e.id)))
-    }
-  }, [selectedIds.size, filteredEmails, setSelectedIds])
-
-  const toggleInvert = useCallback(() => {
-    const newSelected = new Set<number>()
-    filteredEmails.forEach(e => {
-      if (!selectedIds.has(e.id)) {
-        newSelected.add(e.id)
-      }
-    })
-    setSelectedIds(newSelected)
-  }, [selectedIds, filteredEmails, setSelectedIds])
 
   // 预处理每封邮件的时间戳与相对时间字符串，避免排序和滚动渲染期间重复正则/Date 解析
   const emailDateMeta = useMemo(() => {
@@ -513,14 +402,6 @@ export default function Dashboard() {
     }
   }, [])
 
-  const handleRowContextMenu = useCallback((email: EmailSummary, x: number, y: number) => {
-    setContextMenu({ email, x, y })
-    setContextMenuIndex(0)
-  }, [])
-
-  const handleRequestDeleteRow = useCallback((email: EmailSummary) => {
-    setConfirmDelete({ email })
-  }, [])
   const scrollToEmailIndex = useCallback((idx: number) => {
     const container = listScrollRef.current
     if (!container || idx < 0) return
@@ -549,7 +430,6 @@ export default function Dashboard() {
       handleRead(target, true, true)
     }
   }, [sortedFilteredEmails, selectedIndex, scrollToEmailIndex, handleRead])
-  const unreadCount = useMemo(() => emails.filter(e => !e.is_read).length, [emails])
 
   const accountById = useMemo(() => {
     const map = new Map<number, EmailAccount>()
@@ -559,7 +439,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (contextMenu || confirmDelete || confirmBatchDelete) return
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         if (event.key === 'Escape' && target === searchInputRef.current) {
@@ -607,11 +486,6 @@ export default function Dashboard() {
         event.preventDefault()
         const targetEmail = selectedEmail || sortedFilteredEmails[0]
         if (targetEmail) handleRead(targetEmail, true, true)
-      } else if (event.key === 'u' || event.key === 'U') {
-        if (selectedEmail && selectedEmail.is_read) {
-          event.preventDefault()
-          handleMarkAsUnread(selectedEmail)
-        }
       } else if (event.key === 't' || event.key === 'T') {
         if (selectedEmail && !sendingTelegram) {
           event.preventDefault()
@@ -620,9 +494,6 @@ export default function Dashboard() {
       } else if (event.key === 'r' || event.key === 'R') {
         event.preventDefault()
         handleRefresh()
-      } else if ((event.key === 'Backspace' || event.key === 'Delete') && selectedEmail) {
-        event.preventDefault()
-        setConfirmDelete({ email: selectedEmail })
       } else if (event.key === 'Escape' && selectedEmail) {
         store.closeDetail()
       }
@@ -634,71 +505,15 @@ export default function Dashboard() {
     handleRefresh,
     handleRead,
     scrollToEmailIndex,
-    handleMarkAsUnread,
     handleSendToTelegram,
     sendingTelegram,
     selectedEmail,
     sortedFilteredEmails,
-    contextMenu,
-    confirmDelete,
-    confirmBatchDelete,
     showShortcuts,
     showToast,
     store,
   ])
 
-  const contextMenuItems = useMemo(() => {
-    if (!contextMenu) return []
-    const items: Array<{ label: string; action: () => void | Promise<void>; danger?: boolean }> = [
-      { label: '打开', action: () => handleRead(contextMenu.email) },
-    ]
-    if (contextMenu.email.is_read) {
-      items.push({ label: '标为未读', action: () => handleMarkAsUnread(contextMenu.email) })
-    } else {
-      items.push({ label: '标为已读', action: () => handleRead(contextMenu.email) })
-    }
-    items.push({ label: '转发到 Telegram', action: () => handleSendToTelegram(contextMenu.email) })
-    items.push({ label: '删除', action: () => setConfirmDelete({ email: contextMenu.email }), danger: true })
-    return items
-  }, [contextMenu, handleMarkAsUnread, handleRead, handleSendToTelegram])
-
-
-  useEffect(() => {
-    if (!contextMenu) return
-    const handleMenuKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'ArrowDown') {
-        event.preventDefault()
-        setContextMenuIndex(prev => (prev + 1) % contextMenuItems.length)
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        setContextMenuIndex(prev => (prev - 1 + contextMenuItems.length) % contextMenuItems.length)
-      } else if (event.key === 'Enter') {
-        event.preventDefault()
-        const item = contextMenuItems[contextMenuIndex]
-        if (item) item.action()
-        setContextMenu(null)
-        setContextMenuIndex(0)
-      } else if (event.key === 'Escape') {
-        event.preventDefault()
-        setContextMenu(null)
-        setContextMenuIndex(0)
-      }
-    }
-    window.addEventListener('keydown', handleMenuKeyDown)
-    return () => window.removeEventListener('keydown', handleMenuKeyDown)
-  }, [contextMenu, contextMenuIndex, contextMenuItems])
-
-
-  useEffect(() => {
-    if (!contextMenu) return
-    const close = () => setContextMenu(null)
-    window.addEventListener('click', close)
-    window.addEventListener('contextmenu', close)
-    return () => {
-      window.removeEventListener('click', close)
-      window.removeEventListener('contextmenu', close)
-    }
-  }, [contextMenu])
 
   const selectedEmailAccount = selectedEmail ? accountById.get(selectedEmail.account_id) : undefined
   const useLightPaper = Boolean(selectedDetail?.body_html) && (resolvedTheme === 'light' || paperLight)
@@ -720,42 +535,9 @@ export default function Dashboard() {
               className={`status-dot ${toast.type === 'success' ? 'status-dot-success' : 'status-dot-error'}`}
             />
             <span>{toast.message}</span>
-            {toast.actionLabel && toast.onAction && (
-              <button
-                type="button"
-                onClick={() => {
-                  const action = toast.onAction
-                  store.dismissNotice()
-                  if (action) action()
-                }}
-                className="ml-2 text-xs font-medium text-[var(--primary-600)] hover:underline cursor-pointer"
-              >
-                {toast.actionLabel}
-              </button>
-            )}
           </div>
         </div>
       )}
-
-      <ConfirmDialog
-        open={Boolean(confirmDelete)}
-        title="删除邮件"
-        message="确定要删除这封邮件吗？"
-        confirmLabel="删除"
-        cancelLabel="取消"
-        onConfirm={confirmDeleteEmail}
-        onCancel={() => setConfirmDelete(null)}
-      />
-
-      <ConfirmDialog
-        open={confirmBatchDelete}
-        title="批量删除邮件"
-        message={`确定要删除选中的 ${selectedIds.size} 封邮件吗？此操作不可撤销。`}
-        confirmLabel="删除"
-        cancelLabel="取消"
-        onConfirm={handleBatchDelete}
-        onCancel={() => setConfirmBatchDelete(false)}
-      />
 
       {/* Keyboard Shortcuts Modal */}
       {showShortcuts && (
@@ -788,10 +570,8 @@ export default function Dashboard() {
                 { keys: ['j', 'k'], desc: '下一封 / 上一封邮件' },
                 { keys: ['o'], desc: '打开并滚回顶部' },
                 { keys: ['/'], desc: '聚焦搜索框' },
-                { keys: ['u'], desc: '标记为未读' },
                 { keys: ['t'], desc: '转发到 Telegram' },
                 { keys: ['r'], desc: '刷新邮件列表' },
-                { keys: ['⌫'], desc: '删除当前邮件' },
                 { keys: ['Esc'], desc: '关闭弹窗或返回列表' },
               ].map((item) => (
                 <div key={item.desc} className="flex items-center justify-between py-1">
@@ -808,49 +588,28 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Context Menu */}
-      {contextMenu && (
-        <div
-          className="fixed z-50 w-44 rounded-[10px] border border-[var(--border-default)] bg-[var(--bg-primary)] shadow-[var(--shadow-lg)] p-1 text-sm text-[var(--text-secondary)] animate-in fade-in duration-200"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={() => {
-            setContextMenu(null)
-            setContextMenuIndex(0)
-          }}
-        >
-          {contextMenuItems.map((item, index) => (
-            <button
-              key={`${item.label}-${index}`}
-              type="button"
-              onClick={item.action}
-              className={`w-full text-left px-3 py-1.5 rounded-[6px] transition-colors cursor-pointer ${
-                index === contextMenuIndex ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]' : 'hover:bg-[var(--bg-tertiary)]'
-              } ${item.danger ? 'text-[var(--error-600)] hover:bg-[var(--error-50)]' : ''}`}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Left Column - Mail List */}
       <section aria-label="邮件列表" className="mail-list-pane min-w-0 border-r border-[var(--border-light)] bg-[var(--bg-primary)] flex-col min-h-0">
         {/* Inbox header */}
-        <div className="mail-list-header h-16 px-4 border-b border-[var(--border-light)] flex items-center justify-between gap-2 flex-shrink-0">
-          <div className="flex items-baseline gap-2 min-w-0">
+        <div data-refreshing={refreshing} className="mail-list-header h-16 px-4 border-b border-[var(--border-light)] flex items-center justify-between gap-2 flex-shrink-0">
+          <div className="flex flex-col gap-1 min-w-0">
             <h2 className="text-lg font-medium text-[var(--text-primary)]">收件箱</h2>
-            <span className="font-mono tabular-nums text-xs text-[var(--text-tertiary)]">
-              {filteredEmails.length} 封{unreadCount > 0 ? ` · ${unreadCount} 未读` : ''}
+            <span id="inbox-refresh-status" role="status" className={`text-xs tabular-nums ${refreshing ? 'text-[var(--primary-600)]' : 'font-mono text-[var(--text-tertiary)]'}`}>
+              {refreshing ? '正在获取最近 50 封邮件' : `${filteredEmails.length} 封`}
             </span>
           </div>
-          <Tooltip content="拉取最近 50 封邮件 (r)">
+          <Tooltip content={refreshing ? '正在连接邮箱，已有邮件可继续阅读' : '拉取最近 50 封邮件 (r)'}>
             <button
               type="button"
               onClick={handleRefresh}
               disabled={refreshing || accounts.length === 0}
-              className="btn btn-ghost btn-sm px-3 text-[var(--text-secondary)]"
+              aria-busy={refreshing}
+              aria-describedby={refreshing ? 'inbox-refresh-status' : undefined}
+              data-refreshing={refreshing}
+              className="refresh-button btn btn-ghost px-3"
             >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} strokeWidth={1.5} />
+              {refreshing ? <Loader2 aria-hidden="true" className="w-4 h-4 animate-spin" strokeWidth={1.5} /> : <RefreshCw aria-hidden="true" className="w-4 h-4" strokeWidth={1.5} />}
               <span>{refreshing ? '刷新中' : '刷新'}</span>
             </button>
           </Tooltip>
@@ -889,6 +648,8 @@ export default function Dashboard() {
             )}
           </div>
 
+          {loadingAccounts && <p role="status" className="text-xs text-[var(--text-secondary)]">正在加载账户列表…</p>}
+          {accountsError && <div role="alert" className="text-sm text-[var(--error-700)]">{accountsError}<button type="button" disabled={loadingAccounts} onClick={() => void loadAccounts()} className="btn btn-secondary btn-sm ml-2">重试读取账户</button></div>}
           {/* Account Chips */}
           {accounts.length > 0 && (
             <div className="account-filters flex items-center gap-2 overflow-x-auto pb-1 thin-scrollbar" aria-label="按邮箱筛选">
@@ -937,115 +698,33 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Filter & Batch Row */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="segmented" role="group" aria-label="邮件阅读状态">
-              {(['all', 'unread'] as const).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setFilter(f)}
-                  aria-pressed={filter === f}
-                  className={`segmented-item ${filter === f ? 'segmented-item-active' : ''}`}
-                >
-                  {f === 'all' ? '全部' : '未读'}
-                </button>
-              ))}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (busyBatch) return
-                setBatchMode(!batchMode)
-                setSelectedIds(new Set())
-              }}
-              aria-pressed={batchMode}
-              className={`h-9 px-3 rounded-[8px] text-[13px] border transition-colors cursor-pointer ${
-                batchMode
-                  ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-medium border-[var(--border-default)]'
-                  : 'text-[var(--text-secondary)] border-[var(--border-light)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              {batchMode ? '完成批量' : '批量选择'}
-            </button>
-          </div>
-
-          {batchMode && (
-            <div className="flex items-center justify-between gap-2 pt-1 text-xs flex-wrap">
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={toggleSelectAll}
-                  disabled={busyBatch}
-                  className="btn btn-secondary btn-sm h-7 px-2.5 text-xs"
-                >
-                  全选
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleInvert}
-                  disabled={busyBatch}
-                  className="btn btn-secondary btn-sm h-7 px-2.5 text-xs"
-                >
-                  反选
-                </button>
-              </div>
-              {selectedIds.size > 0 ? (
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={handleBatchMarkAsRead}
-                    disabled={busyBatch}
-                    className="btn btn-primary btn-sm h-7 px-2.5 text-xs"
-                  >
-                    <Check className="w-3.5 h-3.5" strokeWidth={1.5} />
-                    <span>已读 ({selectedIds.size})</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmBatchDelete(true)}
-                    disabled={busyBatch}
-                    className="btn btn-danger-ghost btn-sm h-7 px-2 text-xs"
-                    title="删除选中邮件"
-                    aria-label="删除选中邮件"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
-                  </button>
-                </div>
-              ) : (
-                <span className="font-mono tabular-nums text-xs text-[var(--text-tertiary)]">
-                  已选 0 封
-                </span>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Email List */}
         <div ref={listScrollRef} className="flex-1 overflow-auto thin-scrollbar" onScroll={handleScroll}>
-          {listError && <div role="alert" className="p-4 text-sm text-[var(--error-700)]">{listError}<button type="button" onClick={() => void loadEmails()} className="btn btn-secondary btn-sm ml-2">重试</button></div>}
-          {loadingList && emails.length === 0 ? (
-            <div className="empty-state">
-              <p className="text-xs text-[var(--text-tertiary)]">正在加载邮件</p>
+          {listError && <div role="alert" className="p-4 text-sm text-[var(--error-700)]">{listError}<button type="button" disabled={loadingList} onClick={() => void loadEmails()} className="btn btn-secondary btn-sm ml-2">重试</button></div>}
+          {(loadingList || refreshing) && emails.length === 0 ? (
+            <div className="empty-state h-full min-h-48 px-6">
+              <div className="refresh-empty-icon" aria-hidden="true">
+                <Loader2 className="w-6 h-6 animate-spin" strokeWidth={1.5} />
+              </div>
+              <p className="text-sm font-medium text-[var(--text-primary)]">{refreshing ? '正在刷新邮件' : '正在加载邮件'}</p>
+              <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{refreshing ? '连接邮箱并获取最近 50 封邮件' : '正在读取邮件列表'}</p>
             </div>
-          ) : filteredEmails.length === 0 ? (
+          ) : filteredEmails.length === 0 && !listError ? (
             <div className="empty-state">
               <Mail className="empty-state-icon" />
               <p className="text-sm font-medium text-[var(--text-primary)] mb-1">暂无邮件</p>
               <p className="text-xs text-[var(--text-tertiary)] mb-4">
                 {search
                   ? '没有匹配当前关键词的邮件'
-                  : filter === 'unread'
-                  ? '当前筛选下没有未读邮件'
                   : '添加邮箱账户并点击刷新获取最近 50 封邮件'}
               </p>
-              {(search || filter === 'unread') && (
+              {search && (
                 <button
                   type="button"
                   onClick={() => {
                     setSearch('')
-                    setFilter('all')
                   }}
                   className="btn btn-secondary btn-sm"
                 >
@@ -1068,14 +747,8 @@ export default function Dashboard() {
                   accountColor={accountById.get(email.account_id)?.color || '#2563EB'}
                   dateLabel={emailDateMeta.get(email.id)?.label ?? '未知'}
                   isSelected={selectedEmail?.id === email.id}
-                  batchMode={batchMode}
-                  isChecked={selectedIds.has(email.id)}
                   registerRef={registerEmailRef}
                   onSelect={handleRead}
-                  onContextMenu={handleRowContextMenu}
-                  onToggleSelect={toggleSelect}
-                  onToggleRead={handleToggleReadRow}
-                  onRequestDelete={handleRequestDeleteRow}
                 />
               ))}
 
@@ -1097,7 +770,7 @@ export default function Dashboard() {
         >
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1"><kbd className="kbd">j</kbd><kbd className="kbd">k</kbd> 移动</span>
-            <span className="inline-flex items-center gap-1"><kbd className="kbd">u</kbd> 未读</span>
+            <span className="inline-flex items-center gap-1"><kbd className="kbd">r</kbd> 刷新</span>
             <span className="inline-flex items-center gap-1"><kbd className="kbd">/</kbd> 搜索</span>
           </div>
           <span className="inline-flex items-center gap-1"><kbd className="kbd">?</kbd> 快捷键</span>
@@ -1186,18 +859,6 @@ export default function Dashboard() {
                 )}
                 <button
                   type="button"
-                  onClick={() => handleMarkAsUnread(selectedEmail)}
-                  disabled={!selectedEmail.is_read}
-                  className="btn btn-secondary btn-sm"
-                  title="标为未读 (u)"
-                  aria-label="标为未读"
-                >
-                  <EyeOff className="w-4 h-4" strokeWidth={1.5} />
-                  <span className="hidden xl:inline">标为未读</span>
-                  <kbd className="kbd hidden 2xl:inline-flex">u</kbd>
-                </button>
-                <button
-                  type="button"
                   onClick={() => handleSendToTelegram(selectedEmail)}
                   disabled={sendingTelegram}
                   className="btn btn-secondary btn-sm"
@@ -1210,16 +871,6 @@ export default function Dashboard() {
                     <Send className="w-4 h-4" strokeWidth={1.5} />
                   )}
                   <span className="hidden xl:inline">转发 Telegram</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete({ email: selectedEmail })}
-                  className="btn btn-danger-ghost btn-sm"
-                  title="删除邮件"
-                  aria-label="删除邮件"
-                >
-                  <Trash2 className="w-4 h-4" strokeWidth={1.5} />
-                  <span className="hidden xl:inline">删除</span>
                 </button>
               </div>
             </div>

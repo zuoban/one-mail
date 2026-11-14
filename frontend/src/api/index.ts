@@ -56,7 +56,6 @@ export interface EmailSummary {
   subject: string
   date: string
   has_attachment: boolean
-  is_read: boolean
   folder: string
 }
 
@@ -82,11 +81,6 @@ export interface TelegramConfig {
   chat_id: string
 }
 
-export interface ReadStatusResponse {
-  message: string
-  count?: number
-  sync_pending: boolean
-}
 
 export const authApi = {
   status: () => api.get<AuthStatus>('/auth/status').then(r => r.data),
@@ -95,7 +89,7 @@ export const authApi = {
 }
 
 export const accountApi = {
-  list: () => api.get<{ data: EmailAccount[] }>('/accounts').then(r => r.data),
+  list: (signal?: AbortSignal) => api.get<{ data: EmailAccount[] }>('/accounts', { signal }).then(r => r.data),
   add: (data: { email: string; provider: string; username: string; password: string; color?: string }) =>
     api.post<{ data: EmailAccount }>('/accounts', data).then(r => r.data),
   update: (id: number, data: { email?: string; provider?: string; username?: string; password?: string; color?: string }) =>
@@ -110,7 +104,6 @@ export const emailApi = {
     params?: {
       account_id?: number
       search?: string
-      unread?: boolean
     },
     signal?: AbortSignal,
   ) => api.get<EmailListResponse>('/emails', { params, signal }).then(r => r.data),
@@ -120,10 +113,6 @@ export const emailApi = {
       timeout: 45000,
     }).then(r => r.data),
   get: (id: number, signal?: AbortSignal) => api.get<{ data: EmailDetail }>(`/emails/${id}`, { signal }).then(r => r.data),
-  markAsRead: (id: number) => api.post<ReadStatusResponse>(`/emails/${id}/read`).then(r => r.data),
-  markAsUnread: (id: number) => api.post<ReadStatusResponse>(`/emails/${id}/unread`).then(r => r.data),
-  batchMarkAsRead: (ids: number[]) => api.post<ReadStatusResponse>('/emails/batch/read', { ids }).then(r => r.data),
-  delete: (id: number, signal?: AbortSignal) => api.delete(`/emails/${id}`, { signal }),
 }
 export const telegramApi = {
   getConfig: () => api.get<{ data: TelegramConfig }>('/telegram/config').then(r => r.data),

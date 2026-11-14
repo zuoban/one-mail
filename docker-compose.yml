@@ -3,12 +3,14 @@ services:
     image: ghcr.io/zuoban/one-mail:latest
     container_name: one-mail
     restart: unless-stopped
+    stop_grace_period: 100s
     ports:
       - "80:80"
     volumes:
       - one-mail-data:/app/data
     environment:
       TZ: Asia/Shanghai
+      GIN_MODE: ${GIN_MODE:-release}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
 

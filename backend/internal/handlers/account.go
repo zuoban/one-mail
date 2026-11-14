@@ -101,7 +101,7 @@ func (h *AccountHandler) AddAccount(c *gin.Context) {
 	}
 
 	testClient := imap.NewClient(&account)
-	if err := testClient.TestConnection(); err != nil {
+	if err := testClient.TestConnectionContext(c.Request.Context()); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to connect: " + err.Error()})
 		return
 	}
@@ -147,7 +147,7 @@ func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete account"})
 		return
 	}
-	imap.GetConnectionPool().RemoveConnection(account.ID)
+	imap.GetConnectionPool().RemoveConnection(account.ID, account.ConfigVersion+1)
 
 	c.JSON(http.StatusOK, gin.H{"message": "account deleted"})
 }
@@ -161,59 +161,89 @@ type UpdateAccountRequest struct {
 }
 
 func (h *AccountHandler) UpdateAccount(c *gin.Context) {
-	id := c.Param("id")
-
-	var account models.EmailAccount
-	if err := database.GetDB().Where("id = ?", id).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
-		return
-	}
-
 	var req UpdateAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	credentialsChanged := (req.Provider != "" && req.Provider != account.Provider) ||
-		(req.Username != "" && req.Username != account.Username) || req.Password != ""
-
-	// 更新字段（如果提供）
-	if req.Email != "" {
-		account.Email = req.Email
-	}
-	if req.Provider != "" && req.Provider != account.Provider {
-		provider, ok := imap.ProviderConfigs[req.Provider]
-		if !ok {
+	if req.Provider != "" {
+		if _, ok := imap.ProviderConfigs[req.Provider]; !ok {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider"})
 			return
 		}
-		account.Provider = req.Provider
-		account.IMAPHost, account.IMAPPort = provider.IMAPHost, provider.IMAPPort
-		account.SMTPHost, account.SMTPPort = provider.SMTPHost, provider.SMTPPort
 	}
-	if req.Username != "" {
-		account.Username = req.Username
-	}
+	var sealed string
 	if req.Password != "" {
-		sealed, err := credentials.Encrypt(req.Password)
+		var err error
+		sealed, err = credentials.Encrypt(req.Password)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to protect account credentials"})
 			return
 		}
-		account.Password = sealed
 	}
-	if req.Color != "" {
-		account.Color = req.Color
+	var account models.EmailAccount
+	var credentialsChanged bool
+	err := database.GetDB().WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("id = ?", c.Param("id")).First(&account).Error; err != nil {
+			return err
+		}
+		identityChanged := (req.Provider != "" && req.Provider != account.Provider) ||
+			(req.Username != "" && req.Username != account.Username)
+		credentialsChanged = identityChanged || req.Password != ""
+		updates := make(map[string]interface{})
+		if req.Email != "" {
+			account.Email = req.Email
+			updates["email"] = req.Email
+		}
+		if req.Provider != "" && req.Provider != account.Provider {
+			provider := imap.ProviderConfigs[req.Provider]
+			account.Provider = req.Provider
+			account.IMAPHost, account.IMAPPort = provider.IMAPHost, provider.IMAPPort
+			account.SMTPHost, account.SMTPPort = provider.SMTPHost, provider.SMTPPort
+			updates["provider"], updates["imap_host"], updates["imap_port"] = account.Provider, account.IMAPHost, account.IMAPPort
+			updates["smtp_host"], updates["smtp_port"] = account.SMTPHost, account.SMTPPort
+		}
+		if req.Username != "" {
+			account.Username = req.Username
+			updates["username"] = req.Username
+		}
+		if sealed != "" {
+			account.Password = sealed
+			updates["password"] = sealed
+		}
+		if req.Color != "" {
+			account.Color = req.Color
+			updates["color"] = req.Color
+		}
+		if credentialsChanged {
+			account.ConfigVersion++
+			updates["config_version"] = account.ConfigVersion
+		}
+		if identityChanged {
+			account.IdentityVersion++
+			account.UIDValidity = 0
+			account.LastSyncTime = time.Time{}
+			updates["identity_version"], updates["uid_validity"], updates["last_sync_time"] = account.IdentityVersion, 0, time.Time{}
+			if err := tx.Where("account_id = ?", account.ID).Delete(&models.Email{}).Error; err != nil {
+				return err
+			}
+		}
+		if len(updates) == 0 {
+			return nil
+		}
+		return tx.Model(&account).Updates(updates).Error
+	})
+	if err == gorm.ErrRecordNotFound {
+		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
+		return
 	}
-
-	if err := database.GetDB().Save(&account).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update account"})
 		return
 	}
 	if credentialsChanged {
-		imap.GetConnectionPool().RemoveConnection(account.ID)
+		imap.GetConnectionPool().RemoveConnection(account.ID, account.ConfigVersion)
 	}
-
 	c.JSON(http.StatusOK, gin.H{"data": account})
 }
 
@@ -227,7 +257,7 @@ func (h *AccountHandler) TestAccount(c *gin.Context) {
 	}
 
 	testClient := imap.NewClient(&account)
-	if err := testClient.TestConnection(); err != nil {
+	if err := testClient.TestConnectionContext(c.Request.Context()); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

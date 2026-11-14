@@ -12,11 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	"github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset"
-	"github.com/emersion/go-message/mail"
 
 	"one-mail/backend/internal/credentials"
 	"one-mail/backend/internal/models"
@@ -84,18 +85,28 @@ func NewClient(account *models.EmailAccount) *Client {
 const defaultConnectTimeout = 15 * time.Second
 
 func IsAuthError(err error) bool {
-	if err == nil {
+	var status *imap.Error
+	if !errors.As(err, &status) || status.Type != imap.StatusResponseTypeNo {
 		return false
 	}
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "authenticationfailed") ||
-		strings.Contains(s, "authentication failed") ||
-		strings.Contains(s, "invalid credentials") ||
-		strings.Contains(s, "failed to login") ||
-		strings.Contains(s, "login fail") ||
-		strings.Contains(s, "bad credentials") ||
-		strings.Contains(s, "application-specific password") ||
-		strings.Contains(s, "web login required")
+	switch status.Code {
+	case imap.ResponseCodeAuthenticationFailed, imap.ResponseCodeAuthorizationFailed, imap.ResponseCodeExpired:
+		return true
+	case "", imap.ResponseCodeAlert:
+		if isTemporaryIMAPError(status) {
+			return false
+		}
+		// Some providers omit AUTHENTICATIONFAILED, but still identify credential
+		// problems explicitly. A generic NO or "failed to login" is not enough.
+		s := strings.ToLower(status.Text)
+		return strings.Contains(s, "authentication failed") ||
+			strings.Contains(s, "invalid credentials") ||
+			strings.Contains(s, "bad credentials") ||
+			strings.Contains(s, "application-specific password") ||
+			strings.Contains(s, "web login required")
+	default:
+		return false
+	}
 }
 
 func (c *Client) Connect() error {
@@ -137,25 +148,31 @@ func (c *Client) ConnectContext(ctx context.Context) error {
 	conn := imapclient.New(tlsConn, nil)
 	c.transport = tlsConn
 
+	if err := loginContext(ctx, conn, c.username, c.password); err != nil {
+		return err
+	}
+	c.client = conn
+	c.lastActivity = time.Now()
+	return nil
+}
+
+func loginContext(ctx context.Context, conn *imapclient.Client, username, password string) error {
 	loginDone := make(chan error, 1)
 	go func() {
-		loginDone <- conn.Login(c.username, c.password).Wait()
+		loginDone <- conn.Login(username, password).Wait()
 	}()
 
 	select {
-	case err = <-loginDone:
+	case err := <-loginDone:
 		if err != nil {
 			_ = conn.Close()
-			return errors.New("failed to login: authentication failed")
+			return fmt.Errorf("failed to login: %w", err)
 		}
+		return nil
 	case <-ctx.Done():
 		_ = conn.Close()
 		return fmt.Errorf("failed to login: %w", ctx.Err())
 	}
-
-	c.client = conn
-	c.lastActivity = time.Now()
-	return nil
 }
 
 func (c *Client) Disconnect() error {
@@ -226,8 +243,6 @@ type EmailSummary struct {
 	Subject       string
 	Date          time.Time
 	HasAttachment bool
-	IsRead        bool
-	IsStarred     bool
 	UID           uint
 }
 
@@ -252,28 +267,6 @@ func (c *Client) commandContext(ctx context.Context) (func(), error) {
 			<-done
 		}
 	}, nil
-}
-
-func (c *Client) SelectMailbox(ctx context.Context, folder string) (uint32, error) {
-	finish, err := c.commandContext(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer finish()
-	if folder == "" {
-		folder = "INBOX"
-	}
-	selected, err := c.client.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
-	if ctx.Err() != nil {
-		return 0, ctx.Err()
-	}
-	if err != nil {
-		return 0, fmt.Errorf("failed to select mailbox: %w", err)
-	}
-	if selected.UIDValidity == 0 {
-		return 0, ErrUIDValidityChanged
-	}
-	return selected.UIDValidity, nil
 }
 
 func retryTemporary(ctx context.Context, operation func() error) error {
@@ -348,9 +341,9 @@ func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int
 		seqSet.AddRange(start, end)
 
 		fetchOptions := &imap.FetchOptions{
-			Envelope: true,
-			Flags:    true,
-			UID:      true,
+			Envelope:      true,
+			UID:           true,
+			BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
 		}
 
 		messages, err = c.client.Fetch(seqSet, fetchOptions).Collect()
@@ -369,7 +362,8 @@ func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int
 	results := make([]*EmailSummary, 0, len(messages))
 	for _, msg := range messages {
 		email := &EmailSummary{
-			UID: uint(msg.UID),
+			UID:           uint(msg.UID),
+			HasAttachment: hasAttachment(msg.BodyStructure),
 		}
 
 		if msg.Envelope != nil {
@@ -402,14 +396,6 @@ func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int
 			email.MessageID = fmt.Sprintf("uid-%d", msg.UID)
 		}
 
-		for _, flag := range msg.Flags {
-			if flag == imap.FlagSeen {
-				email.IsRead = true
-			} else if flag == imap.FlagFlagged {
-				email.IsStarred = true
-			}
-		}
-
 		results = append(results, email)
 	}
 
@@ -433,50 +419,82 @@ func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int
 	return results, uidValidity, nil
 }
 
-func parseMessageBody(raw []byte) (bodyText string, bodyHTML string) {
-	mr, err := mail.CreateReader(bytes.NewReader(raw))
-	if mr == nil {
-		return "", ""
+func parseMessageBody(raw []byte) (bodyText string, bodyHTML string, err error) {
+	if len(raw) == 0 {
+		return "", "", errors.New("missing message MIME data")
 	}
-	_ = err // CreateReader may return an error but still provide a usable Reader
+	entity, parseErr := message.Read(bytes.NewReader(raw))
+	return readMIMEEntity(entity, parseErr)
+}
 
-	for {
-		p, err := mr.NextPart()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			break
+func readMIMEEntity(entity *message.Entity, parseErr error) (bodyText string, bodyHTML string, err error) {
+	if parseErr != nil && !message.IsUnknownCharset(parseErr) {
+		return "", "", fmt.Errorf("invalid MIME entity: %w", parseErr)
+	}
+	if entity == nil {
+		return "", "", errors.New("missing MIME entity")
+	}
+	contentType, params, err := entity.Header.ContentType()
+	if err != nil {
+		return "", "", fmt.Errorf("invalid MIME content type: %w", err)
+	}
+	if entity.Header.Get("Content-Disposition") != "" {
+		disposition, dispositionParams, err := entity.Header.ContentDisposition()
+		if err != nil {
+			return "", "", fmt.Errorf("invalid MIME disposition: %w", err)
 		}
-
-		switch h := p.Header.(type) {
-		case *mail.InlineHeader:
-			contentType, _, _ := h.ContentType()
-			b, readErr := io.ReadAll(p.Body)
-			if readErr != nil {
-				continue
-			}
-
-			if strings.HasPrefix(strings.ToLower(contentType), "text/html") {
-				if bodyHTML == "" {
-					bodyHTML = string(b)
-				}
-			} else if strings.HasPrefix(strings.ToLower(contentType), "text/plain") {
-				if bodyText == "" {
-					bodyText = string(b)
-				}
-			} else {
-				if bodyText == "" {
-					bodyText = string(b)
-				}
-			}
-		case *mail.AttachmentHeader:
-			// ignore attachments
-		default:
-			// ignore unknown parts
+		if strings.EqualFold(disposition, "attachment") || hasFilename(dispositionParams, "filename") {
+			return "", "", nil
 		}
 	}
-
-	return bodyText, bodyHTML
+	if hasFilename(params, "name") {
+		return "", "", nil
+	}
+	if multipart := entity.MultipartReader(); multipart != nil {
+		if params["boundary"] == "" {
+			return "", "", errors.New("multipart MIME entity has no boundary")
+		}
+		defer multipart.Close()
+		for {
+			part, partErr := multipart.NextPart()
+			if partErr == io.EOF {
+				return bodyText, bodyHTML, nil
+			}
+			text, html, err := readMIMEEntity(part, partErr)
+			if err != nil {
+				return "", "", err
+			}
+			if bodyText == "" {
+				bodyText = text
+			}
+			if bodyHTML == "" {
+				bodyHTML = html
+			}
+		}
+	}
+	// Unknown encodings must never return the original encoded bytes, including
+	// when go-message reports an unknown charset after an encoding error.
+	switch strings.ToLower(strings.TrimSpace(entity.Header.Get("Content-Transfer-Encoding"))) {
+	case "", "7bit", "8bit", "binary", "base64", "quoted-printable":
+	default:
+		return "", "", errors.New("unsupported MIME transfer encoding")
+	}
+	if contentType != "text/plain" && contentType != "text/html" {
+		return "", "", nil
+	}
+	decoded, err := io.ReadAll(entity.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to decode MIME body: %w", err)
+	}
+	// go-message leaves the transfer-decoded body readable for unknown charsets.
+	// It is safe to accept that fallback only when its bytes already form UTF-8.
+	if message.IsUnknownCharset(parseErr) && !utf8.Valid(decoded) {
+		return "", "", fmt.Errorf("cannot decode MIME charset: %w", parseErr)
+	}
+	if contentType == "text/html" {
+		return "", string(decoded), nil
+	}
+	return string(decoded), "", nil
 }
 func isTemporaryIMAPError(err error) bool {
 	if err == nil {
@@ -494,6 +512,45 @@ type bodyPartSelection struct {
 	htmlPath    []int
 }
 
+func hasFilename(params map[string]string, name string) bool {
+	for key, value := range params {
+		key = strings.ToLower(key)
+		if value != "" && (key == name || strings.HasPrefix(key, name+"*")) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAttachment(part imap.BodyStructure) bool {
+	if disposition := part.Disposition(); disposition != nil {
+		if strings.EqualFold(disposition.Value, "attachment") || hasFilename(disposition.Params, "filename") {
+			return true
+		}
+	}
+	switch part := part.(type) {
+	case *imap.BodyStructureSinglePart:
+		return hasFilename(part.Params, "name")
+	case *imap.BodyStructureMultiPart:
+		return part.Extended != nil && hasFilename(part.Extended.Params, "name")
+	}
+	return false
+}
+
+func hasAttachment(bs imap.BodyStructure) bool {
+	if bs == nil {
+		return false
+	}
+	var found bool
+	bs.Walk(func(_ []int, part imap.BodyStructure) bool {
+		if isAttachment(part) {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
 func selectBodyParts(bs imap.BodyStructure) bodyPartSelection {
 	var sel bodyPartSelection
 	if bs == nil {
@@ -503,11 +560,11 @@ func selectBodyParts(bs imap.BodyStructure) bodyPartSelection {
 		sel.isMultipart = true
 	}
 	bs.Walk(func(path []int, part imap.BodyStructure) bool {
+		if isAttachment(part) {
+			return false
+		}
 		sp, ok := part.(*imap.BodyStructureSinglePart)
 		if !ok {
-			return true
-		}
-		if disp := sp.Disposition(); disp != nil && strings.EqualFold(disp.Value, "attachment") {
 			return true
 		}
 		mt := sp.MediaType()
@@ -521,37 +578,35 @@ func selectBodyParts(bs imap.BodyStructure) bodyPartSelection {
 	return sel
 }
 
-func decodeBodyPart(mimeHeaderBytes, bodyBytes []byte) string {
-	if len(bodyBytes) == 0 {
-		return ""
+func decodeBodyPart(mimeHeaderBytes, bodyBytes []byte) (string, error) {
+	if len(mimeHeaderBytes) == 0 || bodyBytes == nil {
+		return "", errors.New("missing MIME header or body section")
 	}
-	if len(mimeHeaderBytes) == 0 {
-		return string(bodyBytes)
-	}
-
-	var buf bytes.Buffer
-	buf.Write(mimeHeaderBytes)
+	separator := ""
 	if !bytes.HasSuffix(mimeHeaderBytes, []byte("\r\n\r\n")) && !bytes.HasSuffix(mimeHeaderBytes, []byte("\n\n")) {
-		if bytes.HasSuffix(mimeHeaderBytes, []byte("\r\n")) || bytes.HasSuffix(mimeHeaderBytes, []byte("\n")) {
-			buf.WriteString("\r\n")
+		if bytes.HasSuffix(mimeHeaderBytes, []byte("\n")) {
+			separator = "\r\n"
 		} else {
-			buf.WriteString("\r\n\r\n")
+			separator = "\r\n\r\n"
 		}
 	}
-	buf.Write(bodyBytes)
-
-	mr, err := mail.CreateReader(&buf)
-	if mr != nil {
-		p, nextErr := mr.NextPart()
-		if nextErr == nil && p != nil {
-			decoded, readErr := io.ReadAll(p.Body)
-			if readErr == nil {
-				return string(decoded)
-			}
+	entity, parseErr := message.Read(io.MultiReader(bytes.NewReader(mimeHeaderBytes), strings.NewReader(separator), bytes.NewReader(bodyBytes)))
+	if entity != nil {
+		contentType, _, err := entity.Header.ContentType()
+		if err != nil || (contentType != "text/plain" && contentType != "text/html") {
+			return "", errors.New("body section has invalid text MIME content type")
 		}
 	}
-	_ = err
-	return string(bodyBytes)
+	text, html, err := readMIMEEntity(entity, parseErr)
+	if err != nil {
+		return "", err
+	}
+	if entity != nil {
+		if contentType, _, _ := entity.Header.ContentType(); contentType == "text/html" {
+			return html, nil
+		}
+	}
+	return text, nil
 }
 
 func (c *Client) FetchEmailBody(ctx context.Context, folder string, uid uint, uidValidity uint32) (bodyText string, bodyHTML string, err error) {
@@ -592,11 +647,11 @@ func (c *Client) FetchEmailBody(ctx context.Context, folder string, uid uint, ui
 		if len(msgs) == 0 {
 			return "", "", fmt.Errorf("message not found")
 		}
-		c.lastActivity = time.Now()
-		raw := msgs[0].FindBodySection(fullSection)
-		if len(raw) > 0 {
-			bodyText, bodyHTML = parseMessageBody(raw)
+		bodyText, bodyHTML, err = parseMessageBody(msgs[0].FindBodySection(fullSection))
+		if err != nil {
+			return "", "", fmt.Errorf("failed to parse message body: %w", err)
 		}
+		c.lastActivity = time.Now()
 		return bodyText, bodyHTML, nil
 	}
 
@@ -614,11 +669,11 @@ func (c *Client) FetchEmailBody(ctx context.Context, folder string, uid uint, ui
 		if len(msgs) == 0 {
 			return "", "", fmt.Errorf("message not found")
 		}
-		c.lastActivity = time.Now()
-		raw := msgs[0].FindBodySection(fullSection)
-		if len(raw) > 0 {
-			bodyText, bodyHTML = parseMessageBody(raw)
+		bodyText, bodyHTML, err = parseMessageBody(msgs[0].FindBodySection(fullSection))
+		if err != nil {
+			return "", "", fmt.Errorf("failed to parse message body: %w", err)
 		}
+		c.lastActivity = time.Now()
 		return bodyText, bodyHTML, nil
 	}
 
@@ -643,47 +698,20 @@ func (c *Client) FetchEmailBody(ctx context.Context, folder string, uid uint, ui
 		return "", "", fmt.Errorf("message not found")
 	}
 
-	c.lastActivity = time.Now()
 	if textBodySec != nil {
-		bodyText = decodeBodyPart(messages[0].FindBodySection(textMimeSec), messages[0].FindBodySection(textBodySec))
+		bodyText, err = decodeBodyPart(messages[0].FindBodySection(textMimeSec), messages[0].FindBodySection(textBodySec))
+		if err != nil {
+			return "", "", fmt.Errorf("failed to decode text body: %w", err)
+		}
 	}
 	if htmlBodySec != nil {
-		bodyHTML = decodeBodyPart(messages[0].FindBodySection(htmlMimeSec), messages[0].FindBodySection(htmlBodySec))
+		bodyHTML, err = decodeBodyPart(messages[0].FindBodySection(htmlMimeSec), messages[0].FindBodySection(htmlBodySec))
+		if err != nil {
+			return "", "", fmt.Errorf("failed to decode HTML body: %w", err)
+		}
 	}
+	c.lastActivity = time.Now()
 	return bodyText, bodyHTML, nil
-}
-
-func (c *Client) SetSeen(ctx context.Context, uid uint, folder string, uidValidity uint32, seen bool) error {
-	finish, err := c.commandContext(ctx)
-	if err != nil {
-		return err
-	}
-	defer finish()
-	selected, err := c.client.Select(folder, nil).Wait()
-	if err != nil {
-		return fmt.Errorf("failed to select mailbox: %w", err)
-	}
-	if uidValidity == 0 || selected.UIDValidity != uidValidity {
-		return ErrUIDValidityChanged
-	}
-	uidSet := imap.UIDSetNum(imap.UID(uid))
-	// STORE succeeds for missing UIDs, so verify the exact identity before clearing pending state.
-	messages, err := c.client.Fetch(uidSet, &imap.FetchOptions{UID: true}).Collect()
-	if err != nil {
-		return err
-	}
-	if len(messages) != 1 || uint(messages[0].UID) != uid {
-		return errors.New("message not found")
-	}
-	op := imap.StoreFlagsDel
-	if seen {
-		op = imap.StoreFlagsAdd
-	}
-	err = c.client.Store(uidSet, &imap.StoreFlags{Op: op, Flags: []imap.Flag{imap.FlagSeen}}, nil).Close()
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	return err
 }
 
 // fetchBodySections bounds every literal even when the server ignores BODY partial ranges.
@@ -722,17 +750,27 @@ func (c *Client) fetchBodySections(uids imap.UIDSet, sections []*imap.FetchItemB
 	return result, nil
 }
 
-func (c *Client) TestConnection() error {
+func (c *Client) TestConnectionContext(ctx context.Context) error {
 	if c.account.IMAPHost == "" || c.account.Username == "" || c.account.Password == "" {
 		return fmt.Errorf("invalid configuration")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultConnectTimeout)
+	ctx, cancel := context.WithTimeout(ctx, defaultConnectTimeout)
 	defer cancel()
 
 	testClient := NewClient(c.account)
 	if err := testClient.ConnectContext(ctx); err != nil {
 		return err
 	}
-	return testClient.Disconnect()
+	finish, err := testClient.commandContext(ctx)
+	if err != nil {
+		testClient.ForceClose()
+		return err
+	}
+	defer finish()
+	err = testClient.Disconnect()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }

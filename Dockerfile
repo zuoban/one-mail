@@ -24,7 +24,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM alpine:3.23
 WORKDIR /app
 RUN apk add --no-cache ca-certificates nginx supervisor tzdata \
-    && mkdir -p /app/data /run/nginx /var/log/supervisor
+    && addgroup -S -g 10001 app \
+    && adduser -S -D -H -u 10001 -G app app \
+    && mkdir -p /app/data /run/nginx \
+    && chown app:app /app/data \
+    && chmod 0700 /app/data
+ENV GIN_MODE=release
 
 COPY --from=backend-builder /app/backend/server /app/
 COPY --from=backend-builder /app/backend/config.yaml /app/
@@ -32,8 +37,10 @@ COPY --from=frontend-builder /app/frontend/dist /usr/share/nginx/html
 COPY docker/nginx-single.conf /etc/nginx/conf.d/default.conf
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY --chmod=755 docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD wget -q -T 5 -O /dev/null http://127.0.0.1/health || exit 1
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

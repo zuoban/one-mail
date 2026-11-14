@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"one-mail/backend/database"
+	"one-mail/backend/internal/credentials"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/telegram"
 )
@@ -57,6 +58,11 @@ func telegramConfigForRequest(c *gin.Context) (*models.TelegramConfig, bool) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load telegram configuration"})
 		return nil, false
 	}
+	cfg.BotToken, err = credentials.Decrypt(cfg.BotToken)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unlock telegram configuration"})
+		return nil, false
+	}
 	return cfg, true
 }
 
@@ -92,16 +98,24 @@ func UpdateTelegramConfig(c *gin.Context) {
 		cfg.Enabled = *req.Enabled
 	}
 
+	updates := map[string]interface{}{"enabled": cfg.Enabled}
 	if req.BotToken != "" && !strings.Contains(req.BotToken, "****") {
+		sealed, err := credentials.Encrypt(req.BotToken)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to secure telegram configuration"})
+			return
+		}
 		cfg.BotToken = req.BotToken
+		updates["bot_token"] = sealed
 	}
 
 	if req.ChatID != "" {
 		cfg.ChatID = req.ChatID
 	}
+	updates["chat_id"] = cfg.ChatID
 
 	if err := db.Model(&models.TelegramConfig{}).Where("id = ?", 1).
-		Updates(map[string]interface{}{"enabled": cfg.Enabled, "bot_token": cfg.BotToken, "chat_id": cfg.ChatID}).Error; err != nil {
+		Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save config"})
 		return
 	}

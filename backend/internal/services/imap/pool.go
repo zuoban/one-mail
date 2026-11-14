@@ -13,12 +13,13 @@ import (
 var ErrConnectionInvalidated = errors.New("IMAP connection invalidated")
 
 type poolEntry struct {
-	accountID uint
-	client    *Client
-	busy      bool
-	invalid   bool
-	lastUsed  time.Time
-	cancel    context.CancelFunc
+	accountID     uint
+	configVersion uint64
+	client        *Client
+	busy          bool
+	invalid       bool
+	lastUsed      time.Time
+	cancel        context.CancelFunc
 }
 
 // Counts include idle, leased and dialing connections. Invalid leases retain their
@@ -26,17 +27,19 @@ type poolEntry struct {
 type ConnectionPool struct {
 	mu            sync.Mutex
 	entries       map[*poolEntry]struct{}
-	generation    map[uint]uint64
+	versions      map[uint]uint64
 	changed       chan struct{}
 	maxPerAccount int
 	maxTotal      int
 	maxIdle       time.Duration
+	waitCount     uint64
+	waitDuration  time.Duration
 	dial          func(context.Context, *models.EmailAccount) (*Client, error)
 }
 
 func newConnectionPool() *ConnectionPool {
 	p := &ConnectionPool{
-		entries: make(map[*poolEntry]struct{}), generation: make(map[uint]uint64),
+		entries: make(map[*poolEntry]struct{}), versions: make(map[uint]uint64),
 		changed: make(chan struct{}), maxPerAccount: 3, maxTotal: 16, maxIdle: 10 * time.Minute,
 	}
 	p.dial = p.dialWithRetryContext
@@ -63,13 +66,15 @@ func (p *ConnectionPool) AcquireConnectionContext(ctx context.Context, account *
 		return nil, nil, errors.New("account is nil")
 	}
 	p.mu.Lock()
-	generation := p.generation[account.ID]
+	if account.ConfigVersion > p.versions[account.ID] {
+		p.invalidateLocked(account.ID, account.ConfigVersion)
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			p.mu.Unlock()
 			return nil, nil, err
 		}
-		if generation != p.generation[account.ID] {
+		if account.ConfigVersion < p.versions[account.ID] {
 			p.mu.Unlock()
 			return nil, nil, ErrConnectionInvalidated
 		}
@@ -105,7 +110,7 @@ func (p *ConnectionPool) AcquireConnectionContext(ctx context.Context, account *
 		}
 		if count < p.maxPerAccount && len(p.entries) < p.maxTotal {
 			dialCtx, cancel := context.WithCancel(ctx)
-			entry := &poolEntry{accountID: account.ID, busy: true, cancel: cancel}
+			entry := &poolEntry{accountID: account.ID, configVersion: account.ConfigVersion, busy: true, cancel: cancel}
 			p.entries[entry] = struct{}{}
 			p.mu.Unlock()
 			client, err := p.dial(dialCtx, account)
@@ -130,13 +135,19 @@ func (p *ConnectionPool) AcquireConnectionContext(ctx context.Context, account *
 			return client, p.releaseFunc(entry), nil
 		}
 		changed := p.changed
+		waitStarted := time.Now()
+		p.waitCount++
 		p.mu.Unlock()
 		select {
 		case <-ctx.Done():
+			p.mu.Lock()
+			p.waitDuration += time.Since(waitStarted)
+			p.mu.Unlock()
 			return nil, nil, ctx.Err()
 		case <-changed:
 		}
 		p.mu.Lock()
+		p.waitDuration += time.Since(waitStarted)
 	}
 }
 
@@ -158,12 +169,20 @@ func (p *ConnectionPool) releaseFunc(entry *poolEntry) func(bool) {
 	}
 }
 
-func (p *ConnectionPool) RemoveConnection(accountID uint) {
+// RemoveConnection invalidates older account snapshots without closing a lease
+// already acquired using the newly committed configuration.
+func (p *ConnectionPool) RemoveConnection(accountID uint, configVersion uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.generation[accountID]++
+	p.invalidateLocked(accountID, configVersion)
+}
+
+func (p *ConnectionPool) invalidateLocked(accountID uint, configVersion uint64) {
+	if configVersion > p.versions[accountID] {
+		p.versions[accountID] = configVersion
+	}
 	for entry := range p.entries {
-		if entry.accountID != accountID {
+		if entry.accountID != accountID || entry.configVersion >= p.versions[accountID] {
 			continue
 		}
 		entry.invalid = true
@@ -221,5 +240,8 @@ func (p *ConnectionPool) GetStats() map[string]interface{} {
 			"in_use": entry.busy, "last_used": entry.lastUsed,
 		})
 	}
-	return map[string]interface{}{"total_connections": len(p.entries), "connections": connections}
+	return map[string]interface{}{
+		"total_connections": len(p.entries), "connections": connections,
+		"wait_count": p.waitCount, "wait_duration_ms": p.waitDuration.Milliseconds(),
+	}
 }

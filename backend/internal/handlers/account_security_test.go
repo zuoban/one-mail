@@ -28,7 +28,7 @@ func TestAccountUpdateEncryptsPasswordAndDeleteCleansMessages(t *testing.T) {
 	if err := db.Create(&account).Error; err != nil {
 		t.Fatal(err)
 	}
-	email := models.Email{AccountID: account.ID, MessageID: "cached"}
+	email := models.Email{AccountID: account.ID, MessageID: "cached", BodyText: "private cached body", BodyFetched: true}
 	if err := db.Create(&email).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -62,11 +62,11 @@ func TestAccountUpdateEncryptsPasswordAndDeleteCleansMessages(t *testing.T) {
 		t.Fatalf("delete failed: %s", w.Body.String())
 	}
 	var count int64
-	if err := db.Model(&models.Email{}).Where("account_id = ?", account.ID).Count(&count).Error; err != nil {
+	if err := db.Unscoped().Model(&models.Email{}).Where("account_id = ?", account.ID).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
-		t.Fatal("deleted account left accessible messages")
+		t.Fatal("deleted account left physical cached messages")
 	}
 }
 
@@ -148,5 +148,36 @@ func TestMissingAndDeletedAccountsRemainUnavailable(t *testing.T) {
 	}
 	if !stored.DeletedAt.Valid || stored.Username != account.Username || stored.Password != account.Password {
 		t.Fatal("unavailable mailbox credentials or deletion state were modified")
+	}
+}
+
+func TestAccountDeleteRollsBackCacheCleanupOnFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupEmailHandlerTestDB(t)
+	account := models.EmailAccount{Email: "rollback@example.com"}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	email := models.Email{AccountID: account.ID, MessageID: "cached", BodyFetched: true, BodyText: "private cached body"}
+	if err := db.Create(&email).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE TRIGGER fail_account_delete BEFORE UPDATE OF deleted_at ON email_accounts BEGIN SELECT RAISE(FAIL, 'account delete failed'); END").Error; err != nil {
+		t.Fatal(err)
+	}
+	r := gin.New()
+	r.DELETE("/accounts/:id", NewAccountHandler().DeleteAccount)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/accounts/%d", account.ID), nil))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("failed deletion returned %d: %s", w.Code, w.Body.String())
+	}
+	var stored models.Email
+	if err := db.First(&stored, email.ID).Error; err != nil || stored.BodyText != email.BodyText || !stored.BodyFetched {
+		t.Fatalf("failed account deletion destroyed cached body: %+v %v", stored, err)
+	}
+	var active models.EmailAccount
+	if err := db.First(&active, account.ID).Error; err != nil {
+		t.Fatalf("failed deletion removed account: %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"one-mail/backend/database"
+	"one-mail/backend/internal/credentials"
 	"one-mail/backend/internal/models"
 
 	"gorm.io/driver/sqlite"
@@ -24,6 +26,9 @@ func (f telegramRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, err
 }
 
 func TestConfigurationCacheAndDeliveryUseSingleton(t *testing.T) {
+	if err := credentials.Init(base64.StdEncoding.EncodeToString(make([]byte, 32)), ""); err != nil {
+		t.Fatal(err)
+	}
 	oldDB := database.DB
 	configCacheMu.Lock()
 	oldCache := cachedConfig
@@ -74,7 +79,11 @@ func TestConfigurationCacheAndDeliveryUseSingleton(t *testing.T) {
 	if len(deliveries) != 0 {
 		t.Fatal("missing singleton sent a notification")
 	}
-	cfg := models.TelegramConfig{ID: 1, Enabled: true, BotToken: "instance-token", ChatID: "instance-chat"}
+	sealed, err := credentials.Encrypt("instance-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := models.TelegramConfig{ID: 1, Enabled: true, BotToken: sealed, ChatID: "instance-chat"}
 	if err := db.Create(&cfg).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +94,12 @@ func TestConfigurationCacheAndDeliveryUseSingleton(t *testing.T) {
 	if err := client.SendNewEmail(email, "first@example.com"); err != nil {
 		t.Fatal(err)
 	}
+	updated, err := credentials.Encrypt("updated-token")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Model(&models.TelegramConfig{}).Where("id = ?", 1).
-		Updates(map[string]interface{}{"bot_token": "updated-token", "chat_id": "updated-chat"}).Error; err != nil {
+		Updates(map[string]interface{}{"bot_token": updated, "chat_id": "updated-chat"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if getConfig() != first {
@@ -97,6 +110,9 @@ func TestConfigurationCacheAndDeliveryUseSingleton(t *testing.T) {
 		t.Fatal("invalidation did not reload the singleton")
 	}
 	if err := client.SendNewEmail(email, "second@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.TestConnection(getConfig().BotToken, getConfig().ChatID); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&models.TelegramConfig{}).Where("id = ?", 1).Update("enabled", false).Error; err != nil {
@@ -119,7 +135,7 @@ func TestConfigurationCacheAndDeliveryUseSingleton(t *testing.T) {
 	if err := client.SendNewEmail(email, "first@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	want := []delivery{{"/botinstance-token/sendMessage", "instance-chat"}, {"/botupdated-token/sendMessage", "updated-chat"}}
+	want := []delivery{{"/botinstance-token/sendMessage", "instance-chat"}, {"/botupdated-token/sendMessage", "updated-chat"}, {"/botupdated-token/sendMessage", "updated-chat"}}
 	if len(deliveries) != len(want) {
 		t.Fatalf("unexpected delivery count: %d", len(deliveries))
 	}
@@ -143,5 +159,53 @@ func TestTelegramTransportErrorsDoNotExposeBotToken(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "api.telegram.org") {
 			t.Fatalf("transport failure was not sanitized: %v", err)
 		}
+	}
+}
+
+func TestEncryptedConfigurationRejectsWrongKeyWithoutDelivery(t *testing.T) {
+	if err := credentials.Init(base64.StdEncoding.EncodeToString(make([]byte, 32)), ""); err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := credentials.Encrypt("private-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "telegram.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(&models.TelegramConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.TelegramConfig{ID: 1, Enabled: true, BotToken: sealed, ChatID: "chat"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	oldDB := database.DB
+	database.DB = db
+	InvalidateConfigCache()
+	t.Cleanup(func() {
+		database.DB = oldDB
+		InvalidateConfigCache()
+		_ = credentials.Init(base64.StdEncoding.EncodeToString(make([]byte, 32)), "")
+	})
+	other := make([]byte, 32)
+	other[0] = 1
+	if err := credentials.Init(base64.StdEncoding.EncodeToString(other), ""); err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{httpClient: &http.Client{Transport: telegramRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatal("unreadable stored token reached HTTP transport")
+		return nil, nil
+	})}}
+	if client.IsEnabled() || getConfig() != nil {
+		t.Fatal("unreadable stored token enabled notifications")
+	}
+	if err := client.SendNewEmail(&models.Email{Subject: "subject"}, "mail@example.com"); err != nil {
+		t.Fatal(err)
 	}
 }

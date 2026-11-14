@@ -41,6 +41,7 @@ var accountColors = []string{
 }
 
 func InitDatabase() error {
+	fts5Enabled.Store(false)
 	var err error
 	dsn := config.GetDSN()
 	if err := os.MkdirAll(filepath.Dir(dsn), 0700); err != nil {
@@ -50,10 +51,8 @@ func InitDatabase() error {
 		return fmt.Errorf("initialize credential encryption: %w", err)
 	}
 
+	// Keep slow-query warnings in release builds; parameters remain redacted.
 	logLevel := logger.Warn
-	if config.AppConfig != nil && config.AppConfig.Server.Mode == "release" {
-		logLevel = logger.Error
-	}
 	gormLogger := logger.New(
 		log.New(os.Stdout, "\r\n", log.LstdFlags),
 		logger.Config{
@@ -126,6 +125,7 @@ func SetupSQLite(db *gorm.DB, isSQLite bool) error {
 // MigrateAndOptimize removes legacy application users, migrates the personal
 // instance schema, fixes composite indexes, and sets up FTS5 if compiled in.
 func MigrateAndOptimize(db *gorm.DB) error {
+	fts5Enabled.Store(false)
 	// SQLite cannot disable foreign keys inside a transaction. Pin the connection
 	// so the table cutover and restoration use the same connection-scoped setting.
 	if err := db.Connection(func(conn *gorm.DB) (result error) {
@@ -168,6 +168,9 @@ func MigrateAndOptimize(db *gorm.DB) error {
 			if err := mergeTelegramConfig(tx); err != nil {
 				return err
 			}
+			if err := migrateRecentMailCache(tx); err != nil {
+				return err
+			}
 			if err := ensureEmailIndexes(tx); err != nil {
 				return err
 			}
@@ -207,34 +210,172 @@ func migratePersonalModels(tx *gorm.DB) error {
 		return tx.AutoMigrate(&models.EmailAccount{}, &models.Email{}, &models.TelegramConfig{})
 	}
 
-	// AlterColumn on SQLite replaces the table and drops its triggers. Existing
-	// emails need only additive migrations, including installations with cached
-	// bodies predating body_fetched, pending_read, and uid_validity.
-	independent := tx.Session(&gorm.Session{})
-	independent.Config.IgnoreRelationshipsWhenMigrating = true
-	if err := independent.AutoMigrate(&models.EmailAccount{}, &models.TelegramConfig{}); err != nil {
-		return err
-	}
-	stmt := &gorm.Statement{DB: tx}
-	if err := stmt.Parse(&models.Email{}); err != nil {
-		return err
-	}
-	migrator := tx.Migrator()
-	for _, name := range stmt.Schema.DBNames {
-		if !migrator.HasColumn(&models.Email{}, name) {
-			if err := migrator.AddColumn(&models.Email{}, name); err != nil {
+	// Add missing fields and indexes without replacing existing tables, so
+	// unrelated triggers and cached message bodies survive version upgrades.
+	for _, model := range []interface{}{&models.EmailAccount{}, &models.Email{}, &models.TelegramConfig{}} {
+		if !tx.Migrator().HasTable(model) {
+			if err := tx.AutoMigrate(model); err != nil {
 				return err
 			}
+			continue
 		}
-	}
-	for _, index := range stmt.Schema.ParseIndexes() {
-		if !migrator.HasIndex(&models.Email{}, index.Name) {
-			if err := migrator.CreateIndex(&models.Email{}, index.Name); err != nil {
-				return err
+		stmt := &gorm.Statement{DB: tx}
+		if err := stmt.Parse(model); err != nil {
+			return err
+		}
+		migrator := tx.Migrator()
+		for _, name := range stmt.Schema.DBNames {
+			if !migrator.HasColumn(model, name) {
+				if err := migrator.AddColumn(model, name); err != nil {
+					return err
+				}
+			}
+		}
+		for _, index := range stmt.Schema.ParseIndexes() {
+			if !migrator.HasIndex(model, index.Name) {
+				if err := migrator.CreateIndex(model, index.Name); err != nil {
+					return err
+				}
 			}
 		}
 	}
 	return nil
+}
+
+// migrateRecentMailCache removes obsolete mutation state and bounds stored mail.
+// Native DROP COLUMN preserves unrelated triggers and the email ID sequence.
+func migrateRecentMailCache(tx *gorm.DB) error {
+	obsoleteColumns := []string{"deleted_at", "is_read", "pending_read", "is_starred"}
+	needsCutover := false
+	for _, name := range obsoleteColumns {
+		needsCutover = needsCutover || tx.Migrator().HasColumn("emails", name)
+	}
+	if needsCutover {
+		for _, name := range []string{"emails_fts_ai", "emails_fts_ad", "emails_fts_au"} {
+			if err := tx.Exec("DROP TRIGGER IF EXISTS " + name).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Exec("DROP TABLE IF EXISTS emails_fts").Error; err != nil {
+			return err
+		}
+		if tx.Migrator().HasColumn("emails", "deleted_at") {
+			if err := tx.Exec("DELETE FROM emails WHERE deleted_at IS NOT NULL").Error; err != nil {
+				return err
+			}
+		}
+		var indexes []struct {
+			Name string
+			SQL  string
+		}
+		if err := tx.Raw("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'emails' AND sql IS NOT NULL").Scan(&indexes).Error; err != nil {
+			return err
+		}
+		for _, index := range indexes {
+			if !indexReferencesColumns(index.SQL, obsoleteColumns) {
+				continue
+			}
+			name := strings.ReplaceAll(index.Name, `"`, `""`)
+			if err := tx.Exec(`DROP INDEX "` + name + `"`).Error; err != nil {
+				return err
+			}
+		}
+		for _, name := range obsoleteColumns {
+			if tx.Migrator().HasColumn("emails", name) {
+				if err := tx.Exec(`ALTER TABLE emails DROP COLUMN "` + name + `"`).Error; err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if err := tx.Exec(`DELETE FROM emails WHERE account_id IN
+		(SELECT id FROM email_accounts WHERE deleted_at IS NOT NULL)
+		OR folder IS NULL OR folder <> 'INBOX'`).Error; err != nil {
+		return err
+	}
+	return tx.Exec(`DELETE FROM emails WHERE id IN (
+		SELECT id FROM (
+			SELECT id, ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY date DESC, id DESC) AS cache_rank
+			FROM emails
+		) WHERE cache_rank > 50
+	)`).Error
+}
+
+// Inspect identifiers in index expressions and predicates, without treating
+// index names, SQL string literals, or comments as column dependencies.
+func indexReferencesColumns(ddl string, columns []string) bool {
+	matches := func(token string) bool {
+		for _, column := range columns {
+			if strings.EqualFold(token, column) {
+				return true
+			}
+		}
+		return false
+	}
+	inDefinition := false
+	for offset := 0; offset < len(ddl); {
+		if strings.HasPrefix(ddl[offset:], "--") {
+			end := strings.IndexByte(ddl[offset:], '\n')
+			if end < 0 {
+				return false
+			}
+			offset += end + 1
+			continue
+		}
+		if strings.HasPrefix(ddl[offset:], "/*") {
+			end := strings.Index(ddl[offset+2:], "*/")
+			if end < 0 {
+				return false
+			}
+			offset += end + 4
+			continue
+		}
+		switch quote := ddl[offset]; quote {
+		case '\'', '"', '`', '[':
+			endQuote := quote
+			if quote == '[' {
+				endQuote = ']'
+			}
+			offset++
+			start := offset
+			for offset < len(ddl) {
+				if ddl[offset] == endQuote {
+					if offset+1 < len(ddl) && ddl[offset+1] == endQuote {
+						offset += 2
+						continue
+					}
+					break
+				}
+				offset++
+			}
+			if inDefinition && quote != '\'' && matches(ddl[start:offset]) {
+				return true
+			}
+			if offset < len(ddl) {
+				offset++
+			}
+			continue
+		case '(':
+			inDefinition = true
+		}
+		if isSQLIdentifierByte(ddl[offset]) {
+			start := offset
+			for offset < len(ddl) && isSQLIdentifierByte(ddl[offset]) {
+				offset++
+			}
+			if inDefinition && matches(ddl[start:offset]) {
+				return true
+			}
+			continue
+		}
+		offset++
+	}
+	return false
+}
+
+func isSQLIdentifierByte(char byte) bool {
+	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
+		char >= '0' && char <= '9' || char == '_' || char >= 0x80
 }
 
 func migrateCredentials(db *gorm.DB) error {
@@ -259,13 +400,36 @@ func migrateCredentials(db *gorm.DB) error {
 				return err
 			}
 		}
+		var configs []models.TelegramConfig
+		if err := tx.Select("id, bot_token").Find(&configs).Error; err != nil {
+			return err
+		}
+		for _, cfg := range configs {
+			if cfg.BotToken == "" {
+				continue
+			}
+			if credentials.IsEncrypted(cfg.BotToken) {
+				if _, err := credentials.Decrypt(cfg.BotToken); err != nil {
+					return fmt.Errorf("cannot unlock Telegram credentials for configuration %d: %w", cfg.ID, err)
+				}
+				continue
+			}
+			sealed, err := credentials.Encrypt(cfg.BotToken)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&models.TelegramConfig{}).Where("id = ?", cfg.ID).
+				UpdateColumn("bot_token", sealed).Error; err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 }
 
-// Only the two tables containing user_id are rebuilt. The emails table and its
-// existing account foreign key, body cache, pending reads, and FTS triggers stay
-// in place. Copying SQL values also preserves encrypted passwords and soft deletes.
+// Only the two tables containing user_id are rebuilt. The email account foreign
+// key and current body cache remain in place; the cache migration removes legacy
+// mutation state afterward. Encrypted account passwords keep their SQL values.
 func migratePersonalSchema(tx *gorm.DB) error {
 	if tx.Migrator().HasColumn("email_accounts", "user_id") {
 		if err := rebuildPersonalTable(tx, "email_accounts", `CREATE TABLE email_accounts_personal (
@@ -276,6 +440,7 @@ func migratePersonalSchema(tx *gorm.DB) error {
 			smtp_host text NOT NULL, smtp_port integer NOT NULL,
 			username text NOT NULL, password text NOT NULL,
 			last_sync_time datetime, uid_validity integer NOT NULL DEFAULT 0,
+			identity_version integer NOT NULL DEFAULT 0, config_version integer NOT NULL DEFAULT 0,
 			status text DEFAULT 'active', color text DEFAULT '#6366f1'
 		)`); err != nil {
 			return fmt.Errorf("remove email account ownership: %w", err)
@@ -293,6 +458,10 @@ func migratePersonalSchema(tx *gorm.DB) error {
 }
 
 func rebuildPersonalTable(tx *gorm.DB, table, ddl string) error {
+	var triggers []struct{ SQL string }
+	if err := tx.Raw("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? AND sql IS NOT NULL", table).Scan(&triggers).Error; err != nil {
+		return err
+	}
 	// The SQLite driver's DDL parser treats tabs as quoting characters. Emit
 	// compact indentation so later schema inspection sees every column.
 	if err := tx.Exec(strings.ReplaceAll(ddl, "\t", "")).Error; err != nil {
@@ -327,10 +496,30 @@ func rebuildPersonalTable(tx *gorm.DB, table, ddl string) error {
 	if err := tx.Exec("DROP TABLE " + table).Error; err != nil {
 		return err
 	}
-	return tx.Exec("ALTER TABLE " + table + "_personal RENAME TO " + table).Error
+	if err := tx.Exec("ALTER TABLE " + table + "_personal RENAME TO " + table).Error; err != nil {
+		return err
+	}
+	for _, trigger := range triggers {
+		if err := tx.Exec(trigger.SQL).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func mergeTelegramConfig(tx *gorm.DB) error {
+	// Authenticate every ciphertext before singleton selection discards rows.
+	var configs []models.TelegramConfig
+	if err := tx.Select("id, bot_token").Find(&configs).Error; err != nil {
+		return err
+	}
+	for _, cfg := range configs {
+		if credentials.IsEncrypted(cfg.BotToken) {
+			if _, err := credentials.Decrypt(cfg.BotToken); err != nil {
+				return fmt.Errorf("cannot unlock Telegram credentials for configuration %d: %w", cfg.ID, err)
+			}
+		}
+	}
 	var cfg models.TelegramConfig
 	err := tx.Order("CASE WHEN TRIM(COALESCE(bot_token, '')) <> '' AND TRIM(COALESCE(chat_id, '')) <> '' THEN 0 ELSE 1 END").
 		Order("updated_at DESC").Order("id DESC").First(&cfg).Error
@@ -367,78 +556,92 @@ func ensureEmailIndexes(db *gorm.DB) error {
 		}
 	}
 
-	// Drop obsolete idx_account_read if present in older schemas.
-	_ = db.Exec("DROP INDEX IF EXISTS idx_account_read").Error
-
-	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_account_folder_date ON emails(account_id, folder, date DESC, id DESC) WHERE deleted_at IS NULL").Error; err != nil {
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_account_folder_date ON emails(account_id, folder, date DESC, id DESC)").Error; err != nil {
 		return err
 	}
-	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_account_folder_read_date ON emails(account_id, folder, is_read, date DESC, id DESC) WHERE deleted_at IS NULL").Error; err != nil {
-		return err
-	}
-	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_folder_date ON emails(folder, date DESC, id DESC, account_id) WHERE deleted_at IS NULL").Error; err != nil {
-		return err
-	}
-	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_folder_read_date ON emails(folder, is_read, date DESC, id DESC, account_id) WHERE deleted_at IS NULL").Error; err != nil {
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_folder_date ON emails(folder, date DESC, id DESC, account_id)").Error; err != nil {
 		return err
 	}
 	return nil
 }
 
 func setupFTS5(db *gorm.DB) {
-	var existingDDL string
-	_ = db.Raw("SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='table' AND name='emails_fts'").Scan(&existingDDL).Error
-	if existingDDL != "" && (strings.Contains(existingDDL, "content='emails'") || strings.Contains(existingDDL, "sender")) {
-		_ = db.Exec("DROP TRIGGER IF EXISTS emails_fts_ai").Error
-		_ = db.Exec("DROP TRIGGER IF EXISTS emails_fts_ad").Error
-		_ = db.Exec("DROP TRIGGER IF EXISTS emails_fts_au").Error
-		_ = db.Exec("DROP TABLE IF EXISTS emails_fts").Error
-	}
-
-	ftsDDL := `CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
-		subject,
-		"from",
-		from_name,
-		tokenize='trigram'
-	);`
-	if err := db.Exec(ftsDDL).Error; err != nil {
-		fts5Enabled.Store(false)
-		log.Printf("SQLite FTS5 not enabled (%v); falling back to indexed LIKE search", err)
+	fts5Enabled.Store(false)
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var existingDDL string
+		if err := tx.Raw("SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='table' AND name='emails_fts'").Scan(&existingDDL).Error; err != nil {
+			return err
+		}
+		// Replace old trigger definitions as part of the same atomic setup.
+		for _, name := range []string{"emails_fts_ai", "emails_fts_ad", "emails_fts_au"} {
+			if err := tx.Exec("DROP TRIGGER IF EXISTS " + name).Error; err != nil {
+				return err
+			}
+		}
+		if existingDDL != "" && (strings.Contains(existingDDL, "content='emails'") || strings.Contains(existingDDL, "sender")) {
+			if err := tx.Exec("DROP TABLE emails_fts").Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
+			subject, "from", from_name, tokenize='trigram'
+		)`).Error; err != nil {
+			return err
+		}
+		triggers := []string{
+			`CREATE TRIGGER emails_fts_ai AFTER INSERT ON emails BEGIN
+				INSERT INTO emails_fts(rowid, subject, "from", from_name)
+				VALUES (NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW."from", ''), COALESCE(NEW.from_name, ''));
+			END;`,
+			`CREATE TRIGGER emails_fts_ad AFTER DELETE ON emails BEGIN
+				DELETE FROM emails_fts WHERE rowid = OLD.id;
+			END;`,
+			`CREATE TRIGGER emails_fts_au AFTER UPDATE OF subject, "from", from_name ON emails
+			WHEN OLD.subject IS NOT NEW.subject OR OLD."from" IS NOT NEW."from" OR OLD.from_name IS NOT NEW.from_name
+			BEGIN
+				DELETE FROM emails_fts WHERE rowid = OLD.id;
+				INSERT INTO emails_fts(rowid, subject, "from", from_name)
+				VALUES (NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW."from", ''), COALESCE(NEW.from_name, ''));
+			END;`,
+		}
+		for _, trigger := range triggers {
+			if err := tx.Exec(trigger).Error; err != nil {
+				return err
+			}
+		}
+		// Compare normalized indexed content as well as missing and extra rowids.
+		const inconsistentSQL = `SELECT EXISTS (
+			SELECT 1 FROM emails e LEFT JOIN emails_fts f ON f.rowid = e.id
+			WHERE f.rowid IS NULL OR f.subject IS NOT COALESCE(e.subject, '')
+				OR f."from" IS NOT COALESCE(e."from", '') OR f.from_name IS NOT COALESCE(e.from_name, '')
+		) OR EXISTS (
+			SELECT 1 FROM emails_fts f LEFT JOIN emails e ON e.id = f.rowid WHERE e.id IS NULL
+		)`
+		var inconsistent bool
+		if err := tx.Raw(inconsistentSQL).Scan(&inconsistent).Error; err != nil {
+			return err
+		}
+		if inconsistent {
+			if err := tx.Exec("DELETE FROM emails_fts").Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(`INSERT INTO emails_fts(rowid, subject, "from", from_name)
+				SELECT id, COALESCE(subject, ''), COALESCE("from", ''), COALESCE(from_name, '') FROM emails`).Error; err != nil {
+				return err
+			}
+			if err := tx.Raw(inconsistentSQL).Scan(&inconsistent).Error; err != nil {
+				return err
+			}
+			if inconsistent {
+				return fmt.Errorf("FTS5 content remains inconsistent after repair")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("SQLite FTS5 setup failed (%v); falling back to indexed LIKE search", err)
 		return
 	}
-
-	triggers := []string{
-		`CREATE TRIGGER IF NOT EXISTS emails_fts_ai AFTER INSERT ON emails WHEN NEW.deleted_at IS NULL BEGIN
-			INSERT OR REPLACE INTO emails_fts(rowid, subject, "from", from_name)
-			VALUES (NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW."from", ''), COALESCE(NEW.from_name, ''));
-		END;`,
-		`CREATE TRIGGER IF NOT EXISTS emails_fts_ad AFTER DELETE ON emails BEGIN
-			DELETE FROM emails_fts WHERE rowid = OLD.id;
-		END;`,
-		`CREATE TRIGGER IF NOT EXISTS emails_fts_au AFTER UPDATE OF subject, "from", from_name, deleted_at ON emails BEGIN
-			DELETE FROM emails_fts WHERE rowid = OLD.id;
-			INSERT INTO emails_fts(rowid, subject, "from", from_name)
-			SELECT NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW."from", ''), COALESCE(NEW.from_name, '')
-			WHERE NEW.deleted_at IS NULL;
-		END;`,
-	}
-	for _, trig := range triggers {
-		if err := db.Exec(trig).Error; err != nil {
-			fts5Enabled.Store(false)
-			log.Printf("Failed to create FTS5 trigger (%v); disabling FTS5", err)
-			return
-		}
-	}
-
-	var needsBackfill bool
-	if err := db.Raw("SELECT (NOT EXISTS(SELECT 1 FROM emails_fts)) AND EXISTS(SELECT 1 FROM emails WHERE deleted_at IS NULL)").Scan(&needsBackfill).Error; err == nil && needsBackfill {
-		if err := db.Exec(`INSERT OR REPLACE INTO emails_fts(rowid, subject, "from", from_name)
-			SELECT id, COALESCE(subject, ''), COALESCE("from", ''), COALESCE(from_name, '')
-			FROM emails WHERE deleted_at IS NULL`).Error; err != nil {
-			log.Printf("Warning: FTS5 backfill failed: %v", err)
-		}
-	}
-
 	fts5Enabled.Store(true)
 }
 

@@ -26,7 +26,6 @@ type ListEmailsQuery struct {
 	AccountID uint   `form:"account_id"`
 	Folder    string `form:"folder"`
 	Search    string `form:"search"`
-	Unread    bool   `form:"unread"`
 }
 
 func (h *EmailHandler) ListEmails(c *gin.Context) {
@@ -69,10 +68,6 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 	}
 	q = q.Where("folder = ?", folder)
 
-	if query.Unread {
-		q = q.Where("is_read = ?", false)
-	}
-
 	search := strings.TrimSpace(query.Search)
 	if search != "" {
 		if database.IsFTS5Enabled() && utf8.RuneCountInString(search) >= 3 {
@@ -95,13 +90,12 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 		Subject       string    `json:"subject"`
 		Date          time.Time `json:"date"`
 		HasAttachment bool      `json:"has_attachment"`
-		IsRead        bool      `json:"is_read"`
 		Folder        string    `json:"folder"`
 	}
 
 	var emails []EmailListItem
 	if err := q.
-		Select("id, created_at, account_id, `from`, from_name, `to`, subject, date, has_attachment, is_read, folder").
+		Select("id, created_at, account_id, `from`, from_name, `to`, subject, date, has_attachment, folder").
 		Order("date DESC, id DESC").
 		Limit(mail.MaxLatestEmails).
 		Find(&emails).Error; err != nil {
@@ -131,7 +125,8 @@ func (h *EmailHandler) GetEmail(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
 		return
 	}
-	if ownerAccount.UIDValidity != 0 && email.UIDValidity != ownerAccount.UIDValidity {
+	if email.IdentityVersion != ownerAccount.IdentityVersion ||
+		(ownerAccount.UIDValidity != 0 && email.UIDValidity != ownerAccount.UIDValidity) {
 		c.JSON(http.StatusConflict, gin.H{"error": "mailbox identity changed; refresh the email list before retrying"})
 		return
 	}
@@ -168,6 +163,9 @@ func (h *EmailHandler) fetchAndCacheBody(ctx context.Context, email *models.Emai
 	if err := database.GetDB().First(&account, email.AccountID).Error; err != nil {
 		return err
 	}
+	if email.IdentityVersion != account.IdentityVersion {
+		return mail.ErrAccountChanged
+	}
 	imapClient, release, err := imap.GetConnectionPool().AcquireConnectionContext(ctx, &account)
 	if err != nil {
 		return err
@@ -177,174 +175,36 @@ func (h *EmailHandler) fetchAndCacheBody(ctx context.Context, email *models.Emai
 	if err != nil {
 		return err
 	}
-	result := database.GetDB().WithContext(ctx).Model(&models.Email{}).
-		Where("id = ? AND uid = ? AND uid_validity = ?", email.ID, email.UID, email.UIDValidity).
-		Updates(map[string]interface{}{"body_text": bodyText, "body_html": bodyHTML, "body_fetched": true})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+	if err := cacheEmailBody(ctx, database.GetDB(), &account, email, bodyText, bodyHTML); err != nil {
+		return err
 	}
 	email.BodyText, email.BodyHTML, email.BodyFetched = bodyText, bodyHTML, true
 	return nil
 }
 
-func (h *EmailHandler) MarkAsRead(c *gin.Context) {
-	h.setReadState(c, true)
-}
-
-func (h *EmailHandler) MarkAsUnread(c *gin.Context) {
-	h.setReadState(c, false)
-}
-
-func (h *EmailHandler) setReadState(c *gin.Context, seen bool) {
-	var email models.Email
-	db := database.GetDB()
-	if err := db.Joins("JOIN email_accounts ON email_accounts.id = emails.account_id").
-		Where("emails.id = ? AND email_accounts.deleted_at IS NULL", c.Param("id")).
-		First(&email).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "email not found"})
-		return
-	}
-	identified := []models.Email{email}
-	if err := refreshReadIdentities(c.Request.Context(), db, identified); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "mailbox identity changed; refresh the email list before retrying"})
-		return
-	}
-	email = identified[0]
-	if err := db.Model(&email).Updates(map[string]interface{}{"is_read": seen, "pending_read": seen}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save read state"})
-		return
-	}
-	syncPendingRead(c.Request.Context(), db, []uint{email.AccountID})
-	var pending int64
-	if err := db.Model(&models.Email{}).Where("id = ? AND pending_read IS NOT NULL", email.ID).Count(&pending).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load sync status"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "read state saved", "sync_pending": pending > 0})
-}
-
-// The desired state is durable before contacting IMAP; a failed attempt remains
-// pending and is retried by the next refresh rather than silently discarded.
-func syncPendingRead(ctx context.Context, db *gorm.DB, accountIDs []uint) {
-	syncCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	for _, id := range accountIDs {
-		if syncCtx.Err() != nil {
-			return
-		}
-		var account models.EmailAccount
-		if err := db.First(&account, id).Error; err != nil {
-			continue
-		}
-		_ = mail.SyncPendingRead(syncCtx, db, &account)
-	}
-}
-
-func refreshReadIdentities(ctx context.Context, db *gorm.DB, emails []models.Email) error {
-	refreshed := make(map[uint]bool)
-	for _, email := range emails {
-		if email.UIDValidity != 0 || refreshed[email.AccountID] {
-			continue
-		}
-		var account models.EmailAccount
-		if err := db.First(&account, email.AccountID).Error; err != nil {
+// Cache the body only while both the remote message and the account snapshot
+// still belong to the same identity and credential generation.
+func cacheEmailBody(ctx context.Context, db *gorm.DB, account *models.EmailAccount, email *models.Email, bodyText, bodyHTML string) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current models.EmailAccount
+		if err := tx.First(&current, account.ID).Error; err != nil {
 			return err
 		}
-		if _, err := mail.RefreshAccount(ctx, db, &account, mail.MaxLatestEmails); err != nil {
-			return err
+		if current.ConfigVersion != account.ConfigVersion || current.IdentityVersion != email.IdentityVersion ||
+			(current.UIDValidity != 0 && current.UIDValidity != email.UIDValidity) {
+			return mail.ErrAccountChanged
 		}
-		refreshed[email.AccountID] = true
-	}
-	for i := range emails {
-		if !refreshed[emails[i].AccountID] {
-			continue
+		result := tx.Model(&models.Email{}).
+			Where("id = ? AND account_id = ? AND uid = ? AND uid_validity = ? AND identity_version = ?", email.ID, account.ID, email.UID, email.UIDValidity, email.IdentityVersion).
+			Updates(map[string]interface{}{"body_text": bodyText, "body_html": bodyHTML, "body_fetched": true})
+		if result.Error != nil {
+			return result.Error
 		}
-		if err := db.First(&emails[i], emails[i].ID).Error; err != nil {
-			return err
-		}
-		if emails[i].UIDValidity == 0 {
+		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-	}
-	return nil
-}
-
-func (h *EmailHandler) BatchMarkAsRead(c *gin.Context) {
-	var req struct {
-		IDs []uint `json:"ids" binding:"required,min=1,max=1000"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	var emails []models.Email
-	db := database.GetDB()
-	if err := db.Select("emails.id, emails.account_id, emails.uid_validity").
-		Joins("JOIN email_accounts ON email_accounts.id = emails.account_id").
-		Where("emails.id IN ? AND email_accounts.deleted_at IS NULL", req.IDs).
-		Find(&emails).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load emails"})
-		return
-	}
-	if err := refreshReadIdentities(c.Request.Context(), db, emails); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "mailbox identity changed; refresh the email list before retrying"})
-		return
-	}
-	validIDs := make([]uint, 0, len(emails))
-	accountIDs := make([]uint, 0)
-	seenAccounts := make(map[uint]bool)
-	for _, email := range emails {
-		validIDs = append(validIDs, email.ID)
-		if !seenAccounts[email.AccountID] {
-			seenAccounts[email.AccountID] = true
-			accountIDs = append(accountIDs, email.AccountID)
-		}
-	}
-
-	if len(validIDs) == 0 {
-		c.JSON(http.StatusOK, gin.H{"message": "marked as read", "count": 0})
-		return
-	}
-
-	result := db.Model(&models.Email{}).Where("id IN ?", validIDs).
-		Updates(map[string]interface{}{"is_read": true, "pending_read": true})
-
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
-		return
-	}
-
-	syncPendingRead(c.Request.Context(), db, accountIDs)
-	var pending int64
-	if err := db.Model(&models.Email{}).Where("id IN ? AND pending_read IS NOT NULL", validIDs).Count(&pending).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load sync status"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "read state saved", "count": result.RowsAffected, "sync_pending": pending > 0})
-}
-
-func (h *EmailHandler) DeleteEmail(c *gin.Context) {
-	id := c.Param("id")
-
-	var email models.Email
-	if err := database.GetDB().
-		Joins("JOIN email_accounts ON email_accounts.id = emails.account_id").
-		Where("emails.id = ? AND email_accounts.deleted_at IS NULL", id).
-		First(&email).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "email not found"})
-		return
-	}
-
-	if err := database.GetDB().Delete(&email).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+		return nil
+	})
 }
 
 func (h *EmailHandler) RefreshEmails(c *gin.Context) {

@@ -45,7 +45,7 @@ func setupEmailHandlerTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func TestListEmails_Latest50UnreadSharedAccountsAndSearch(t *testing.T) {
+func TestListEmails_Latest50SharedAccountsAndSearch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupEmailHandlerTestDB(t)
 	acc1 := models.EmailAccount{Email: "u1@example.com", Provider: "custom", IMAPHost: "imap.example.com", IMAPPort: 993, SMTPHost: "smtp.example.com", SMTPPort: 587, Username: "u1", Password: "p"}
@@ -59,11 +59,11 @@ func TestListEmails_Latest50UnreadSharedAccountsAndSearch(t *testing.T) {
 
 	baseTime := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	emails := []models.Email{
-		{AccountID: acc1.ID, MessageID: "m1", From: "alice@acme.com", FromName: "Alice", To: "u1@example.com", Subject: "Weekly Report", Date: baseTime.Add(1 * time.Hour), IsRead: true, Folder: "INBOX", UID: 1},
-		{AccountID: acc1.ID, MessageID: "m2", From: "bob@acme.com", FromName: "Bob", To: "u1@example.com", Subject: "电子发票通知", Date: baseTime.Add(2 * time.Hour), IsRead: false, Folder: "INBOX", UID: 2},
-		{AccountID: acc1.ID, MessageID: "m3", From: "carol@acme.com", FromName: "Carol", To: "u1@example.com", Subject: "System Alert", Date: baseTime.Add(3 * time.Hour), IsRead: false, Folder: "INBOX", UID: 3},
-		{AccountID: acc1.ID, MessageID: "m4", From: "dave@acme.com", FromName: "Dave", To: "u1@example.com", Subject: "项目周报", Date: baseTime.Add(4 * time.Hour), IsRead: true, Folder: "INBOX", UID: 4},
-		{AccountID: acc2.ID, MessageID: "m5", From: "other@acme.com", FromName: "Other", To: "u2@example.com", Subject: "Second Mailbox", Date: baseTime.Add(5 * time.Hour), IsRead: false, Folder: "INBOX", UID: 5},
+		{AccountID: acc1.ID, MessageID: "m1", From: "alice@acme.com", FromName: "Alice", To: "u1@example.com", Subject: "Weekly Report", Date: baseTime.Add(1 * time.Hour), Folder: "INBOX", UID: 1},
+		{AccountID: acc1.ID, MessageID: "m2", From: "bob@acme.com", FromName: "Bob", To: "u1@example.com", Subject: "电子发票通知", Date: baseTime.Add(2 * time.Hour), Folder: "INBOX", UID: 2},
+		{AccountID: acc1.ID, MessageID: "m3", From: "carol@acme.com", FromName: "Carol", To: "u1@example.com", Subject: "System Alert", Date: baseTime.Add(3 * time.Hour), Folder: "INBOX", UID: 3},
+		{AccountID: acc1.ID, MessageID: "m4", From: "dave@acme.com", FromName: "Dave", To: "u1@example.com", Subject: "项目周报", Date: baseTime.Add(4 * time.Hour), Folder: "INBOX", UID: 4},
+		{AccountID: acc2.ID, MessageID: "m5", From: "other@acme.com", FromName: "Other", To: "u2@example.com", Subject: "Second Mailbox", Date: baseTime.Add(5 * time.Hour), Folder: "INBOX", UID: 5},
 	}
 	if err := db.Create(&emails).Error; err != nil {
 		t.Fatal(err)
@@ -105,18 +105,6 @@ func TestListEmails_Latest50UnreadSharedAccountsAndSearch(t *testing.T) {
 	}
 	if resp.Data[0].Subject != "Second Mailbox" || resp.Data[1].Subject != "项目周报" || resp.Data[2].Subject != "System Alert" || resp.Data[3].Subject != "电子发票通知" || resp.Data[4].Subject != "Weekly Report" {
 		t.Fatalf("unexpected order: %+v", resp.Data)
-	}
-
-	// 3. Unread filter
-	req = httptest.NewRequest(http.MethodGet, "/emails?unread=true", nil)
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	var unreadResp listResp
-	if err := json.Unmarshal(w.Body.Bytes(), &unreadResp); err != nil {
-		t.Fatal(err)
-	}
-	if len(unreadResp.Data) != 3 || unreadResp.Total != 3 {
-		t.Fatalf("expected 3 unread emails, got %d (total=%d)", len(unreadResp.Data), unreadResp.Total)
 	}
 
 	// 4. Search filter (tests FTS5 trigram if enabled, or LIKE fallback)
