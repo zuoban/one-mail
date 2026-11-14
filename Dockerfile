@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # 前端依赖与源码分层缓存
-FROM node:22-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
@@ -14,10 +14,9 @@ WORKDIR /app/backend
 RUN apk add --no-cache gcc musl-dev
 ENV GOTOOLCHAIN=local CGO_ENABLED=1
 COPY backend/go.mod backend/go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+RUN go mod download
 COPY backend/ ./
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -mod=readonly -trimpath -tags fts5 -ldflags="-w -s" -o server ./cmd/server/main.go
 
 # 固定受支持的 Alpine 版本，运行 musl CGO 二进制

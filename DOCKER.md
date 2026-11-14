@@ -126,11 +126,12 @@ HTTP 服务设置 1 MiB 请求体限制、5 秒请求头预算、15 秒读取和
 
 ## 构建与持续集成
 
-- 前端使用 Node.js 22；npm 下载缓存与源码分层，依次执行 `npm ci` 和构建。
-- 后端直接使用 `golang:1.25.8-alpine`，启用 CGO 和 `fts5`，缓存 Go 模块与编译产物，以只读模块模式构建，不在镜像构建中运行 `go mod tidy` 或下载额外 Go wrapper。
+- 前端使用 Node.js 22，在构建机原生平台生成通用静态资源；npm 下载缓存与源码分层，依次执行 `npm ci` 和构建。
+- 后端直接使用 `golang:1.25.8-alpine`，启用 CGO 和 `fts5`，以只读模块模式构建，不在镜像构建中运行 `go mod tidy` 或下载额外 Go wrapper。Go 模块保存在独立镜像层，供 Actions 远程缓存复用；编译缓存挂载用于同一 BuildKit builder 的后续构建，不依赖它跨临时 runner 持久化。
 - 最终运行镜像固定为受支持的 `alpine:3.23`，由 Nginx 监听 80 端口并代理内部 8080 端口上的后端。
 - GitHub Actions 先运行 `go test -tags fts5 ./...` 和前端 `npm ci`、`npm run lint`、`npm run test`、`npm run build`。镜像任务通过显式 `needs` 依赖两个检查任务；任一失败都不会构建或发布镜像。
-- 检查通过后构建 `linux/amd64`、`linux/arm64` 镜像；PR 只构建，主分支或版本标签推送时发布到 GHCR。digest 来自实际镜像构建步骤的输出。
+- 检查通过后，`linux/amd64` 和 `linux/arm64` 分别在 `ubuntu-latest`、`ubuntu-24.04-arm` 原生 runner 上并行构建，避免 QEMU 模拟编译；两种架构使用独立的 GitHub Actions 缓存 scope。PR 只构建，主分支或版本标签推送时先按 digest 发布各架构镜像，再合并清单并写入原有镜像标签。最终输出的 digest 来自合并后的多架构清单。
+- 架构缓存首次切换后需要重新生成；后续构建可恢复对应架构的镜像层。只修改业务源码时，已缓存的 Go 模块下载层仍可复用。
 
 ## 相关文件
 
