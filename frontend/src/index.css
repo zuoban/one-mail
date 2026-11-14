@@ -812,11 +812,6 @@ textarea:disabled {
   color: var(--text-secondary);
 }
 
-.account-row[data-refreshing="true"] {
-  box-shadow: inset 2px 0 var(--primary-500);
-  background-color: var(--bg-accent-soft);
-}
-
 .mail-reader > div,
 .reading-canvas {
   min-width: 0;

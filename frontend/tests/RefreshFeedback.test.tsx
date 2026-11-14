@@ -9,7 +9,6 @@ import ThemeContext from '../src/context/theme-context'
 import { MailContext } from '../src/mail/mail-context'
 import { MailStore } from '../src/mail/MailStore'
 import Dashboard from '../src/pages/Dashboard'
-import Accounts from '../src/pages/Accounts'
 
 const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader@example.com', status: 'active', last_sync_time: '2026-11-14T08:00:00Z', color: '#2563eb', imap_host: 'imap.example.com', imap_port: 993 }
 const email: EmailSummary = { id: 1, account_id: 1, created_at: '2026-11-14', date: '2026-11-14', from: 'sender@example.com', from_name: 'Sender', to: account.email, subject: '会议安排', has_attachment: false, folder: 'INBOX' }
@@ -85,26 +84,6 @@ describe('refresh feedback', () => {
     expect(screen.getByText('暂无邮件')).toBeTruthy()
     expect(refresh.disabled).toBe(false)
     expect(screen.queryByText('正在获取最近 50 封邮件')).toBeNull()
-  })
-
-  it.each(['success', 'failure'] as const)('clears account progress after %s', async outcome => {
-    const pending = Promise.withResolvers<RefreshEmailsResponse>()
-    vi.spyOn(accountApi, 'refresh').mockReturnValue(pending.promise)
-    render(<AccountSession><Accounts /></AccountSession>)
-    const refresh = await screen.findByRole('button', { name: '刷新' }) as HTMLButtonElement
-    fireEvent.click(refresh)
-    expect(refresh.disabled).toBe(true)
-    expect(screen.getByRole('button', { name: '刷新中' }).getAttribute('aria-busy')).toBe('true')
-    expect(screen.getByText('正在获取最近 50 封邮件')).toBeTruthy()
-    await act(async () => {
-      if (outcome === 'success') pending.resolve({ message: 'ok', new_count: 1 })
-      else pending.reject(new Error('offline'))
-    })
-    await screen.findByText(outcome === 'success' ? '已刷新，新增 1 封邮件' : '刷新失败')
-    expect(refresh.disabled).toBe(false)
-    expect(refresh.getAttribute('aria-busy')).toBe('false')
-    expect(screen.queryByText('正在获取最近 50 封邮件')).toBeNull()
-    expect(screen.getByText(/上次刷新:/)).toBeTruthy()
   })
 
   it.each([false, true])('reports failed list GET after sync, including partial sync errors: %s', async partial => {

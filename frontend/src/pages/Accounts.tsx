@@ -4,7 +4,7 @@ import { accountApi, type AccountInput } from '../api'
 import { useAccounts } from '../accounts/account-context'
 import AccountDrawer, { type AccountFormState } from '../accounts/AccountDrawer'
 import type { EmailAccount } from '../api'
-import { Plus, Trash2, Mail, Plug, Pencil, RefreshCw, Loader2 } from 'lucide-react'
+import { Plus, Trash2, Mail, Plug, Pencil } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 
@@ -28,8 +28,6 @@ export default function Accounts() {
   })
   const [error, setError] = useState('')
   const [usernameEdited, setUsernameEdited] = useState(false)
-  const [refreshingAccountIds, setRefreshingAccountIds] = useState<Set<number>>(new Set())
-  const pendingRefreshes = useRef(new Set<number>())
   const deletePending = useRef(false)
   const submission = useRef<number | null>(null)
   const formInstance = useRef(0)
@@ -232,29 +230,6 @@ export default function Accounts() {
     }
   }
 
-  const handleRefresh = async (id: number) => {
-    if (pendingRefreshes.current.has(id)) return
-    const generation = lifecycle.current
-    pendingRefreshes.current.add(id)
-    setRefreshingAccountIds(new Set(pendingRefreshes.current))
-    try {
-      const { response: res, updated: listUpdate } = await accountStore.refresh(id)
-      if (!mounted.current || lifecycle.current !== generation) return
-      const updated = await listUpdate
-      if (!mounted.current || lifecycle.current !== generation) return
-      showToast(updated ? (res.new_count > 0 ? `已刷新，新增 ${res.new_count} 封邮件` : '已是最新邮件') : '邮箱同步已完成，但账户列表读取失败，请重试读取列表', updated ? 'success' : 'error')
-    } catch (err: unknown) {
-      if (!mounted.current || lifecycle.current !== generation) return
-      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
-      showToast(message || '刷新失败', 'error')
-    } finally {
-      if (mounted.current && lifecycle.current === generation) {
-        pendingRefreshes.current.delete(id)
-        setRefreshingAccountIds(new Set(pendingRefreshes.current))
-      }
-    }
-  }
-
   const formatTime = (time: string) => {
     if (!time) return '未刷新'
     const date = new Date(time)
@@ -330,7 +305,6 @@ export default function Accounts() {
           {accounts.map(account => (
             <div
               key={account.id}
-              data-refreshing={refreshingAccountIds.has(account.id)}
               className="account-row p-4 md:p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between hover:bg-[var(--bg-nav-hover)] transition-colors"
             >
               <div className="flex items-center gap-4 min-w-0">
@@ -360,28 +334,15 @@ export default function Accounts() {
                         {account.status === 'active' ? '已连接' : '未连接'}
                       </span>
                     </span>
-                    <span id={`account-refresh-status-${account.id}`} role="status" className={refreshingAccountIds.has(account.id) ? 'text-[var(--primary-600)]' : 'font-mono tabular-nums'}>
-                      {refreshingAccountIds.has(account.id) ? '正在获取最近 50 封邮件' : `上次刷新: ${formatTime(account.last_sync_time)}`}
+                    <span className="font-mono tabular-nums">
+                      上次刷新: {formatTime(account.last_sync_time)}
                     </span>
                   </div>
                 </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => handleRefresh(account.id)}
-                  disabled={refreshingAccountIds.has(account.id)}
-                  aria-busy={refreshingAccountIds.has(account.id)}
-                  aria-describedby={refreshingAccountIds.has(account.id) ? `account-refresh-status-${account.id}` : undefined}
-                  data-refreshing={refreshingAccountIds.has(account.id)}
-                  className="refresh-button btn btn-secondary"
-                >
-                  {refreshingAccountIds.has(account.id) ? <Loader2 aria-hidden="true" className="w-4 h-4 animate-spin" strokeWidth={1.5} /> : <RefreshCw aria-hidden="true" className="w-4 h-4" strokeWidth={1.5} />}
-                  <span>{refreshingAccountIds.has(account.id) ? '刷新中' : '刷新'}</span>
-                </button>
-
-                <div className="flex items-center gap-1 ml-1 pl-2 border-l border-[var(--border-light)]">
+                <div className="flex items-center gap-1">
                   <Tooltip content="测试连接">
                     <button
                       type="button"

@@ -2,7 +2,7 @@ import { StrictMode, useState, type ReactNode } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AxiosResponse } from 'axios'
-import { accountApi, providerApi, type EmailAccount, type RefreshEmailsResponse } from '../src/api'
+import { accountApi, providerApi, type EmailAccount } from '../src/api'
 import Accounts from '../src/pages/Accounts'
 import { AccountStore } from '../src/accounts/AccountStore'
 import { AccountContext } from '../src/accounts/account-context'
@@ -72,59 +72,14 @@ describe('account request lifecycle', () => {
     expect(screen.queryByText(account.email)).toBeNull()
   })
 
-  it('keeps each account pending independently and prevents duplicate refreshes', async () => {
+  it('shows account management actions without a refresh button', async () => {
     vi.mocked(accountApi.list).mockResolvedValue({ data: [account, second] })
-    const firstRefresh = Promise.withResolvers<RefreshEmailsResponse>()
-    const secondRefresh = Promise.withResolvers<RefreshEmailsResponse>()
-    const refresh = vi.spyOn(accountApi, 'refresh').mockImplementation(id => id === 1 ? firstRefresh.promise : secondRefresh.promise)
     renderAccounts()
     await screen.findByText(second.email)
-    const buttons = screen.getAllByRole('button', { name: '刷新' }) as HTMLButtonElement[]
-    fireEvent.click(buttons[0])
-    fireEvent.click(buttons[1])
-    fireEvent.click(buttons[0])
-    expect(refresh).toHaveBeenCalledTimes(2)
-    expect(screen.getAllByRole('button', { name: '刷新中' })).toHaveLength(2)
-    await act(async () => firstRefresh.resolve({ message: 'ok', new_count: 0 }))
-    expect(buttons[0].disabled).toBe(false)
-    expect(buttons[1].disabled).toBe(true)
-    fireEvent.click(buttons[1])
-    expect(refresh).toHaveBeenCalledTimes(2)
-    await act(async () => secondRefresh.reject(new Error('offline')))
-    expect(buttons[1].disabled).toBe(false)
-  })
-
-  it('orders overlapping account reloads and keeps only the latest response', async () => {
-    vi.mocked(accountApi.list).mockResolvedValueOnce({ data: [account, second] })
-    const older = Promise.withResolvers<{ data: EmailAccount[] }>()
-    const newer = Promise.withResolvers<{ data: EmailAccount[] }>()
-    vi.mocked(accountApi.list).mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
-    vi.spyOn(accountApi, 'refresh').mockResolvedValue({ message: 'ok', new_count: 0 })
-    renderAccounts()
-    await screen.findByText(second.email)
-    const buttons = screen.getAllByRole('button', { name: '刷新' })
-    fireEvent.click(buttons[0])
-    await waitFor(() => expect(accountApi.list).toHaveBeenCalledTimes(2))
-    fireEvent.click(buttons[1])
-    await waitFor(() => expect(accountApi.list).toHaveBeenCalledTimes(3))
-    expect(vi.mocked(accountApi.list).mock.calls[1][0]?.aborted).toBe(true)
-    await act(async () => newer.resolve({ data: [second] }))
-    await act(async () => older.resolve({ data: [account] }))
-    expect(screen.getByText(second.email)).toBeTruthy()
-    expect(screen.queryByText(account.email)).toBeNull()
-  })
-
-  it('explains a successful sync followed by a failed GET and retries only the GET', async () => {
-    const refresh = vi.spyOn(accountApi, 'refresh').mockResolvedValue({ message: 'ok', new_count: 1 })
-    vi.mocked(accountApi.list).mockResolvedValueOnce({ data: [account] }).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ data: [account] })
-    renderAccounts()
-    fireEvent.click(await screen.findByRole('button', { name: '刷新' }))
-    await screen.findByText('邮箱同步已完成，但账户列表读取失败，请重试读取列表')
-    expect(screen.queryByText('已刷新，新增 1 封邮件')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '重试读取账户' }))
-    await waitFor(() => expect(screen.queryByText('账户列表加载失败，请重试')).toBeNull())
-    expect(refresh).toHaveBeenCalledTimes(1)
-    expect(accountApi.list).toHaveBeenCalledTimes(3)
+    expect(screen.queryByRole('button', { name: /刷新/ })).toBeNull()
+    expect(screen.getAllByRole('button', { name: '测试连接' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: '编辑账户' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: '删除账户' })).toHaveLength(2)
   })
 
   it('keeps a saved account distinct from a failed list GET and retries without another submit', async () => {
@@ -224,16 +179,6 @@ describe('account request lifecycle', () => {
     expect(confirm.disabled).toBe(false)
     fireEvent.click(confirm)
     await waitFor(() => expect(remove).toHaveBeenCalledTimes(2))
-    expect(accountApi.list).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not start a list reload when a pending refresh resolves after unmount', async () => {
-    const pending = Promise.withResolvers<RefreshEmailsResponse>()
-    vi.spyOn(accountApi, 'refresh').mockReturnValue(pending.promise)
-    const view = renderAccounts()
-    fireEvent.click(await screen.findByRole('button', { name: '刷新' }))
-    view.unmount()
-    await act(async () => pending.resolve({ message: 'ok', new_count: 1 }))
     expect(accountApi.list).toHaveBeenCalledTimes(1)
   })
 
