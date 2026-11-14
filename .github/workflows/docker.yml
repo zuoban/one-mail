@@ -32,10 +32,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.8'
+          go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - name: Test Go with SQLite FTS5
-        run: go test -tags fts5 ./...
+        run: go test -race -tags fts5 ./...
+      - name: Vet Go
+        run: go vet -tags fts5 ./...
+      - name: Scan Go vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags fts5 ./...
 
   frontend-check:
     runs-on: ubuntu-latest
@@ -50,11 +54,13 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: frontend/.node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install frontend dependencies
         run: npm ci
+      - name: Scan frontend dependencies
+        run: npm audit --audit-level=moderate
       - name: Lint frontend
         run: npm run lint
       - name: Test frontend

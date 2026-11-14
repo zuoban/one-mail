@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # 前端依赖与源码分层缓存
-FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:24.22.3-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
@@ -9,7 +9,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # 使用项目要求的 Go 工具链，保留 SQLite FTS5 与 CGO
-FROM golang:1.25.8-alpine AS backend-builder
+FROM golang:1.27.4-alpine AS backend-builder
 WORKDIR /app/backend
 RUN apk add --no-cache gcc musl-dev
 ENV GOTOOLCHAIN=local CGO_ENABLED=1

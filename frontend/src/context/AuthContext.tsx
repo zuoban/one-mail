@@ -21,11 +21,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthenticated(false)
   }, [])
 
-  const retry = useCallback(async () => {
-    const currentRequest = ++request.current
-    invalidate()
-    setLoading(true)
-    setError(null)
+  const checkStatus = useCallback(async (currentRequest: number) => {
     try {
       const status = await authApi.status()
       if (currentRequest !== request.current) return
@@ -44,7 +40,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       if (currentRequest === request.current) setLoading(false)
     }
-  }, [invalidate])
+  }, [])
+
+  const retry = useCallback(() => {
+    const currentRequest = ++request.current
+    invalidate()
+    setLoading(true)
+    setError(null)
+    return checkStatus(currentRequest)
+  }, [invalidate, checkStatus])
 
   const cancelPendingRequests = useCallback(() => {
     ++request.current
@@ -59,13 +63,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       void retry()
     }
     window.addEventListener(SESSION_EXPIRED_EVENT, expire)
-    void retry()
+    void checkStatus(++request.current)
     return () => {
       window.removeEventListener(SESSION_EXPIRED_EVENT, expire)
       cancelPendingRequests()
       currentSession.authenticated = false
     }
-  }, [retry, cancelPendingRequests])
+  }, [retry, checkStatus, cancelPendingRequests])
 
   const login = useCallback(async (password: string) => {
     const currentRequest = ++request.current
