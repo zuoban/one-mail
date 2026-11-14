@@ -282,7 +282,14 @@ func TestTelegramForwardLoadsBodyAndReusesCache(t *testing.T) {
 	if err := db.Create(&account).Error; err != nil {
 		t.Fatal(err)
 	}
-	email := models.Email{AccountID: account.ID, MessageID: "forward", UID: 1, UIDValidity: 9}
+	email := models.Email{
+		AccountID:   account.ID,
+		MessageID:   "forward",
+		UID:         1,
+		UIDValidity: 9,
+		BodyText:    "unfinished text",
+		BodyHTML:    "<p>unfinished HTML</p>",
+	}
 	if err := db.Create(&email).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +309,7 @@ func TestTelegramForwardLoadsBodyAndReusesCache(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if fetches != 1 || client.sends != 2 || client.sent.BodyText != "full fetched body" {
+	if fetches != 1 || client.sends != 2 || client.sent.BodyText != "full fetched body" || client.sent.BodyHTML != "" {
 		t.Fatalf("forward did not fetch/cache body: fetches=%d sent=%+v", fetches, client.sent)
 	}
 	if err := db.Model(&account).Update("identity_version", 1).Error; err != nil {
@@ -479,54 +486,5 @@ func TestRefreshAccountPassesConfiguredWindow(t *testing.T) {
 		if count, err := service.RefreshAccount(context.Background(), account.ID, tc.requested); err != nil || count != tc.want {
 			t.Fatalf("requested=%d: count=%d err=%v", tc.requested, count, err)
 		}
-	}
-}
-
-func TestBodyIdentityRecoveryPreservesExpandedWindow(t *testing.T) {
-	db, pool := applicationTestDB(t)
-	account := models.EmailAccount{Email: "recovery@example.com"}
-	if err := db.Create(&account).Error; err != nil {
-		t.Fatal(err)
-	}
-	base := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
-	var cached []models.Email
-	var summaries []*imap.EmailSummary
-	for uid := 1; uid <= 101; uid++ {
-		summaries = append(summaries, &imap.EmailSummary{UID: uint(uid), Date: base.Add(time.Duration(uid) * time.Minute)})
-		if uid <= 100 {
-			cached = append(cached, models.Email{AccountID: account.ID, Folder: mail.DefaultFolder, UID: uint(uid), UIDValidity: 7, BodyFetched: true, BodyText: fmt.Sprintf("cached body %d", uid)})
-		}
-	}
-	if err := db.Create(&cached).Error; err != nil {
-		t.Fatal(err)
-	}
-	legacy := models.Email{AccountID: account.ID, Folder: mail.DefaultFolder, UID: 101}
-	if err := db.Create(&legacy).Error; err != nil {
-		t.Fatal(err)
-	}
-	service := NewMailService(db, pool, false)
-	service.refreshAccount = func(_ context.Context, db *gorm.DB, _ *imap.ConnectionPool, account *models.EmailAccount, limit int) (int, error) {
-		if limit != 200 {
-			t.Fatalf("identity recovery limit=%d, want maximum supported 200", limit)
-		}
-		return mail.ReconcileLatestEmails(db, account, mail.DefaultFolder, 7, summaries, limit)
-	}
-	service.fetchBody = func(context.Context, *models.EmailAccount, *models.Email) (string, string, error) {
-		t.Fatal("legacy ID must be reloaded after identity reconciliation")
-		return "", "", nil
-	}
-	_, err := service.Get(context.Background(), legacy.ID)
-	if kind, _ := ErrorDetails(err); err == nil || kind != NotFound {
-		t.Fatalf("legacy identity was reused after reconciliation: %v", err)
-	}
-	for _, original := range cached {
-		var stored models.Email
-		if err := db.First(&stored, original.ID).Error; err != nil || stored.UID != original.UID || !stored.BodyFetched || stored.BodyText != original.BodyText {
-			t.Fatalf("recovery lost cached ID/body: %+v err=%v", stored, err)
-		}
-	}
-	var count int64
-	if err := db.Model(&models.Email{}).Count(&count).Error; err != nil || count != 101 {
-		t.Fatalf("identity recovery shrank expanded window: count=%d err=%v", count, err)
 	}
 }

@@ -123,20 +123,11 @@ func (s *MailService) Get(ctx context.Context, id uint) (*models.Email, error) {
 	if err != nil {
 		return nil, err
 	}
-	if email.BodyFetched || email.BodyText != "" || email.BodyHTML != "" {
+	if email.BodyFetched {
 		return email, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if email.UIDValidity == 0 {
-		if _, err := s.refreshAccount(ctx, s.db, s.pool, account, mailwindow.Max); err != nil {
-			return nil, failure(Upstream, "unable to refresh mailbox identity; retry loading the message", err)
-		}
-		email, account, err = s.Snapshot(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-	}
 	text, html, err := s.fetchBody(ctx, account, email)
 	if err != nil {
 		if errors.Is(err, mail.ErrAccountChanged) || errors.Is(err, imap.ErrUIDValidityChanged) || errors.Is(err, imap.ErrConnectionInvalidated) {
