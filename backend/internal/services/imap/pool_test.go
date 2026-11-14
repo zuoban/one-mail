@@ -1,175 +1,163 @@
 package imap
 
 import (
+	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"one-mail/backend/internal/models"
 )
 
-func TestConnectionPool_GetConnection(t *testing.T) {
-	pool := GetConnectionPool()
+func testPool() *ConnectionPool {
+	p := newConnectionPool()
+	p.dial = func(context.Context, *models.EmailAccount) (*Client, error) { return &Client{}, nil }
+	return p
+}
 
-	account := &models.EmailAccount{
-		IMAPHost: "imap.gmail.com",
-		IMAPPort: 993,
+func TestConnectionPool_AccountAndGlobalBoundsCancelWaiters(t *testing.T) {
+	p := testPool()
+	p.maxTotal = 4
+	a := &models.EmailAccount{ID: 1}
+	var releases []func(bool)
+	for range 3 {
+		_, release, err := p.AcquireConnectionContext(context.Background(), a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		releases = append(releases, release)
 	}
-
-	pool.RemoveConnection(account.ID)
-
-	_, err := pool.GetConnection(account)
-	if err == nil {
-		t.Log("Connection successful (requires valid credentials)")
-		pool.RemoveConnection(account.ID)
-	} else {
-		t.Logf("Connection failed as expected (no credentials): %v", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, _, err := p.AcquireConnectionContext(ctx, a); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("account limit did not cancel: %v", err)
+	}
+	_, release, err := p.AcquireConnectionContext(context.Background(), &models.EmailAccount{ID: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	releases = append(releases, release)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel2()
+	if _, _, err := p.AcquireConnectionContext(ctx2, &models.EmailAccount{ID: 3}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("global limit did not cancel: %v", err)
+	}
+	if count := p.GetStats()["total_connections"].(int); count != 4 {
+		t.Fatalf("expected four reserved leases, got %d", count)
+	}
+	for _, release := range releases {
+		release(true)
+		release(false)
+	}
+	// Idle entries count toward the bound, but can be evicted for another account.
+	_, release, err = p.AcquireConnectionContext(context.Background(), &models.EmailAccount{ID: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release(false)
+	if count := p.GetStats()["total_connections"].(int); count != 3 {
+		t.Fatalf("idle eviction or idempotent release failed: %d", count)
 	}
 }
 
-func TestConnectionPool_ConcurrentAccess(t *testing.T) {
-	pool := GetConnectionPool()
-
-	account := &models.EmailAccount{
-		ID:       999,
-		IMAPHost: "imap.test.com",
-		IMAPPort: 993,
+func TestConnectionPool_ConcurrentDialReservations(t *testing.T) {
+	p := testPool()
+	p.maxTotal = 5
+	var active atomic.Int32
+	var maximum atomic.Int32
+	p.dial = func(ctx context.Context, _ *models.EmailAccount) (*Client, error) {
+		n := active.Add(1)
+		defer active.Add(-1)
+		for old := maximum.Load(); n > old; old = maximum.Load() {
+			if maximum.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
 	}
-
-	pool.RemoveConnection(account.ID)
-
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
 	var wg sync.WaitGroup
-	errors := make(chan error, 10)
-
-	for i := 0; i < 10; i++ {
+	for i := range 30 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := pool.GetConnection(account)
-			if err != nil {
-				errors <- err
+			if _, _, err := p.AcquireConnectionContext(ctx, &models.EmailAccount{ID: uint(i%3 + 1)}); err == nil {
+				t.Error("cancelled dial returned success")
 			}
 		}()
 	}
-
 	wg.Wait()
-	close(errors)
-
-	errorCount := 0
-	for err := range errors {
-		t.Logf("Expected error: %v", err)
-		errorCount++
+	if maximum.Load() > 5 || active.Load() != 0 {
+		t.Fatalf("dial bound/leak: max=%d active=%d", maximum.Load(), active.Load())
 	}
-
-	if errorCount != 10 {
-		t.Errorf("Expected 10 errors, got %d", errorCount)
-	}
-
-	pool.RemoveConnection(account.ID)
-}
-
-func TestConnectionPool_ReleaseConnection(t *testing.T) {
-	pool := GetConnectionPool()
-
-	account := &models.EmailAccount{
-		ID:       1001,
-		IMAPHost: "imap.test.com",
-		IMAPPort: 993,
-	}
-
-	pool.RemoveConnection(account.ID)
-
-	pool.ReleaseConnection(account.ID)
-
-	pool.mu.RLock()
-	_, exists := pool.connections[account.ID]
-	pool.mu.RUnlock()
-
-	if exists {
-		t.Error("Connection should not exist after release of non-existent connection")
+	if count := p.GetStats()["total_connections"].(int); count != 0 {
+		t.Fatalf("cancelled reservations leaked: %d", count)
 	}
 }
 
-func TestConnectionPool_Cleanup(t *testing.T) {
-	pool := GetConnectionPool()
-	pool.maxIdle = 100 * time.Millisecond
-
-	account := &models.EmailAccount{
-		ID:       1002,
-		IMAPHost: "imap.test.com",
-		IMAPPort: 993,
+func TestConnectionPool_RemoveInvalidatesLeasedAndDialingClients(t *testing.T) {
+	p := testPool()
+	account := &models.EmailAccount{ID: 1}
+	old, release, err := p.AcquireConnectionContext(context.Background(), account)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	pool.RemoveConnection(account.ID)
-
-	wrapper := &ConnectionWrapper{
-		client:    nil,
-		lastUsed:  time.Now().Add(-200 * time.Millisecond),
-		accountID: account.ID,
+	p.RemoveConnection(account.ID)
+	release(true)
+	if count := p.GetStats()["total_connections"].(int); count != 0 {
+		t.Fatalf("invalid lease returned to pool: %d", count)
 	}
-
-	pool.mu.Lock()
-	pool.connections[account.ID] = wrapper
-	pool.mu.Unlock()
-
-	time.Sleep(150 * time.Millisecond)
-	pool.cleanup()
-
-	pool.mu.RLock()
-	_, exists := pool.connections[account.ID]
-	pool.mu.RUnlock()
-
-	if exists {
-		t.Error("Connection should be cleaned up")
+	fresh, releaseFresh, err := p.AcquireConnectionContext(context.Background(), account)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	pool.maxIdle = 10 * time.Minute
-}
-
-func TestConnectionPool_GetStats(t *testing.T) {
-	pool := GetConnectionPool()
-
-	stats := pool.GetStats()
-
-	if stats["total_connections"] == nil {
-		t.Error("Stats should contain total_connections")
+	if fresh == old {
+		t.Fatal("reused invalidated connection")
 	}
-
-	if stats["connections"] == nil {
-		t.Error("Stats should contain connections")
+	releaseFresh(false)
+	started := make(chan struct{})
+	p.dial = func(ctx context.Context, _ *models.EmailAccount) (*Client, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	done := make(chan error, 1)
+	go func() { _, _, err := p.AcquireConnectionContext(context.Background(), account); done <- err }()
+	<-started
+	p.RemoveConnection(account.ID)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("invalidated dial returned success")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("removal failed to cancel in-flight dial")
 	}
 }
 
-func TestConnectionPool_HealthCheck(t *testing.T) {
-	pool := GetConnectionPool()
-
-	account := &models.EmailAccount{
-		ID:       1003,
-		IMAPHost: "imap.test.com",
-		IMAPPort: 993,
+func TestConnectionPool_ExpiresIdleWithoutBackgroundWorkers(t *testing.T) {
+	p := testPool()
+	account := &models.EmailAccount{ID: 1}
+	old, release, err := p.AcquireConnectionContext(context.Background(), account)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	pool.RemoveConnection(account.ID)
-
-	err := pool.HealthCheck(account.ID)
-	if err == nil {
-		t.Error("HealthCheck should fail for non-existent connection")
+	release(true)
+	p.mu.Lock()
+	for entry := range p.entries {
+		entry.lastUsed = time.Now().Add(-time.Hour)
 	}
-
-	wrapper := &ConnectionWrapper{
-		client:    nil,
-		lastUsed:  time.Now(),
-		accountID: account.ID,
+	p.mu.Unlock()
+	fresh, releaseFresh, err := p.AcquireConnectionContext(context.Background(), account)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	pool.mu.Lock()
-	pool.connections[account.ID] = wrapper
-	pool.mu.Unlock()
-
-	err = pool.HealthCheck(account.ID)
-	if err == nil {
-		t.Error("HealthCheck should fail for nil client")
+	defer releaseFresh(false)
+	if fresh == old {
+		t.Fatal("expired connection reused")
 	}
-
-	pool.RemoveConnection(account.ID)
 }

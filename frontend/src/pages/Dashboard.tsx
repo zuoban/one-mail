@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
-import { emailApi, accountApi, telegramApi } from '../api'
+import { accountApi, telegramApi } from '../api'
 import axios from 'axios'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
-import { useTheme } from '../context/ThemeContext'
-import type { Email, EmailAccount } from '../api'
+import useTheme from '../context/useTheme'
+import type { EmailSummary, EmailAccount } from '../api'
+import useMail from '../mail/useMail'
+import EmailBody from '../components/EmailBody'
 import {
   Search,
   Mail,
@@ -39,18 +41,18 @@ const EMAIL_ROW_STRIDE = 66
 const VIRTUAL_OVERSCAN = 8
 
 interface EmailListRowProps {
-  email: Email
+  email: EmailSummary
   accountColor: string
   dateLabel: string
   isSelected: boolean
   batchMode: boolean
   isChecked: boolean
   registerRef: (id: number, node: HTMLDivElement | null) => void
-  onSelect: (email: Email) => void
-  onContextMenu: (email: Email, x: number, y: number) => void
+  onSelect: (email: EmailSummary) => void
+  onContextMenu: (email: EmailSummary, x: number, y: number) => void
   onToggleSelect: (id: number) => void
-  onToggleRead: (email: Email) => void
-  onRequestDelete: (email: Email) => void
+  onToggleRead: (email: EmailSummary) => void
+  onRequestDelete: (email: EmailSummary) => void
 }
 
 const EmailListRow = memo(function EmailListRow({
@@ -70,6 +72,16 @@ const EmailListRow = memo(function EmailListRow({
   return (
     <div
       ref={(node) => registerRef(email.id, node)}
+      role="group"
+      tabIndex={0}
+      aria-label={`${email.is_read ? '已读' : '未读'}，${email.from_name || email.from}，${email.subject || '无主题'}`}
+      onKeyDown={event => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onSelect(email)
+        }
+      }}
       onClick={() => onSelect(email)}
       onContextMenu={(event) => {
         event.preventDefault()
@@ -91,6 +103,7 @@ const EmailListRow = memo(function EmailListRow({
         {batchMode ? (
           <input
             type="checkbox"
+            aria-label={`选择邮件：${email.subject || '无主题'}，${email.from_name || email.from}`}
             checked={isChecked}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => {
@@ -185,26 +198,21 @@ const EmailListRow = memo(function EmailListRow({
 
 export default function Dashboard() {
   const { resolvedTheme } = useTheme()
-  const [emails, setEmails] = useState<Email[]>([])
   const [accounts, setAccounts] = useState<EmailAccount[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
-  const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'unread'>('all')
   const [refreshing, setRefreshing] = useState(false)
-  const [loadingList, setLoadingList] = useState(false)
-  const [toast, setToast] = useState<{
-    message: string
-    type: 'success' | 'error'
-    actionLabel?: string
-    onAction?: () => void
-  } | null>(null)
-  const toastTimer = useRef<number | null>(null)
-  const deleteTimers = useRef<Record<number, number>>({})
-  const [pendingDeletes, setPendingDeletes] = useState<Record<number, Email>>({})
+  const { emails, selectedEmail, selectedDetail, loadingList, listError, loadingDetail, detailError, selectedIds, notice: toast, busyBatch, store } = useMail({
+    search: debouncedSearch || undefined,
+    account_id: selectedAccountId || undefined,
+    unread: filter === 'unread' ? true : undefined,
+  })
+  const setSelectedIds = store.setSelectedIds
+  const showToast = store.notify
   const [contextMenu, setContextMenu] = useState<{
-    email: Email
+    email: EmailSummary
     x: number
     y: number
   } | null>(null)
@@ -216,12 +224,10 @@ export default function Dashboard() {
   const listViewportHeightRef = useRef(600)
   const listScrollTopRef = useRef(0)
   const [virtualWindow, setVirtualWindow] = useState<{ start: number; end: number }>({ start: 0, end: 30 })
-  const [confirmDelete, setConfirmDelete] = useState<{ email: Email } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ email: EmailSummary } | null>(null)
   const [confirmBatchDelete, setConfirmBatchDelete] = useState(false)
   const [sendingTelegram, setSendingTelegram] = useState(false)
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [batchMode, setBatchMode] = useState(false)
-  const [loadingDetail, setLoadingDetail] = useState(false)
   const [paperLight, setPaperLight] = useState(true)
   const [showShortcuts, setShowShortcuts] = useState(false)
 
@@ -271,9 +277,6 @@ export default function Dashboard() {
     }
   }, [])
 
-  const listAbortRef = useRef<AbortController | null>(null)
-  const activeEmailIdRef = useRef<number | null>(null)
-  const detailCacheRef = useRef<Map<number, { email: Email; sanitizedHtml: string }>>(new Map())
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -282,35 +285,7 @@ export default function Dashboard() {
     return () => window.clearTimeout(timer)
   }, [search])
 
-  const loadEmails = useCallback(async () => {
-    listAbortRef.current?.abort()
-    const controller = new AbortController()
-    listAbortRef.current = controller
-
-    setLoadingList(true)
-    try {
-      const res = await emailApi.list(
-        {
-          search: debouncedSearch || undefined,
-          account_id: selectedAccountId || undefined,
-          unread: filter === 'unread' ? true : undefined,
-        },
-        controller.signal,
-      )
-      if (listAbortRef.current === controller && !controller.signal.aborted) {
-        setEmails(res.data || [])
-      }
-    } catch (e) {
-      if (listAbortRef.current === controller && !controller.signal.aborted && !axios.isCancel(e)) {
-        console.error(e)
-      }
-    } finally {
-      if (listAbortRef.current === controller) {
-        listAbortRef.current = null
-        setLoadingList(false)
-      }
-    }
-  }, [debouncedSearch, selectedAccountId, filter])
+  const loadEmails = store.reload
 
   const syncVirtualWindow = useCallback((totalRows: number) => {
     if (totalRows === 0) {
@@ -346,13 +321,7 @@ export default function Dashboard() {
     syncVirtualWindow(emails.length)
   }, [emails.length, syncVirtualWindow])
 
-  useEffect(() => {
-    loadAccounts()
-    return () => {
-      listAbortRef.current?.abort()
-      listAbortRef.current = null
-    }
-  }, [loadAccounts])
+  useEffect(() => { void loadAccounts() }, [loadAccounts])
 
   useEffect(() => {
     if (listScrollRef.current) {
@@ -360,22 +329,7 @@ export default function Dashboard() {
     }
     listScrollTopRef.current = 0
     syncVirtualWindow(0)
-    loadEmails()
-  }, [debouncedSearch, selectedAccountId, filter, loadEmails, syncVirtualWindow])
-  const showToast = useCallback((
-    message: string,
-    type: 'success' | 'error',
-    actionLabel?: string,
-    onAction?: () => void,
-  ) => {
-    setToast({ message, type, actionLabel, onAction })
-    if (toastTimer.current) {
-      window.clearTimeout(toastTimer.current)
-    }
-    toastTimer.current = window.setTimeout(() => {
-      setToast(null)
-    }, 2200)
-  }, [])
+  }, [debouncedSearch, selectedAccountId, filter, syncVirtualWindow])
 
   const parseEmailDate = useCallback((value?: string | null) => {
     if (!value) return null
@@ -396,7 +350,7 @@ export default function Dashboard() {
     return null
   }, [])
 
-  const resolveEmailDate = useCallback((email: Email) => {
+  const resolveEmailDate = useCallback((email: EmailSummary) => {
     const primary = email.date || email.created_at
     const fallback = email.created_at || email.date
     const primaryDate = parseEmailDate(primary)
@@ -408,8 +362,8 @@ export default function Dashboard() {
     if (refreshing || accounts.length === 0) return
     setRefreshing(true)
     try {
-      const res = await emailApi.refresh(selectedAccountId || undefined)
-      await Promise.all([loadEmails(), loadAccounts()])
+      const res = await store.refresh(selectedAccountId || undefined)
+      await loadAccounts()
       const errorEntries = res.errors ? Object.entries(res.errors) : []
       if (errorEntries.length > 0) {
         const [failedAccount, failedReason] = errorEntries[0]
@@ -430,169 +384,23 @@ export default function Dashboard() {
     } finally {
       setRefreshing(false)
     }
-  }, [refreshing, accounts.length, selectedAccountId, showToast, loadEmails, loadAccounts])
+  }, [refreshing, accounts.length, selectedAccountId, showToast, store, loadAccounts])
 
-  const sanitizeEmailHtml = useCallback((rawHtml?: string) => {
-    if (!rawHtml) return ''
-    try {
-      const parser = new DOMParser()
-      const doc = parser.parseFromString(rawHtml, 'text/html')
-      doc.querySelectorAll('style, link[rel="stylesheet"], script').forEach(node => node.remove())
-      doc.querySelectorAll('img').forEach(img => {
-        img.setAttribute('loading', 'lazy')
-      })
-      doc.querySelectorAll('a').forEach(link => {
-        link.setAttribute('target', '_blank')
-        link.setAttribute('rel', 'noopener noreferrer')
-      })
-      return doc.body?.innerHTML || ''
-    } catch (e) {
-      console.error(e)
-      return ''
-    }
-  }, [])
+  const handleRead = useCallback(async (email: EmailSummary, shouldScroll = false, scrollDetail = false) => {
+    if (scrollDetail) detailScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    if (shouldScroll) emailItemRefs.current[email.id]?.scrollIntoView({ block: 'nearest' })
+    await store.open(email)
+  }, [store])
 
-  const handleRead = useCallback(async (email: Email, shouldScroll = false, scrollDetail = false) => {
-    activeEmailIdRef.current = email.id
-    const wasUnread = !email.is_read
+  const handleMarkAsUnread = useCallback(async (email: EmailSummary) => {
+    await store.setRead(email, false)
+  }, [store])
 
-    if (scrollDetail && detailScrollRef.current) {
-      detailScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' })
-    }
+  const handleToggleReadRow = useCallback(async (email: EmailSummary) => {
+    await store.setRead(email, !email.is_read)
+  }, [store])
 
-    if (wasUnread) {
-      setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
-    }
-
-    const cached = detailCacheRef.current.get(email.id)
-    if (cached) {
-      // LRU refresh
-      detailCacheRef.current.delete(email.id)
-      const updated = wasUnread ? { ...cached.email, is_read: true } : cached.email
-      detailCacheRef.current.set(email.id, { ...cached, email: updated })
-      setSelectedEmail(updated)
-      setLoadingDetail(false)
-      if (wasUnread) {
-        emailApi.markAsRead(email.id).catch(console.error)
-      }
-      return
-    }
-
-    setSelectedEmail(wasUnread ? { ...email, is_read: true } : email)
-    setLoadingDetail(true)
-
-    if (shouldScroll) {
-      emailItemRefs.current[email.id]?.scrollIntoView({ block: 'nearest' })
-    }
-
-    emailApi.get(email.id).then(detail => {
-      const fullEmail = wasUnread ? { ...detail.data, is_read: true } : detail.data
-      const cleaned = sanitizeEmailHtml(fullEmail.body_html)
-      if (detailCacheRef.current.size >= 100) {
-        const oldestKey = detailCacheRef.current.keys().next().value
-        if (oldestKey !== undefined) {
-          detailCacheRef.current.delete(oldestKey)
-        }
-      }
-      detailCacheRef.current.set(email.id, { email: fullEmail, sanitizedHtml: cleaned })
-      if (activeEmailIdRef.current === email.id) {
-        setSelectedEmail(fullEmail)
-        setLoadingDetail(false)
-      }
-      if (wasUnread) {
-        emailApi.markAsRead(email.id).catch(console.error)
-      }
-    }).catch((e: unknown) => {
-      console.error('Failed to fetch email detail:', e)
-      if (activeEmailIdRef.current === email.id) {
-        setLoadingDetail(false)
-      }
-      if (wasUnread) {
-        emailApi.markAsRead(email.id).catch(console.error)
-      }
-    })
-  }, [sanitizeEmailHtml])
-
-  const handleMarkAsUnread = useCallback(async (email: Email) => {
-    if (!email.is_read) return
-    try {
-      await emailApi.markAsUnread(email.id)
-      setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: false } : e))
-      if (selectedEmail?.id === email.id) {
-        setSelectedEmail({ ...email, is_read: false })
-      }
-      showToast('已标为未读', 'success')
-    } catch (e) {
-      console.error(e)
-      showToast('操作失败', 'error')
-    }
-  }, [selectedEmail, showToast])
-
-  const handleToggleReadRow = useCallback(async (email: Email) => {
-    if (email.is_read) {
-      await handleMarkAsUnread(email)
-    } else {
-      try {
-        await emailApi.markAsRead(email.id)
-        setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
-        if (selectedEmail?.id === email.id) {
-          setSelectedEmail({ ...email, is_read: true })
-        }
-        showToast('已标为已读', 'success')
-      } catch (e) {
-        console.error(e)
-        showToast('操作失败', 'error')
-      }
-    }
-  }, [handleMarkAsUnread, selectedEmail, showToast])
-
-  const handleDeleteEmail = useCallback(async (email: Email) => {
-    if (deleteTimers.current[email.id]) return
-    setPendingDeletes(prev => ({ ...prev, [email.id]: email }))
-    setEmails(prev => prev.filter(e => e.id !== email.id))
-    if (selectedEmail?.id === email.id) {
-      setSelectedEmail(null)
-    }
-
-    const timerId = window.setTimeout(async () => {
-      try {
-        await emailApi.delete(email.id)
-        detailCacheRef.current.delete(email.id)
-        setPendingDeletes(prev => {
-          const next = { ...prev }
-          delete next[email.id]
-          return next
-        })
-      } catch (e) {
-        console.error(e)
-        setEmails(prev => [...prev, email])
-        setPendingDeletes(prev => {
-          const next = { ...prev }
-          delete next[email.id]
-          return next
-        })
-        showToast('删除失败', 'error')
-      } finally {
-        delete deleteTimers.current[email.id]
-      }
-    }, 2200)
-
-    deleteTimers.current[email.id] = timerId
-    showToast('已删除邮件', 'success', '撤销', () => {
-      const pending = pendingDeletes[email.id] || email
-      if (deleteTimers.current[email.id]) {
-        window.clearTimeout(deleteTimers.current[email.id])
-        delete deleteTimers.current[email.id]
-      }
-      setPendingDeletes(prev => {
-        const next = { ...prev }
-        delete next[email.id]
-        return next
-      })
-      setEmails(prev => [...prev, pending])
-      showToast('已撤销删除', 'success')
-    })
-  }, [pendingDeletes, selectedEmail, showToast])
+  const handleDeleteEmail = store.scheduleDelete
 
   const confirmDeleteEmail = useCallback(() => {
     if (!confirmDelete) return
@@ -600,7 +408,7 @@ export default function Dashboard() {
     setConfirmDelete(null)
   }, [confirmDelete, handleDeleteEmail])
 
-  const handleSendToTelegram = useCallback(async (email: Email) => {
+  const handleSendToTelegram = useCallback(async (email: EmailSummary) => {
     setSendingTelegram(true)
     try {
       await telegramApi.sendEmail(email.id)
@@ -613,38 +421,12 @@ export default function Dashboard() {
     }
   }, [showToast])
 
-  const handleBatchMarkAsRead = useCallback(async () => {
-    const ids = Array.from(selectedIds)
-    if (ids.length === 0) return
-    try {
-      await emailApi.batchMarkAsRead(ids)
-      const idSet = new Set(ids)
-      setEmails(prev => prev.map(e => idSet.has(e.id) ? { ...e, is_read: true } : e))
-      setSelectedIds(new Set())
-      showToast(`已将 ${ids.length} 封标为已读`, 'success')
-    } catch {
-      showToast('批量操作失败', 'error')
-    }
-  }, [selectedIds, showToast])
+  const handleBatchMarkAsRead = store.batchRead
 
   const handleBatchDelete = useCallback(async () => {
-    const ids = Array.from(selectedIds)
     setConfirmBatchDelete(false)
-    if (ids.length === 0) return
-    try {
-      const results = await Promise.allSettled(ids.map(id => emailApi.delete(id)))
-      const deletedIds = new Set(ids.filter((_, index) => results[index].status === 'fulfilled'))
-      deletedIds.forEach(id => detailCacheRef.current.delete(id))
-      setEmails(prev => prev.filter(e => !deletedIds.has(e.id)))
-      if (selectedEmail && deletedIds.has(selectedEmail.id)) {
-        setSelectedEmail(null)
-      }
-      setSelectedIds(new Set())
-      showToast(`已删除 ${deletedIds.size} 封邮件`, 'success')
-    } catch {
-      showToast('批量删除失败', 'error')
-    }
-  }, [selectedIds, selectedEmail, showToast])
+    await store.batchDelete()
+  }, [store])
 
   const toggleSelect = useCallback((id: number) => {
     setSelectedIds(prev => {
@@ -653,7 +435,7 @@ export default function Dashboard() {
       else next.add(id)
       return next
     })
-  }, [])
+  }, [setSelectedIds])
 
   const filteredEmails = emails
 
@@ -663,7 +445,7 @@ export default function Dashboard() {
     } else {
       setSelectedIds(new Set(filteredEmails.map(e => e.id)))
     }
-  }, [selectedIds.size, filteredEmails])
+  }, [selectedIds.size, filteredEmails, setSelectedIds])
 
   const toggleInvert = useCallback(() => {
     const newSelected = new Set<number>()
@@ -673,7 +455,7 @@ export default function Dashboard() {
       }
     })
     setSelectedIds(newSelected)
-  }, [selectedIds, filteredEmails])
+  }, [selectedIds, filteredEmails, setSelectedIds])
 
   // 预处理每封邮件的时间戳与相对时间字符串，避免排序和滚动渲染期间重复正则/Date 解析
   const emailDateMeta = useMemo(() => {
@@ -726,12 +508,12 @@ export default function Dashboard() {
     }
   }, [])
 
-  const handleRowContextMenu = useCallback((email: Email, x: number, y: number) => {
+  const handleRowContextMenu = useCallback((email: EmailSummary, x: number, y: number) => {
     setContextMenu({ email, x, y })
     setContextMenuIndex(0)
   }, [])
 
-  const handleRequestDeleteRow = useCallback((email: Email) => {
+  const handleRequestDeleteRow = useCallback((email: EmailSummary) => {
     setConfirmDelete({ email })
   }, [])
   const scrollToEmailIndex = useCallback((idx: number) => {
@@ -837,7 +619,7 @@ export default function Dashboard() {
         event.preventDefault()
         setConfirmDelete({ email: selectedEmail })
       } else if (event.key === 'Escape' && selectedEmail) {
-        setSelectedEmail(null)
+        store.closeDetail()
       }
     }
 
@@ -857,6 +639,7 @@ export default function Dashboard() {
     confirmBatchDelete,
     showShortcuts,
     showToast,
+    store,
   ])
 
   const contextMenuItems = useMemo(() => {
@@ -874,14 +657,6 @@ export default function Dashboard() {
     return items
   }, [contextMenu, handleMarkAsUnread, handleRead, handleSendToTelegram])
 
-  const sanitizedHtml = useMemo(() => {
-    if (!selectedEmail?.body_html) return ''
-    const cached = detailCacheRef.current.get(selectedEmail.id)
-    if (cached && cached.email.body_html === selectedEmail.body_html) {
-      return cached.sanitizedHtml
-    }
-    return sanitizeEmailHtml(selectedEmail.body_html)
-  }, [selectedEmail?.id, selectedEmail?.body_html, sanitizeEmailHtml])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -908,12 +683,6 @@ export default function Dashboard() {
     return () => window.removeEventListener('keydown', handleMenuKeyDown)
   }, [contextMenu, contextMenuIndex, contextMenuItems])
 
-  useEffect(() => {
-    return () => {
-      Object.values(deleteTimers.current).forEach(timer => window.clearTimeout(timer))
-      deleteTimers.current = {}
-    }
-  }, [])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -927,7 +696,7 @@ export default function Dashboard() {
   }, [contextMenu])
 
   const selectedEmailAccount = selectedEmail ? accountById.get(selectedEmail.account_id) : undefined
-  const useLightPaper = Boolean(selectedEmail?.body_html) && (resolvedTheme === 'light' || paperLight)
+  const useLightPaper = Boolean(selectedDetail?.body_html) && (resolvedTheme === 'light' || paperLight)
 
   return (
     <div className="h-full flex flex-col md:flex-row bg-[var(--bg-secondary)] overflow-hidden">
@@ -935,6 +704,7 @@ export default function Dashboard() {
       {toast && (
         <div className="fixed left-4 right-4 top-4 z-50 md:left-auto md:right-4 animate-in fade-in slide-in-from-top-2 duration-200">
           <div
+            role={toast.type === 'error' ? 'alert' : 'status'}
             className={`flex items-center gap-3 px-4 py-2.5 rounded-[8px] text-sm border shadow-[var(--shadow-md)] ${
               toast.type === 'success'
                 ? 'bg-[var(--bg-primary)] text-[var(--text-primary)] border-[var(--border-default)]'
@@ -950,7 +720,7 @@ export default function Dashboard() {
                 type="button"
                 onClick={() => {
                   const action = toast.onAction
-                  setToast(null)
+                  store.dismissNotice()
                   if (action) action()
                 }}
                 className="ml-2 text-xs font-medium text-[var(--primary-600)] hover:underline cursor-pointer"
@@ -1090,6 +860,7 @@ export default function Dashboard() {
               ref={searchInputRef}
               type="text"
               placeholder="搜索发件人或主题"
+              aria-label="搜索发件人或主题"
               value={search}
               onChange={e => setSearch(e.target.value)}
               onKeyDown={e => {
@@ -1177,6 +948,7 @@ export default function Dashboard() {
             <button
               type="button"
               onClick={() => {
+                if (busyBatch) return
                 setBatchMode(!batchMode)
                 setSelectedIds(new Set())
               }}
@@ -1196,6 +968,7 @@ export default function Dashboard() {
                 <button
                   type="button"
                   onClick={toggleSelectAll}
+                  disabled={busyBatch}
                   className="btn btn-secondary btn-sm h-7 px-2.5 text-xs"
                 >
                   全选
@@ -1203,6 +976,7 @@ export default function Dashboard() {
                 <button
                   type="button"
                   onClick={toggleInvert}
+                  disabled={busyBatch}
                   className="btn btn-secondary btn-sm h-7 px-2.5 text-xs"
                 >
                   反选
@@ -1213,6 +987,7 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={handleBatchMarkAsRead}
+                    disabled={busyBatch}
                     className="btn btn-primary btn-sm h-7 px-2.5 text-xs"
                   >
                     <Check className="w-3.5 h-3.5" strokeWidth={1.5} />
@@ -1221,6 +996,7 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={() => setConfirmBatchDelete(true)}
+                    disabled={busyBatch}
                     className="btn btn-danger-ghost btn-sm h-7 px-2 text-xs"
                     title="删除选中邮件"
                     aria-label="删除选中邮件"
@@ -1239,6 +1015,7 @@ export default function Dashboard() {
 
         {/* Email List */}
         <div ref={listScrollRef} className="flex-1 overflow-auto thin-scrollbar" onScroll={handleScroll}>
+          {listError && <div role="alert" className="p-4 text-sm text-[var(--error-700)]">{listError}<button type="button" onClick={() => void loadEmails()} className="btn btn-secondary btn-sm ml-2">重试</button></div>}
           {loadingList && emails.length === 0 ? (
             <div className="empty-state">
               <p className="text-xs text-[var(--text-tertiary)]">正在加载邮件</p>
@@ -1327,7 +1104,7 @@ export default function Dashboard() {
               <div className="flex items-center gap-2 min-w-0">
                 <button
                   type="button"
-                  onClick={() => setSelectedEmail(null)}
+                  onClick={store.closeDetail}
                   className="md:hidden btn btn-ghost btn-sm px-2"
                 >
                   <ArrowLeft className="w-4 h-4" strokeWidth={1.5} />
@@ -1381,7 +1158,7 @@ export default function Dashboard() {
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0">
-                {resolvedTheme === 'dark' && selectedEmail.body_html && (
+                {resolvedTheme === 'dark' && selectedDetail?.body_html && (
                   <Tooltip content={paperLight ? '切换为深色阅读背景' : '切换为白底信笺模式'}>
                     <button
                       type="button"
@@ -1503,16 +1280,16 @@ export default function Dashboard() {
                       <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.5} />
                       <span>正在加载正文</span>
                     </div>
-                  ) : selectedEmail.body_html ? (
-                    <div
-                      className={`email-content overflow-x-auto ${
-                        useLightPaper && resolvedTheme === 'dark' ? 'text-[#171717]' : ''
-                      }`}
-                      dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
-                    />
-                  ) : selectedEmail.body_text ? (
+                  ) : detailError ? (
+                    <div role="alert" className="text-sm text-[var(--error-700)]">
+                      <p>{detailError}</p>
+                      <button type="button" className="btn btn-secondary btn-sm mt-3" onClick={() => void store.retryDetail()}>重试加载正文</button>
+                    </div>
+                  ) : selectedDetail?.body_html ? (
+                    <EmailBody key={selectedDetail.id} html={selectedDetail.body_html} light={useLightPaper} />
+                  ) : selectedDetail?.body_text ? (
                     <pre className="whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--text-primary)] font-sans">
-                      {selectedEmail.body_text}
+                      {selectedDetail.body_text}
                     </pre>
                   ) : (
                     <p className="text-sm text-[var(--text-tertiary)]">无邮件内容</p>

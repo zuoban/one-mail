@@ -19,15 +19,15 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	if err := database.InitDatabase(); err != nil {
-		log.Fatalf("Failed to init database: %v", err)
-	}
-
 	// 初始化 JWT
 	if err := utils.InitJWT(); err != nil {
 		log.Fatalf("Failed to init JWT: %v", err)
 	}
+	if err := database.InitDatabase(); err != nil {
+		log.Fatalf("Failed to init database: %v", err)
+	}
 
+	gin.SetMode(cfg.Server.Mode)
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.GzipMiddleware())

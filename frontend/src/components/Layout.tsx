@@ -1,7 +1,7 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { Users, Inbox, LogOut, Settings, Sun, Moon } from 'lucide-react'
 import useAuth from '../context/useAuth'
-import { useTheme } from '../context/ThemeContext'
+import useTheme from '../context/useTheme'
 import Tooltip from './Tooltip'
 
 export default function Layout() {

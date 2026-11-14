@@ -5,11 +5,13 @@ import (
 	"log"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"one-mail/backend/config"
+	"one-mail/backend/internal/credentials"
 	"one-mail/backend/internal/models"
 
 	"gorm.io/driver/sqlite"
@@ -41,6 +43,12 @@ var accountColors = []string{
 func InitDatabase() error {
 	var err error
 	dsn := config.GetDSN()
+	if err := os.MkdirAll(filepath.Dir(dsn), 0700); err != nil {
+		return fmt.Errorf("create database directory: %w", err)
+	}
+	if err := credentials.Init(os.Getenv("CREDENTIALS_KEY"), dsn+".key"); err != nil {
+		return fmt.Errorf("initialize credential encryption: %w", err)
+	}
 
 	logLevel := logger.Warn
 	if config.AppConfig != nil && config.AppConfig.Server.Mode == "release" {
@@ -53,6 +61,7 @@ func InitDatabase() error {
 			LogLevel:                  logLevel,
 			IgnoreRecordNotFoundError: true,
 			Colorful:                  false,
+			ParameterizedQueries:      true,
 		},
 	)
 
@@ -68,6 +77,9 @@ func InitDatabase() error {
 	}
 
 	if err := MigrateAndOptimize(DB); err != nil {
+		return err
+	}
+	if err := migrateCredentials(DB); err != nil {
 		return err
 	}
 
@@ -121,6 +133,9 @@ func MigrateAndOptimize(db *gorm.DB) error {
 	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
+	if err := migrateUserSettings(db); err != nil {
+		return fmt.Errorf("migrate user settings: %w", err)
+	}
 
 	if err := ensureEmailIndexes(db); err != nil {
 		return fmt.Errorf("failed to optimize email indexes: %w", err)
@@ -128,6 +143,67 @@ func MigrateAndOptimize(db *gorm.DB) error {
 
 	setupFTS5(db)
 	return nil
+}
+
+func migrateCredentials(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var accounts []models.EmailAccount
+		if err := tx.Unscoped().Select("id, password").Find(&accounts).Error; err != nil {
+			return err
+		}
+		for _, account := range accounts {
+			if credentials.IsEncrypted(account.Password) {
+				if _, err := credentials.Decrypt(account.Password); err != nil {
+					return fmt.Errorf("cannot unlock credentials for account %d: %w", account.ID, err)
+				}
+				continue
+			}
+			sealed, err := credentials.Encrypt(account.Password)
+			if err != nil {
+				return err
+			}
+			if err := tx.Unscoped().Model(&models.EmailAccount{}).Where("id = ?", account.ID).
+				UpdateColumn("password", sealed).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// A legacy global Telegram configuration can be assigned only when its owner
+// is unambiguous. Other legacy rows remain disabled and inaccessible.
+func migrateUserSettings(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.User{}).Where("session_version IS NULL OR session_version = 0").
+			UpdateColumn("session_version", 1).Error; err != nil {
+			return err
+		}
+		var users []models.User
+		if err := tx.Select("id").Limit(2).Find(&users).Error; err != nil {
+			return err
+		}
+		legacy := "user_id IS NULL OR user_id = 0"
+		if len(users) == 1 {
+			var owned int64
+			if err := tx.Model(&models.TelegramConfig{}).Where("user_id = ?", users[0].ID).Count(&owned).Error; err != nil {
+				return err
+			}
+			if owned == 0 {
+				var cfg models.TelegramConfig
+				err := tx.Where(legacy).Order("id").First(&cfg).Error
+				if err != nil && err != gorm.ErrRecordNotFound {
+					return err
+				}
+				if err == nil {
+					if err := tx.Model(&cfg).UpdateColumn("user_id", users[0].ID).Error; err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return tx.Model(&models.TelegramConfig{}).Where(legacy).UpdateColumn("enabled", false).Error
+	})
 }
 
 func ensureEmailIndexes(db *gorm.DB) error {

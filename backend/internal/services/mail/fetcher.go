@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -26,274 +27,354 @@ type RefreshSummary struct {
 	Errors    map[string]string `json:"errors,omitempty"`
 }
 
-// RefreshAccount fetches the latest `limit` emails from IMAP for the account and reconciles them into DB.
-func RefreshAccount(ctx context.Context, db *gorm.DB, account *models.EmailAccount, limit int) (int, error) {
-	if account == nil {
-		return 0, fmt.Errorf("account is nil")
-	}
-	if limit <= 0 {
-		limit = MaxLatestEmails
-	}
+type accountGate struct {
+	token chan struct{}
+	refs  int
+}
 
+var accountGates = struct {
+	sync.Mutex
+	items map[uint]*accountGate
+}{items: make(map[uint]*accountGate)}
+
+var refreshSlots = make(chan struct{}, maxRefreshWorkers)
+
+var ErrPendingReadExpired = fmt.Errorf("%w: previous read changes expired; select messages again", imap.ErrUIDValidityChanged)
+
+// Serialize refreshes and flag writes for an account. Waiters are cancellable;
+// unused gates are removed instead of retaining one worker per account forever.
+func lockAccount(ctx context.Context, id uint) (func(), error) {
+	accountGates.Lock()
+	gate := accountGates.items[id]
+	if gate == nil {
+		gate = &accountGate{token: make(chan struct{}, 1)}
+		accountGates.items[id] = gate
+	}
+	gate.refs++
+	accountGates.Unlock()
+	drop := func() {
+		accountGates.Lock()
+		gate.refs--
+		if gate.refs == 0 {
+			delete(accountGates.items, id)
+		}
+		accountGates.Unlock()
+	}
+	select {
+	case gate.token <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-gate.token
+			drop()
+			return nil, err
+		}
+		return func() { <-gate.token; drop() }, nil
+	case <-ctx.Done():
+		drop()
+		return nil, ctx.Err()
+	}
+}
+
+func RefreshAccount(ctx context.Context, db *gorm.DB, account *models.EmailAccount, limit int) (newCount int, refreshErr error) {
+	if account == nil {
+		return 0, errors.New("account is nil")
+	}
 	reqCtx, cancel := context.WithTimeout(ctx, refreshTimeout)
 	defer cancel()
-
+	unlock, err := lockAccount(reqCtx, account.ID)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	select {
+	case refreshSlots <- struct{}{}:
+		defer func() { <-refreshSlots }()
+	case <-reqCtx.Done():
+		return 0, reqCtx.Err()
+	}
 	client, release, err := imap.GetConnectionPool().AcquireConnectionContext(reqCtx, account)
 	if err != nil {
 		return 0, err
 	}
-	healthy := true
-	defer func() {
-		release(healthy)
-	}()
-
-	type fetchResult struct {
-		emails []*imap.EmailSummary
-		err    error
+	healthy := false
+	defer func() { release(healthy) }()
+	// Validate and migrate the epoch before applying any queued UID-based writes.
+	epoch, err := client.SelectMailbox(reqCtx, DefaultFolder)
+	if err != nil {
+		return 0, err
 	}
-	done := make(chan fetchResult, 1)
-	go func() {
-		emails, fetchErr := client.FetchLatestEmails(DefaultFolder, limit)
-		done <- fetchResult{emails: emails, err: fetchErr}
-	}()
-
-	var res fetchResult
-	select {
-	case res = <-done:
-	case <-reqCtx.Done():
-		healthy = false
-		client.ForceClose()
-		return 0, fmt.Errorf("fetch latest emails timeout: %w", reqCtx.Err())
+	var expiredPending bool
+	if err := db.WithContext(reqCtx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		expiredPending, err = prepareEpoch(tx, account.ID, DefaultFolder, epoch)
+		return err
+	}); err != nil {
+		return 0, err
 	}
-
-	if res.err != nil {
-		healthy = false
-		return 0, res.err
+	if expiredPending {
+		defer func() { refreshErr = errors.Join(ErrPendingReadExpired, refreshErr) }()
 	}
-
-	return ReconcileLatestEmails(db, account, DefaultFolder, res.emails, limit)
+	pendingErr := syncPendingRead(reqCtx, db, account, client.SetSeen)
+	if pendingErr != nil && !errors.Is(pendingErr, imap.ErrUIDValidityChanged) {
+		return 0, pendingErr
+	}
+	emails, fetchedEpoch, err := client.FetchLatestEmails(reqCtx, DefaultFolder, limit)
+	if err != nil {
+		return 0, err
+	}
+	if fetchedEpoch != epoch {
+		return 0, imap.ErrUIDValidityChanged
+	}
+	healthy = true
+	count, err := ReconcileLatestEmails(db.WithContext(reqCtx), account, DefaultFolder, epoch, emails, limit)
+	if err != nil {
+		return 0, err
+	}
+	return count, pendingErr
 }
 
-// ReconcileLatestEmails inserts new emails, updates read/starred flags for existing ones,
-// and prunes older records so each account+folder stores at most `limit` emails.
-func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder string, summaries []*imap.EmailSummary, limit int) (int, error) {
-	if limit <= 0 {
+// prepareEpoch runs in the same transaction as reconciliation, and refuses
+// resurrection after an account deletion. A UID is meaningful only in its epoch.
+func prepareEpoch(tx *gorm.DB, accountID uint, folder string, epoch uint32) (bool, error) {
+	if epoch == 0 {
+		return false, imap.ErrUIDValidityChanged
+	}
+	var current models.EmailAccount
+	if err := tx.First(&current, accountID).Error; err != nil {
+		return false, err
+	}
+	var pending int64
+	if err := tx.Unscoped().Model(&models.Email{}).
+		Where("account_id = ? AND folder = ? AND uid_validity <> ? AND pending_read IS NOT NULL", accountID, folder, epoch).
+		Count(&pending).Error; err != nil {
+		return false, err
+	}
+	// These identities no longer exist. Drop their bodies and intents together;
+	// the caller reports lost intent once after the new snapshot commits.
+	if err := tx.Unscoped().Where("account_id = ? AND folder = ? AND uid_validity <> ?", accountID, folder, epoch).
+		Delete(&models.Email{}).Error; err != nil {
+		return false, err
+	}
+	if folder == DefaultFolder && current.UIDValidity != epoch {
+		if err := tx.Model(&models.EmailAccount{}).Where("id = ?", accountID).Update("uid_validity", epoch).Error; err != nil {
+			return false, err
+		}
+	}
+	return pending > 0, nil
+}
+
+// SyncPendingRead makes one bounded realtime attempt. Failures leave the durable
+// intent intact, including unread=false; callers can report pending state.
+func SyncPendingRead(ctx context.Context, db *gorm.DB, account *models.EmailAccount) error {
+	if account == nil {
+		return errors.New("account is nil")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	unlock, err := lockAccount(ctx, account.ID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	var count int64
+	if err := db.WithContext(ctx).Model(&models.Email{}).Where("account_id = ? AND pending_read IS NOT NULL", account.ID).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil
+	}
+	client, release, err := imap.GetConnectionPool().AcquireConnectionContext(ctx, account)
+	if err != nil {
+		return err
+	}
+	err = syncPendingRead(ctx, db, account, client.SetSeen)
+	release(err == nil)
+	return err
+}
+
+func syncPendingRead(ctx context.Context, db *gorm.DB, account *models.EmailAccount, setSeen func(context.Context, uint, string, uint32, bool) error) error {
+	var current models.EmailAccount
+	if err := db.WithContext(ctx).First(&current, account.ID).Error; err != nil {
+		return err
+	}
+	var pending []models.Email
+	if err := db.WithContext(ctx).Where("account_id = ? AND pending_read IS NOT NULL", account.ID).Find(&pending).Error; err != nil {
+		return err
+	}
+	var pendingErr error
+	for _, email := range pending {
+		if email.UIDValidity == 0 || email.UID == 0 || (email.Folder == DefaultFolder && email.UIDValidity != current.UIDValidity) {
+			pendingErr = imap.ErrUIDValidityChanged
+			continue
+		}
+		desired := *email.PendingRead
+		if err := setSeen(ctx, email.UID, email.Folder, email.UIDValidity, desired); err != nil {
+			if errors.Is(err, imap.ErrUIDValidityChanged) {
+				pendingErr = err
+				continue
+			}
+			return err
+		}
+		if err := clearPendingRead(db.WithContext(ctx), email, desired); err != nil {
+			return err
+		}
+	}
+	return pendingErr
+}
+
+func clearPendingRead(db *gorm.DB, email models.Email, desired bool) error {
+	// Compare updated_at as well as the desired value so true→false→true during
+	// STORE is retained as a new intent instead of being cleared by an older write.
+	return db.Model(&models.Email{}).
+		Where("id = ? AND uid = ? AND uid_validity = ? AND pending_read = ? AND updated_at = ?", email.ID, email.UID, email.UIDValidity, desired, email.UpdatedAt).
+		Update("pending_read", nil).Error
+}
+
+// ReconcileLatestEmails keys remote identity by (folder, UIDVALIDITY, UID).
+// Message-ID is metadata and can legitimately be shared by separate messages.
+func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder string, epoch uint32, summaries []*imap.EmailSummary, limit int) (int, error) {
+	if account == nil {
+		return 0, errors.New("account is nil")
+	}
+	if limit <= 0 || limit > MaxLatestEmails {
 		limit = MaxLatestEmails
 	}
 	if folder == "" {
 		folder = DefaultFolder
 	}
-
-	messageIDs := make([]string, len(summaries))
-	uids := make([]uint, 0, len(summaries))
-	for i, summary := range summaries {
-		if summary == nil {
-			continue
-		}
-		messageIDs[i] = summary.MessageID
-		if messageIDs[i] == "" {
-			messageIDs[i] = fmt.Sprintf("uid-%d", summary.UID)
-		}
-		if summary.UID > 0 {
-			uids = append(uids, summary.UID)
+	for _, summary := range summaries {
+		if summary != nil && summary.UID == 0 {
+			return 0, errors.New("message has no UID")
 		}
 	}
-
-	type existingRow struct {
-		ID        uint
-		MessageID string
-		UID       uint
-		IsRead    bool
-		IsStarred bool
-		DeletedAt gorm.DeletedAt
-	}
-
 	var newEmails []models.Email
 	var hadExisting bool
+	var expiredPending bool
 	syncTime := time.Now()
 	err := db.Transaction(func(tx *gorm.DB) error {
-		var existing []existingRow
-		if err := tx.Unscoped().Model(&models.Email{}).
-			Select("id, message_id, uid, is_read, is_starred, deleted_at").
-			Where("account_id = ? AND folder = ?", account.ID, folder).
-			Where("message_id IN ? OR uid IN ?", messageIDs, uids).
-			Scan(&existing).Error; err != nil {
+		var prior int64
+		if err := tx.Unscoped().Model(&models.Email{}).Where("account_id = ? AND folder = ?", account.ID, folder).Count(&prior).Error; err != nil {
 			return err
 		}
-
-		hadExisting = len(existing) > 0
-		if !hadExisting {
-			var prior []existingRow
-			if err := tx.Unscoped().Model(&models.Email{}).
-				Select("id").Where("account_id = ? AND folder = ?", account.ID, folder).
-				Limit(1).Find(&prior).Error; err != nil {
-				return err
-			}
-			hadExisting = len(prior) > 0
+		hadExisting = prior > 0
+		var err error
+		expiredPending, err = prepareEpoch(tx, account.ID, folder, epoch)
+		if err != nil {
+			return err
 		}
-		byMsgID := make(map[string]existingRow, len(existing))
-		byUID := make(map[uint]existingRow, len(existing))
+		var existing []models.Email
+		if err := tx.Unscoped().Where("account_id = ? AND folder = ? AND uid_validity = ?", account.ID, folder, epoch).Find(&existing).Error; err != nil {
+			return err
+		}
+		byUID := make(map[uint]models.Email, len(existing))
 		for _, row := range existing {
-			if row.MessageID != "" {
-				byMsgID[row.MessageID] = row
-			}
-			if row.UID > 0 {
-				byUID[row.UID] = row
-			}
+			byUID[row.UID] = row
 		}
-
-		var (
-			markReadIDs   []uint
-			markUnreadIDs []uint
-			starIDs       []uint
-			unstarIDs     []uint
-		)
-		seenIncoming := make(map[string]struct{}, len(summaries))
-		for i, s := range summaries {
-			if s == nil {
+		seen := make(map[uint]struct{}, len(summaries))
+		for _, summary := range summaries {
+			if summary == nil {
 				continue
 			}
-			msgID := messageIDs[i]
-			if _, dup := seenIncoming[msgID]; dup {
+			if _, duplicate := seen[summary.UID]; duplicate {
 				continue
 			}
-			seenIncoming[msgID] = struct{}{}
-
-			row, found := byMsgID[msgID]
-			if !found && s.UID > 0 {
-				row, found = byUID[s.UID]
+			seen[summary.UID] = struct{}{}
+			msgID := summary.MessageID
+			if msgID == "" {
+				msgID = fmt.Sprintf("uid-%d", summary.UID)
 			}
-			if found {
+			if row, exists := byUID[summary.UID]; exists {
 				if row.DeletedAt.Valid {
 					continue
 				}
-				if s.IsRead != row.IsRead {
-					if s.IsRead {
-						markReadIDs = append(markReadIDs, row.ID)
-					} else {
-						markUnreadIDs = append(markUnreadIDs, row.ID)
-					}
-				}
-				if s.IsStarred != row.IsStarred {
-					if s.IsStarred {
-						starIDs = append(starIDs, row.ID)
-					} else {
-						unstarIDs = append(unstarIDs, row.ID)
-					}
+				if err := tx.Model(&models.Email{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+					"message_id": msgID, "is_read": gorm.Expr("CASE WHEN pending_read IS NOT NULL THEN pending_read ELSE ? END", summary.IsRead),
+					"is_starred": summary.IsStarred,
+				}).Error; err != nil {
+					return err
 				}
 				continue
 			}
-
 			newEmails = append(newEmails, models.Email{
-				AccountID:     account.ID,
-				MessageID:     msgID,
-				From:          s.From,
-				FromName:      s.FromName,
-				To:            s.To,
-				Subject:       s.Subject,
-				Date:          s.Date,
-				HasAttachment: s.HasAttachment,
-				IsRead:        s.IsRead,
-				IsStarred:     s.IsStarred,
-				Folder:        folder,
-				UID:           s.UID,
+				AccountID: account.ID, MessageID: msgID, From: summary.From, FromName: summary.FromName,
+				To: summary.To, Subject: summary.Subject, Date: summary.Date, HasAttachment: summary.HasAttachment,
+				IsRead: summary.IsRead, IsStarred: summary.IsStarred, Folder: folder, UID: summary.UID, UIDValidity: epoch,
 			})
 		}
-
 		if len(newEmails) > 0 {
 			if err := tx.CreateInBatches(&newEmails, 50).Error; err != nil {
 				return err
 			}
 		}
-		if len(markReadIDs) > 0 {
-			if err := tx.Model(&models.Email{}).Where("id IN ?", markReadIDs).Update("is_read", true).Error; err != nil {
-				return err
-			}
+		// A moved UID never inherits the old body's cache or local deletion marker.
+		// Keep pending intents outside the latest window until they are written back.
+		uids := make([]uint, 0, len(seen))
+		for uid := range seen {
+			uids = append(uids, uid)
 		}
-		if len(markUnreadIDs) > 0 {
-			if err := tx.Model(&models.Email{}).Where("id IN ?", markUnreadIDs).Update("is_read", false).Error; err != nil {
-				return err
-			}
+		stale := tx.Unscoped().Where("account_id = ? AND folder = ? AND pending_read IS NULL", account.ID, folder)
+		if len(uids) > 0 {
+			stale = stale.Where("uid NOT IN ?", uids)
 		}
-		if len(starIDs) > 0 {
-			if err := tx.Model(&models.Email{}).Where("id IN ?", starIDs).Update("is_starred", true).Error; err != nil {
-				return err
-			}
-		}
-		if len(unstarIDs) > 0 {
-			if err := tx.Model(&models.Email{}).Where("id IN ?", unstarIDs).Update("is_starred", false).Error; err != nil {
-				return err
-			}
-		}
-
-		// Delete in SQL so pruning does not load historical IDs into memory.
-		stale := tx.Unscoped().Model(&models.Email{}).Select("id").
-			Where("account_id = ? AND folder = ?", account.ID, folder).
-			Order("date DESC, id DESC").Limit(-1).Offset(limit)
-		if err := tx.Unscoped().Where("id IN (?)", stale).Delete(&models.Email{}).Error; err != nil {
+		if err := stale.Delete(&models.Email{}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&models.EmailAccount{}).Where("id = ?", account.ID).
-			Update("last_sync_time", syncTime).Error
+		older := tx.Unscoped().Model(&models.Email{}).Select("id").Where("account_id = ? AND folder = ? AND pending_read IS NULL", account.ID, folder).
+			Order("date DESC, id DESC").Limit(-1).Offset(limit)
+		if err := tx.Unscoped().Where("id IN (?)", older).Delete(&models.Email{}).Error; err != nil {
+			return err
+		}
+		updates := map[string]interface{}{"last_sync_time": syncTime}
+		if folder == DefaultFolder {
+			updates["uid_validity"] = epoch
+		}
+		return tx.Model(&models.EmailAccount{}).Where("id = ?", account.ID).Updates(updates).Error
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to reconcile emails: %w", err)
 	}
 	account.LastSyncTime = syncTime
-
-	// Only notify after the complete refresh has committed.
+	if folder == DefaultFolder {
+		account.UIDValidity = epoch
+	}
 	if hadExisting && len(newEmails) > 0 {
 		for i := range newEmails {
-			telegram.SendNewEmailAsync(&newEmails[i], account.Email)
+			telegram.SendNewEmailAsync(account.UserID, &newEmails[i], account.Email)
 		}
+	}
+	if expiredPending {
+		return len(newEmails), ErrPendingReadExpired
 	}
 	return len(newEmails), nil
 }
 
-// RefreshAccounts refreshes multiple accounts concurrently and returns a combined summary.
 func RefreshAccounts(ctx context.Context, db *gorm.DB, accounts []models.EmailAccount, limit int) RefreshSummary {
-	summary := RefreshSummary{
-		Errors: make(map[string]string),
-	}
-	if len(accounts) == 0 {
-		return summary
-	}
-
-	workerCount := maxRefreshWorkers
-	if len(accounts) < workerCount {
-		workerCount = len(accounts)
-	}
-
+	summary := RefreshSummary{Errors: make(map[string]string)}
 	jobs := make(chan models.EmailAccount, len(accounts))
-	for _, acc := range accounts {
-		jobs <- acc
+	for _, account := range accounts {
+		jobs <- account
 	}
 	close(jobs)
-
-	var (
-		mu sync.Mutex
-		wg sync.WaitGroup
-	)
-	for range workerCount {
+	workers := min(maxRefreshWorkers, len(accounts))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for acc := range jobs {
-				accCopy := acc
-				newCount, err := RefreshAccount(ctx, db, &accCopy, limit)
+			for account := range jobs {
+				count, err := RefreshAccount(ctx, db, &account, limit)
 				mu.Lock()
 				if err != nil {
-					summary.Errors[accCopy.Email] = err.Error()
+					summary.Errors[account.Email] = err.Error()
 				} else {
 					summary.Refreshed++
-					summary.NewCount += newCount
+					summary.NewCount += count
 				}
 				mu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
-
 	if len(summary.Errors) == 0 {
 		summary.Errors = nil
 	}

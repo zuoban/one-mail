@@ -3,6 +3,7 @@ package telegram
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -24,8 +25,7 @@ var (
 	globalClient      *Client
 	clientOnce        sync.Once
 	configCacheMu     sync.RWMutex
-	cachedConfig      *models.TelegramConfig
-	configCached      bool
+	cachedConfigs     = make(map[uint]*models.TelegramConfig)
 	styleTagRegex     = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
 	multiNewlineRegex = regexp.MustCompile(`\n\s*\n\s*\n+`)
 	entityRegex       = regexp.MustCompile(`&#(\d+);`)
@@ -41,51 +41,53 @@ func GetClient() *Client {
 	return globalClient
 }
 
-// InvalidateConfigCache clears the in-memory Telegram config cache so the next send reloads from DB.
-func InvalidateConfigCache() {
+// InvalidateConfigCache reloads this owner's configuration on the next send.
+func InvalidateConfigCache(userID uint) {
 	configCacheMu.Lock()
-	cachedConfig = nil
-	configCached = false
+	delete(cachedConfigs, userID)
 	configCacheMu.Unlock()
 }
 
-func getConfig() *models.TelegramConfig {
+func getConfig(userID uint) *models.TelegramConfig {
+	if userID == 0 {
+		return nil
+	}
 	configCacheMu.RLock()
-	if configCached {
-		cfg := cachedConfig
-		configCacheMu.RUnlock()
+	cfg, exists := cachedConfigs[userID]
+	configCacheMu.RUnlock()
+	if exists {
 		return cfg
 	}
-	configCacheMu.RUnlock()
 
+	// Serialize cache fills with invalidation so an old DB snapshot cannot
+	// replace the configuration after its owner has updated it.
+	configCacheMu.Lock()
+	defer configCacheMu.Unlock()
+	if cfg, exists := cachedConfigs[userID]; exists {
+		return cfg
+	}
 	db := database.GetDB()
 	if db == nil {
 		return nil
 	}
-	var cfg models.TelegramConfig
-	if err := db.First(&cfg).Error; err != nil {
+	var loaded models.TelegramConfig
+	if err := db.Where("user_id = ?", userID).First(&loaded).Error; err != nil {
 		return nil
 	}
-
-	configCacheMu.Lock()
-	cfgCopy := cfg
-	cachedConfig = &cfgCopy
-	configCached = true
-	configCacheMu.Unlock()
-	return &cfgCopy
+	cachedConfigs[userID] = &loaded
+	return &loaded
 }
 
-func (c *Client) IsEnabled() bool {
-	cfg := getConfig()
+func (c *Client) IsEnabled(userID uint) bool {
+	cfg := getConfig(userID)
 	return cfg != nil && cfg.Enabled && cfg.BotToken != "" && cfg.ChatID != ""
 }
 
-func (c *Client) SendNewEmail(email *models.Email, accountEmail string) error {
-	cfg := getConfig()
+func (c *Client) SendNewEmail(userID uint, email *models.Email, accountEmail string) error {
+	cfg := getConfig(userID)
 	if cfg == nil || !cfg.Enabled || cfg.BotToken == "" || cfg.ChatID == "" {
 		return nil
 	}
-
 	text := c.formatMessage(email, accountEmail)
 	return c.sendMessage(cfg.BotToken, cfg.ChatID, text)
 }
@@ -148,18 +150,18 @@ func (c *Client) sendMessage(botToken, chatID, text string) error {
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+		return errors.New("failed to encode telegram request")
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return errors.New("invalid telegram request")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return errors.New("telegram request failed")
 	}
 	defer resp.Body.Close()
 
@@ -169,11 +171,11 @@ func (c *Client) sendMessage(botToken, chatID, text string) error {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
+		return errors.New("invalid telegram response")
 	}
 
-	if !result.OK {
-		return fmt.Errorf("telegram api error: %s", result.Description)
+	if resp.StatusCode != http.StatusOK || !result.OK {
+		return errors.New("telegram rejected the message; check bot token and chat ID")
 	}
 
 	return nil
@@ -189,18 +191,18 @@ func (c *Client) TestConnection(botToken, chatID string) error {
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+		return errors.New("failed to encode telegram request")
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return errors.New("invalid telegram request")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return errors.New("telegram request failed")
 	}
 	defer resp.Body.Close()
 
@@ -210,11 +212,11 @@ func (c *Client) TestConnection(botToken, chatID string) error {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
+		return errors.New("invalid telegram response")
 	}
 
-	if !result.OK {
-		return fmt.Errorf("telegram api error: %s", result.Description)
+	if resp.StatusCode != http.StatusOK || !result.OK {
+		return errors.New("telegram rejected the message; check bot token and chat ID")
 	}
 
 	return nil
@@ -332,6 +334,7 @@ func decodeHTMLEntities(s string) string {
 }
 
 type notifyJob struct {
+	userID       uint
 	email        models.Email
 	accountEmail string
 }
@@ -350,7 +353,7 @@ func initNotifyQueue() {
 				client := GetClient()
 				for job := range notifyQueue {
 					emailCopy := job.email
-					if err := client.SendNewEmail(&emailCopy, job.accountEmail); err != nil {
+					if err := client.SendNewEmail(job.userID, &emailCopy, job.accountEmail); err != nil {
 						log.Printf("Failed to send telegram notification: %v", err)
 					}
 				}
@@ -359,13 +362,13 @@ func initNotifyQueue() {
 	})
 }
 
-func SendNewEmailAsync(email *models.Email, accountEmail string) {
-	if email == nil {
+func SendNewEmailAsync(userID uint, email *models.Email, accountEmail string) {
+	if userID == 0 || email == nil {
 		return
 	}
 	initNotifyQueue()
 	select {
-	case notifyQueue <- notifyJob{email: *email, accountEmail: accountEmail}:
+	case notifyQueue <- notifyJob{userID: userID, email: *email, accountEmail: accountEmail}:
 	default:
 		log.Printf("Telegram notify queue full, dropping notification for subject=%q", email.Subject)
 	}

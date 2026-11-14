@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   one-mail:
     image: ghcr.io/zuoban/one-mail:latest
@@ -10,7 +8,9 @@ services:
     volumes:
       - one-mail-data:/app/data
     environment:
-      - TZ=Asia/Shanghai
+      TZ: Asia/Shanghai
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a random secret of at least 32 bytes}
+      CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
 
 volumes:
   one-mail-data:

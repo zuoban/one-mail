@@ -32,7 +32,16 @@ func setupEmailHandlerTestDB(t *testing.T) *gorm.DB {
 	if err := database.MigrateAndOptimize(db); err != nil {
 		t.Fatalf("MigrateAndOptimize failed: %v", err)
 	}
+	previous := database.DB
 	database.DB = db
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		database.DB = previous
+		_ = sqlDB.Close()
+	})
 	return db
 }
 

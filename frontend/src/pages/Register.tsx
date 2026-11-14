@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import axios from 'axios'
 import { authApi } from '../api'
 import useAuth from '../context/useAuth'
-import { useTheme } from '../context/ThemeContext'
+import useTheme from '../context/useTheme'
 import { Mail, Lock, User, UserPlus, AlertCircle, Sun, Moon } from 'lucide-react'
 
 export default function Register() {

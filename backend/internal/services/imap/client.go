@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,15 +18,18 @@ import (
 	_ "github.com/emersion/go-message/charset"
 	"github.com/emersion/go-message/mail"
 
+	"one-mail/backend/internal/credentials"
 	"one-mail/backend/internal/models"
 )
 
 type Client struct {
-	account      *models.EmailAccount
-	client       *imapclient.Client
-	username     string
-	password     string
-	lastActivity time.Time
+	account       *models.EmailAccount
+	client        *imapclient.Client
+	username      string
+	password      string
+	transport     net.Conn
+	credentialErr error
+	lastActivity  time.Time
 }
 
 var ProviderConfigs = map[string]struct {
@@ -73,11 +77,8 @@ var ProviderConfigs = map[string]struct {
 }
 
 func NewClient(account *models.EmailAccount) *Client {
-	return &Client{
-		account:  account,
-		username: account.Username,
-		password: account.Password,
-	}
+	password, err := credentials.Decrypt(account.Password)
+	return &Client{account: account, username: account.Username, password: password, credentialErr: err}
 }
 
 const defaultConnectTimeout = 15 * time.Second
@@ -110,6 +111,12 @@ func (c *Client) ConnectContext(ctx context.Context) error {
 		defer cancel()
 	}
 
+	if c.credentialErr != nil {
+		return errors.New("unable to decrypt IMAP credentials")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	host := net.JoinHostPort(c.account.IMAPHost, strconv.Itoa(c.account.IMAPPort))
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{
@@ -128,6 +135,7 @@ func (c *Client) ConnectContext(ctx context.Context) error {
 	}
 
 	conn := imapclient.New(tlsConn, nil)
+	c.transport = tlsConn
 
 	loginDone := make(chan error, 1)
 	go func() {
@@ -138,7 +146,7 @@ func (c *Client) ConnectContext(ctx context.Context) error {
 	case err = <-loginDone:
 		if err != nil {
 			_ = conn.Close()
-			return fmt.Errorf("failed to login: %w", err)
+			return errors.New("failed to login: authentication failed")
 		}
 	case <-ctx.Done():
 		_ = conn.Close()
@@ -156,7 +164,6 @@ func (c *Client) Disconnect() error {
 	}
 
 	client := c.client
-	c.client = nil
 
 	done := make(chan error, 1)
 	go func() {
@@ -175,11 +182,11 @@ func (c *Client) Disconnect() error {
 
 // ForceClose immediately closes the underlying TCP/TLS connection to unblock any stalled IMAP command.
 func (c *Client) ForceClose() {
-	if c.client == nil {
-		return
+	// imapclient.Close waits for its decoder, which can be waiting for the current
+	// literal consumer. Closing just the transport lets that consumer unwind first.
+	if c.transport != nil {
+		_ = c.transport.Close()
 	}
-	_ = c.client.Close()
-	c.client = nil
 }
 
 func (c *Client) IsConnected() bool {
@@ -224,6 +231,74 @@ type EmailSummary struct {
 	UID           uint
 }
 
+var ErrUIDValidityChanged = errors.New("mailbox UIDVALIDITY changed; refresh required")
+var ErrBodyTooLarge = errors.New("message body exceeds 8 MiB limit")
+
+const maxBodyBytes = 8 << 20
+
+// commandContext closes the transport on cancellation and joins its callback before reuse.
+func (c *Client) commandContext(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	conn := c.client
+	if conn == nil {
+		return nil, errors.New("not connected")
+	}
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { c.ForceClose(); close(done) })
+	return func() {
+		if !stop() {
+			<-done
+		}
+	}, nil
+}
+
+func (c *Client) SelectMailbox(ctx context.Context, folder string) (uint32, error) {
+	finish, err := c.commandContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer finish()
+	if folder == "" {
+		folder = "INBOX"
+	}
+	selected, err := c.client.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to select mailbox: %w", err)
+	}
+	if selected.UIDValidity == 0 {
+		return 0, ErrUIDValidityChanged
+	}
+	return selected.UIDValidity, nil
+}
+
+func retryTemporary(ctx context.Context, operation func() error) error {
+	var lastErr error
+	for attempt := range 3 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if attempt > 0 {
+			timer := time.NewTimer(time.Second * time.Duration(1<<uint(attempt-1)))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		lastErr = operation()
+		if lastErr == nil || !isTemporaryIMAPError(lastErr) {
+			return lastErr
+		}
+	}
+	return lastErr
+}
+
 func computeLatestSeqRange(total uint32, limit int) (uint32, uint32, bool) {
 	if total == 0 {
 		return 0, 0, false
@@ -238,35 +313,35 @@ func computeLatestSeqRange(total uint32, limit int) (uint32, uint32, bool) {
 	return start, total, true
 }
 
-func (c *Client) FetchLatestEmails(folder string, limit int) ([]*EmailSummary, error) {
-	if c.client == nil {
-		return nil, fmt.Errorf("not connected")
+func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int) ([]*EmailSummary, uint32, error) {
+	finish, err := c.commandContext(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
+	defer finish()
 	if folder == "" {
 		folder = "INBOX"
 	}
-	if limit <= 0 {
+	if limit <= 0 || limit > 50 {
 		limit = 50
 	}
 
 	var messages []*imapclient.FetchMessageBuffer
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Second * time.Duration(1<<uint(attempt-1)))
-		}
-
+	var uidValidity uint32
+	err = retryTemporary(ctx, func() error {
 		selectedMbox, err := c.client.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
 		if err != nil {
-			if isTemporaryIMAPError(err) {
-				continue
-			}
-			return nil, fmt.Errorf("failed to select mailbox: %w", err)
+			return fmt.Errorf("failed to select mailbox: %w", err)
 		}
-		c.lastActivity = time.Now()
+		uidValidity = selectedMbox.UIDValidity
+		if uidValidity == 0 {
+			return ErrUIDValidityChanged
+		}
 
 		start, end, ok := computeLatestSeqRange(selectedMbox.NumMessages, limit)
 		if !ok {
-			return []*EmailSummary{}, nil
+			messages = nil
+			return nil
 		}
 
 		var seqSet imap.SeqSet
@@ -280,12 +355,15 @@ func (c *Client) FetchLatestEmails(folder string, limit int) ([]*EmailSummary, e
 
 		messages, err = c.client.Fetch(seqSet, fetchOptions).Collect()
 		if err != nil {
-			if isTemporaryIMAPError(err) {
-				continue
-			}
-			return nil, fmt.Errorf("failed to fetch messages: %w", err)
+			return fmt.Errorf("failed to fetch messages: %w", err)
 		}
-		break
+		return nil
+	})
+	if ctx.Err() != nil {
+		return nil, 0, ctx.Err()
+	}
+	if err != nil {
+		return nil, 0, err
 	}
 
 	results := make([]*EmailSummary, 0, len(messages))
@@ -352,7 +430,7 @@ func (c *Client) FetchLatestEmails(folder string, limit int) ([]*EmailSummary, e
 	})
 
 	c.lastActivity = time.Now()
-	return results, nil
+	return results, uidValidity, nil
 }
 
 func parseMessageBody(raw []byte) (bodyText string, bodyHTML string) {
@@ -476,16 +554,19 @@ func decodeBodyPart(mimeHeaderBytes, bodyBytes []byte) string {
 	return string(bodyBytes)
 }
 
-func (c *Client) FetchEmailBody(folder string, uid uint) (bodyText string, bodyHTML string, err error) {
-	if c.client == nil {
-		return "", "", fmt.Errorf("not connected")
+func (c *Client) FetchEmailBody(ctx context.Context, folder string, uid uint, uidValidity uint32) (bodyText string, bodyHTML string, err error) {
+	finish, err := c.commandContext(ctx)
+	if err != nil {
+		return "", "", err
 	}
-
-	_, err = c.client.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
+	defer finish()
+	selected, err := c.client.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
 	if err != nil {
 		return "", "", fmt.Errorf("failed to select mailbox: %w", err)
 	}
-
+	if uidValidity == 0 || selected.UIDValidity != uidValidity {
+		return "", "", ErrUIDValidityChanged
+	}
 	uidSet := imap.UIDSetNum(imap.UID(uid))
 
 	// 先拉取 BODYSTRUCTURE，仅按需抓取 text/plain 与 text/html part，避免下载大附件
@@ -504,9 +585,7 @@ func (c *Client) FetchEmailBody(folder string, uid uint) (bodyText string, bodyH
 	// BODYSTRUCTURE 不可用时降级到整封抓取
 	if bsMessages[0].BodyStructure == nil {
 		fullSection := &imap.FetchItemBodySection{Peek: true}
-		msgs, fetchErr := c.client.Fetch(uidSet, &imap.FetchOptions{
-			BodySection: []*imap.FetchItemBodySection{fullSection},
-		}).Collect()
+		msgs, fetchErr := c.fetchBodySections(uidSet, []*imap.FetchItemBodySection{fullSection})
 		if fetchErr != nil {
 			return "", "", fmt.Errorf("failed to fetch message body: %w", fetchErr)
 		}
@@ -528,9 +607,7 @@ func (c *Client) FetchEmailBody(folder string, uid uint) (bodyText string, bodyH
 
 	if !sel.isMultipart {
 		fullSection := &imap.FetchItemBodySection{Peek: true}
-		msgs, fetchErr := c.client.Fetch(uidSet, &imap.FetchOptions{
-			BodySection: []*imap.FetchItemBodySection{fullSection},
-		}).Collect()
+		msgs, fetchErr := c.fetchBodySections(uidSet, []*imap.FetchItemBodySection{fullSection})
 		if fetchErr != nil {
 			return "", "", fmt.Errorf("failed to fetch message body: %w", fetchErr)
 		}
@@ -558,9 +635,7 @@ func (c *Client) FetchEmailBody(folder string, uid uint) (bodyText string, bodyH
 		sections = append(sections, htmlMimeSec, htmlBodySec)
 	}
 
-	messages, err := c.client.Fetch(uidSet, &imap.FetchOptions{
-		BodySection: sections,
-	}).Collect()
+	messages, err := c.fetchBodySections(uidSet, sections)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to fetch message body parts: %w", err)
 	}
@@ -578,24 +653,73 @@ func (c *Client) FetchEmailBody(folder string, uid uint) (bodyText string, bodyH
 	return bodyText, bodyHTML, nil
 }
 
-func (c *Client) MarkAsRead(uid uint, folder string) error {
-	if c.client == nil {
-		return fmt.Errorf("not connected")
+func (c *Client) SetSeen(ctx context.Context, uid uint, folder string, uidValidity uint32, seen bool) error {
+	finish, err := c.commandContext(ctx)
+	if err != nil {
+		return err
 	}
-
-	if _, err := c.client.Select(folder, nil).Wait(); err != nil {
+	defer finish()
+	selected, err := c.client.Select(folder, nil).Wait()
+	if err != nil {
 		return fmt.Errorf("failed to select mailbox: %w", err)
 	}
-
+	if uidValidity == 0 || selected.UIDValidity != uidValidity {
+		return ErrUIDValidityChanged
+	}
 	uidSet := imap.UIDSetNum(imap.UID(uid))
-	storeCmd := c.client.Store(uidSet, &imap.StoreFlags{
-		Op:    imap.StoreFlagsAdd,
-		Flags: []imap.Flag{imap.FlagSeen},
-	}, nil)
-
-	err := storeCmd.Close()
-	c.lastActivity = time.Now()
+	// STORE succeeds for missing UIDs, so verify the exact identity before clearing pending state.
+	messages, err := c.client.Fetch(uidSet, &imap.FetchOptions{UID: true}).Collect()
+	if err != nil {
+		return err
+	}
+	if len(messages) != 1 || uint(messages[0].UID) != uid {
+		return errors.New("message not found")
+	}
+	op := imap.StoreFlagsDel
+	if seen {
+		op = imap.StoreFlagsAdd
+	}
+	err = c.client.Store(uidSet, &imap.StoreFlags{Op: op, Flags: []imap.Flag{imap.FlagSeen}}, nil).Close()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return err
+}
+
+// fetchBodySections bounds every literal even when the server ignores BODY partial ranges.
+func (c *Client) fetchBodySections(uids imap.UIDSet, sections []*imap.FetchItemBodySection) ([]*imapclient.FetchMessageBuffer, error) {
+	for _, section := range sections {
+		section.Partial = &imap.SectionPartial{Size: maxBodyBytes + 1}
+	}
+	cmd := c.client.Fetch(uids, &imap.FetchOptions{BodySection: sections})
+	defer cmd.Close()
+	var result []*imapclient.FetchMessageBuffer
+	remaining := int64(maxBodyBytes)
+	for message := cmd.Next(); message != nil; message = cmd.Next() {
+		buffer := &imapclient.FetchMessageBuffer{}
+		for item := message.Next(); item != nil; item = message.Next() {
+			section, ok := item.(imapclient.FetchItemDataBodySection)
+			if !ok || section.Literal == nil {
+				continue
+			}
+			body, err := io.ReadAll(io.LimitReader(section.Literal, remaining+1))
+			if err != nil {
+				c.ForceClose()
+				return nil, err
+			}
+			remaining -= int64(len(body))
+			if remaining < 0 {
+				c.ForceClose()
+				return nil, ErrBodyTooLarge
+			}
+			buffer.BodySection = append(buffer.BodySection, imapclient.FetchBodySectionBuffer{Section: section.Section, Bytes: body})
+		}
+		result = append(result, buffer)
+	}
+	if err := cmd.Close(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (c *Client) TestConnection() error {

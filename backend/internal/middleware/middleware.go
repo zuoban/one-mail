@@ -3,64 +3,52 @@ package middleware
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
 
 	"one-mail/backend/config"
+	"one-mail/backend/database"
+	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
-
-var publicPaths = []string{
-	"/api/auth/register",
-	"/api/auth/login",
-	"/health",
-}
-
-func isPublicPath(path string) bool {
-	for _, p := range publicPaths {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	return false
-}
 
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if isPublicPath(c.Request.URL.Path) {
-			c.Next()
+		authorization := strings.Fields(c.GetHeader("Authorization"))
+		if len(authorization) != 2 || !strings.EqualFold(authorization[0], "Bearer") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authorization bearer token is required"})
 			return
 		}
-
-		token := c.GetHeader("Authorization")
-		if token == "" {
-			token = c.Query("token")
-		}
-
-		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-			c.Abort()
-			return
-		}
-
-		if strings.HasPrefix(token, "Bearer ") {
-			token = strings.TrimPrefix(token, "Bearer ")
-		}
-
-		claims, err := utils.ValidateToken(token)
+		claims, err := utils.ValidateToken(authorization[1])
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-			c.Abort()
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
 		}
 
-		c.Set("user_id", claims.UserID)
-		c.Set("username", claims.Username)
+		db := database.GetDB()
+		if db == nil {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "authentication unavailable"})
+			return
+		}
+		var user models.User
+		err = db.Select("id", "username", "session_version").First(&user, claims.UserID).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && user.SessionVersion != claims.SessionVersion) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session expired"})
+			return
+		}
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "authentication unavailable"})
+			return
+		}
 
+		c.Set("user_id", user.ID)
+		c.Set("username", user.Username)
 		c.Next()
 	}
 }

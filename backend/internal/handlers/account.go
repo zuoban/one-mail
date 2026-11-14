@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"one-mail/backend/database"
+	"one-mail/backend/internal/credentials"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
 	"one-mail/backend/internal/services/mail"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 var accountColors = []string{
@@ -108,6 +110,12 @@ func (h *AccountHandler) AddAccount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to connect: " + err.Error()})
 		return
 	}
+	sealed, err := credentials.Encrypt(account.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to protect account credentials"})
+		return
+	}
+	account.Password = sealed
 
 	if err := database.GetDB().Create(&account).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -127,17 +135,25 @@ func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 	userID := c.GetUint("user_id")
 	id := c.Param("id")
 
-	// 验证账户所有权，防止水平越权攻击
-	result := database.GetDB().Where("id = ? AND user_id = ?", id, userID).Delete(&models.EmailAccount{})
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
-		return
-	}
-
-	if result.RowsAffected == 0 {
+	var account models.EmailAccount
+	err := database.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&account).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("account_id = ?", account.ID).Delete(&models.Email{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&account).Error
+	})
+	if err == gorm.ErrRecordNotFound {
 		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
 		return
 	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete account"})
+		return
+	}
+	imap.GetConnectionPool().RemoveConnection(account.ID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "account deleted"})
 }
@@ -165,19 +181,33 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	credentialsChanged := (req.Provider != "" && req.Provider != account.Provider) ||
+		(req.Username != "" && req.Username != account.Username) || req.Password != ""
 
 	// 更新字段（如果提供）
 	if req.Email != "" {
 		account.Email = req.Email
 	}
-	if req.Provider != "" {
+	if req.Provider != "" && req.Provider != account.Provider {
+		provider, ok := imap.ProviderConfigs[req.Provider]
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider"})
+			return
+		}
 		account.Provider = req.Provider
+		account.IMAPHost, account.IMAPPort = provider.IMAPHost, provider.IMAPPort
+		account.SMTPHost, account.SMTPPort = provider.SMTPHost, provider.SMTPPort
 	}
 	if req.Username != "" {
 		account.Username = req.Username
 	}
 	if req.Password != "" {
-		account.Password = req.Password
+		sealed, err := credentials.Encrypt(req.Password)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to protect account credentials"})
+			return
+		}
+		account.Password = sealed
 	}
 	if req.Color != "" {
 		account.Color = req.Color
@@ -186,6 +216,9 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 	if err := database.GetDB().Save(&account).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if credentialsChanged {
+		imap.GetConnectionPool().RemoveConnection(account.ID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": account})

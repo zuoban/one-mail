@@ -63,9 +63,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	user := models.User{
-		Username: req.Username,
-		Password: hashedPassword,
-		Email:    req.Email,
+		Username:       req.Username,
+		Password:       hashedPassword,
+		Email:          req.Email,
+		SessionVersion: 1,
 	}
 
 	if err := db.Create(&user).Error; err != nil {
@@ -73,7 +74,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	token, err := utils.GenerateToken(user.ID, user.Username)
+	token, err := utils.GenerateToken(user.ID, user.Username, user.SessionVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
 		return
@@ -108,7 +109,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	token, err := utils.GenerateToken(user.ID, user.Username)
+	token, err := utils.GenerateToken(user.ID, user.Username, user.SessionVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
 		return
@@ -170,7 +171,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		user.Email = req.Email
 	}
 
-	if err := db.Save(&user).Error; err != nil {
+	if err := db.Model(&user).Updates(map[string]interface{}{"username": user.Username, "email": user.Email}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
 		return
 	}
@@ -209,9 +210,18 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	user.Password = hashedPassword
-	if err := db.Save(&user).Error; err != nil {
+	result := db.Model(&models.User{}).
+		Where("id = ? AND password = ? AND session_version = ?", user.ID, user.Password, user.SessionVersion).
+		Updates(map[string]interface{}{
+			"password":        hashedPassword,
+			"session_version": gorm.Expr("session_version + 1"),
+		})
+	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "密码更新失败"})
+		return
+	}
+	if result.RowsAffected != 1 {
+		c.JSON(http.StatusConflict, gin.H{"error": "密码已更改，请重新登录"})
 		return
 	}
 

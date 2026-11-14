@@ -43,6 +43,9 @@ logs
 # Data
 data/
 *.db
+*.db.key
+.env
+.env.*
 
 # Python
 __pycache__/

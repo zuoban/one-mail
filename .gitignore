@@ -40,6 +40,7 @@ Thumbs.db
 *.db
 *.sqlite
 *.sqlite3
+*.db.key
 backend/server
 backend/main
 *.db-wal

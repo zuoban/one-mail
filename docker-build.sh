@@ -1,49 +1,21 @@
 #!/bin/bash
 
 # One-Mail 单镜像 Docker 构建脚本
+set -euo pipefail
 
-set -e
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE_NAME="${IMAGE_NAME:-one-mail}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
 
-echo "🚀 One-Mail Docker 单镜像构建"
-echo "=============================="
-echo ""
-
-# 检查 Docker
-if ! command -v docker &> /dev/null; then
-    echo "❌ 错误: Docker 未安装"
+if ! command -v docker >/dev/null 2>&1; then
+    echo "错误：Docker 未安装。" >&2
     exit 1
 fi
 
-echo "✅ Docker 已安装"
-echo ""
+echo "构建镜像 ${IMAGE_NAME}:${IMAGE_TAG}..."
+docker build --tag "${IMAGE_NAME}:${IMAGE_TAG}" "${SCRIPT_DIR}"
 
-# 设置镜像名称
-IMAGE_NAME="one-mail"
-IMAGE_TAG="latest"
-
-# 创建数据目录
-mkdir -p data
-
-echo "📦 开始构建镜像..."
-echo "   镜像名称: ${IMAGE_NAME}:${IMAGE_TAG}"
-echo ""
-
-# 构建镜像
-docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-
-echo ""
-echo "✅ 镜像构建成功！"
-echo ""
-echo "🚀 启动命令:"
-echo "   docker run -d -p 80:80 -v \$(pwd)/data:/app/data --name one-mail ${IMAGE_NAME}:${IMAGE_TAG}"
-echo ""
-echo "🌐 访问地址:"
-echo "   - 前端界面: http://localhost"
-echo "   - API 接口: http://localhost/api"
-echo "   - 健康检查: http://localhost/health"
-echo ""
-echo "📊 常用命令:"
-echo "   - 启动: ./docker-run.sh"
-echo "   - 停止: docker stop one-mail"
-echo "   - 删除: docker rm one-mail"
-echo "   - 日志: docker logs -f one-mail"
+echo "镜像构建成功。"
+echo "请先按 DOCKER.md 配置并加载 JWT_SECRET（至少 32 字节），推荐独立设置 CREDENTIALS_KEY。"
+echo "然后运行 ./docker-run.sh；自定义镜像时请传入相同的 IMAGE_NAME 和 IMAGE_TAG。"
+echo "查看日志：docker logs -f one-mail"

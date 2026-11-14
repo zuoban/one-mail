@@ -1,21 +1,20 @@
-.PHONY: run build frontend backend clean docker-build docker-run docker-stop docker-logs
+.PHONY: run build frontend backend clean docker-build docker-run docker-start docker-stop docker-logs
 
 run: backend frontend
 
 backend:
-	cd backend && go run -tags fts5 ./cmd/server/main.go
+	cd backend && CGO_ENABLED=1 go run -tags fts5 ./cmd/server/main.go
 
 frontend:
 	cd frontend && npm run dev
 
 build:
-	cd backend && go build -tags fts5 -o server ./cmd/server/main.go
+	cd backend && CGO_ENABLED=1 go build -tags fts5 -o server ./cmd/server/main.go
 	cd frontend && npm run build
 
 clean:
 	rm -rf backend/server
 	rm -rf frontend/dist
-	rm -rf backend/data
 
 # Docker 单镜像方案
 docker-build:

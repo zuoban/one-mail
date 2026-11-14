@@ -78,6 +78,14 @@ cd backend && go mod download
 
 2. 启动开发服务器
 
+后端启动前必须设置独立的 JWT 密钥（至少 32 字节）；缺失、过短或旧默认密钥会阻止启动。开发时可在当前终端生成：
+
+```bash
+export JWT_SECRET="$(openssl rand -hex 32)"
+```
+
+生产部署请按 [Docker 部署文档](DOCKER.md) 创建权限为 `600` 的 `.env` 文件，持久保存 `JWT_SECRET` 和 `CREDENTIALS_KEY`，不要在每次重启时重新生成。
+
 ```bash
 # 同时启动前后端
 make run
@@ -105,6 +113,7 @@ make frontend  # 前端 :5173
 # 使用 Docker 运行
 docker run -d \
   --name one-mail \
+  --env-file .env \
   -p 80:80 \
   -v one-mail-data:/app/data \
   ghcr.io/zuoban/one-mail:latest
@@ -122,6 +131,7 @@ version: '3.8'
 
 services:
   one-mail:
+    env_file: .env
     image: ghcr.io/zuoban/one-mail:latest
     container_name: one-mail
     restart: unless-stopped
@@ -176,10 +186,10 @@ make docker-stop
 
 ```bash
 # 使用命名卷
-docker run -v one-mail-data:/app/data ghcr.io/zuoban/one-mail:latest
+docker run --env-file .env -v one-mail-data:/app/data ghcr.io/zuoban/one-mail:latest
 
 # 或使用主机目录
-docker run -v /path/to/data:/app/data ghcr.io/zuoban/one-mail:latest
+docker run --env-file .env -v /path/to/data:/app/data ghcr.io/zuoban/one-mail:latest
 ```
 
 ### 环境配置
@@ -187,6 +197,12 @@ docker run -v /path/to/data:/app/data ghcr.io/zuoban/one-mail:latest
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `TZ` | 时区设置 | `UTC` |
+| `JWT_SECRET` | 必填，独立随机签名密钥，至少 32 字节；更换后所有会话失效 | 无 |
+| `CREDENTIALS_KEY` | 建议显式提供的 32 字节 Base64 密钥，用于 AES-GCM 加密邮箱凭证 | 未设置时在数据库旁生成权限 `600` 的 `.key` 文件 |
+
+首次升级会在事务中加密已有邮箱凭证（包含软删除账户），并验证已有密文能由当前密钥解密。必须备份数据库及其独立密钥；旧备份可能仍含明文凭证。密钥遗失将无法恢复邮箱授权码。修改登录密码会撤销该用户所有旧令牌。
+
+Telegram 配置按用户隔离。旧全局配置只有在存在唯一有效用户时自动归属；多用户实例中的旧配置会禁用，各用户需重新配置自己的通知目标。
 
 ### 反向代理配置
 
@@ -240,7 +256,11 @@ mail.example.com {
 - `POST /api/emails/:id/unread` - 标记未读
 - `DELETE /api/emails/:id` - 删除邮件
 
-刷新时仅加载与本批邮件 Message-ID 或 UID 匹配的已有记录，旧邮件由数据库直接清理。新增邮件、已读/星标状态、旧邮件清理和刷新时间在同一事务中提交；任一步骤失败都会回滚并返回错误。Telegram 新邮件通知在事务提交后发送，本地删除的邮件不会因刷新恢复。
+刷新按账户、文件夹、UIDVALIDITY 与 UID 核对本批邮件身份，旧邮件由数据库直接清理。新增邮件、已读/星标状态、旧邮件清理和刷新时间在同一事务中提交；任一步骤失败都会回滚并返回错误。Telegram 新邮件通知在事务提交后发送，本地删除的邮件不会因普通刷新恢复。
+
+已读、未读和批量已读都会持久化待同步状态，并尝试写回 IMAP；远端不可用时响应包含 `sync_pending: true`，下次刷新继续同步，刷新不会覆盖待提交的用户操作。邮件通过 UIDVALIDITY 与 UID 校验远端身份；连接和刷新并发受全局及每账户限制。
+
+HTML 邮件在隔离文档中显示，清洗危险标签、属性及 URL，默认阻止远程资源，用户可按邮件选择加载远程图片。
 
 ## ⚙️ 配置
 
@@ -250,15 +270,16 @@ mail.example.com {
 
 ```yaml
 server:
+  mode: "release"
   port: 8080
-  host: "0.0.0.0"
 
 database:
+  type: "sqlite"
   path: "./data/one-mail.db"
 
 jwt:
-  secret: "your-secret-key"
-  expiry_hours: 24
+  secret: ""  # 通过 JWT_SECRET 注入至少 32 字节的独立密钥
+  expires: "168h"
 ```
 
 ## 🔧 开发命令
@@ -271,7 +292,16 @@ make build
 make clean
 
 # 运行测试 (后端)
-go test ./...
+cd backend && go test -tags fts5 ./...
+```
+
+前端回归、静态检查与构建：
+
+```bash
+cd frontend
+npm test
+npm run lint
+npm run build
 ```
 
 ## 📄 许可证

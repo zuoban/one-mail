@@ -41,7 +41,7 @@ export interface EmailAccount {
   color: string
 }
 
-export interface Email {
+export interface EmailSummary {
   id: number
   created_at: string
   account_id: number
@@ -50,15 +50,18 @@ export interface Email {
   to: string
   subject: string
   date: string
-  body_text?: string
-  body_html?: string
   has_attachment: boolean
   is_read: boolean
   folder: string
 }
 
+export interface EmailDetail extends EmailSummary {
+  body_text: string
+  body_html: string
+}
+
 export interface EmailListResponse {
-  data: Email[]
+  data: EmailSummary[]
   total: number
 }
 
@@ -72,6 +75,12 @@ export interface TelegramConfig {
   enabled: boolean
   bot_token: string
   chat_id: string
+}
+
+export interface ReadStatusResponse {
+  message: string
+  count?: number
+  sync_pending: boolean
 }
 
 export interface AuthResponse {
@@ -116,11 +125,11 @@ export const emailApi = {
       params: accountId ? { account_id: accountId } : undefined,
       timeout: 45000,
     }).then(r => r.data),
-  get: (id: number) => api.get<{ data: Email }>(`/emails/${id}`).then(r => r.data),
-  markAsRead: (id: number) => api.post(`/emails/${id}/read`),
-  markAsUnread: (id: number) => api.post(`/emails/${id}/unread`),
-  batchMarkAsRead: (ids: number[]) => api.post<{ message: string; count: number }>('/emails/batch/read', { ids }).then(r => r.data),
-  delete: (id: number) => api.delete(`/emails/${id}`),
+  get: (id: number, signal?: AbortSignal) => api.get<{ data: EmailDetail }>(`/emails/${id}`, { signal }).then(r => r.data),
+  markAsRead: (id: number) => api.post<ReadStatusResponse>(`/emails/${id}/read`).then(r => r.data),
+  markAsUnread: (id: number) => api.post<ReadStatusResponse>(`/emails/${id}/unread`).then(r => r.data),
+  batchMarkAsRead: (ids: number[]) => api.post<ReadStatusResponse>('/emails/batch/read', { ids }).then(r => r.data),
+  delete: (id: number, signal?: AbortSignal) => api.delete(`/emails/${id}`, { signal }),
 }
 export const telegramApi = {
   getConfig: () => api.get<{ data: TelegramConfig }>('/telegram/config').then(r => r.data),

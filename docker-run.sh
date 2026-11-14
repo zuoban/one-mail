@@ -1,65 +1,62 @@
 #!/bin/bash
 
-# One-Mail 单容器一键启动脚本
+# One-Mail 单容器启动脚本：秘密只从环境传入，不写入文件或命令行参数。
+set -euo pipefail
+export LC_ALL=C
 
-set -e
-
-IMAGE_NAME="one-mail"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE_NAME="${IMAGE_NAME:-one-mail}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
 CONTAINER_NAME="one-mail"
-PORT=80
+PORT="${PORT:-80}"
 
-echo "🚀 One-Mail 启动脚本"
-echo "==================="
-echo ""
-
-# 检查镜像是否存在
-if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${IMAGE_NAME}:${IMAGE_TAG}$"; then
-    echo "❌ 镜像 ${IMAGE_NAME}:${IMAGE_TAG} 不存在"
-    echo "请先运行: ./docker-build.sh"
+if ! command -v docker >/dev/null 2>&1; then
+    echo "错误：Docker 未安装。" >&2
     exit 1
 fi
 
-# 检查容器是否已存在
-if docker ps -a | grep -q "${CONTAINER_NAME}$"; then
-    echo "📝 容器已存在，正在重启..."
-    docker stop ${CONTAINER_NAME} >/dev/null 2>&1 || true
-    docker rm ${CONTAINER_NAME} >/dev/null 2>&1 || true
+if [[ -z "${JWT_SECRET:-}" ]]; then
+    echo "错误：必须通过环境设置 JWT_SECRET（至少 32 字节）。请按 DOCKER.md 生成并加载权限为 600 的 .env 文件。" >&2
+    exit 1
+fi
+if [[ ${#JWT_SECRET} -lt 32 ]]; then
+    echo "错误：JWT_SECRET 必须至少为 32 字节。" >&2
+    exit 1
+fi
+export JWT_SECRET
+export CREDENTIALS_KEY="${CREDENTIALS_KEY:-}"
+
+if ! docker image inspect "${IMAGE_NAME}:${IMAGE_TAG}" >/dev/null 2>&1; then
+    echo "错误：镜像 ${IMAGE_NAME}:${IMAGE_TAG} 不存在，请先运行 ./docker-build.sh。" >&2
+    exit 1
 fi
 
-# 创建数据目录
-mkdir -p data
+if docker container inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+    echo "正在替换现有容器 ${CONTAINER_NAME}..."
+    docker stop "${CONTAINER_NAME}" >/dev/null
+    docker rm "${CONTAINER_NAME}" >/dev/null
+fi
 
-echo "🚀 启动容器..."
+mkdir -p "${SCRIPT_DIR}/data"
 docker run -d \
-    -p ${PORT}:80 \
-    -v $(pwd)/data:/app/data \
-    --name ${CONTAINER_NAME} \
+    -p "${PORT}:80" \
+    -v "${SCRIPT_DIR}/data:/app/data" \
+    --env JWT_SECRET \
+    --env CREDENTIALS_KEY \
+    --env "TZ=${TZ:-Asia/Shanghai}" \
+    --name "${CONTAINER_NAME}" \
     --restart unless-stopped \
-    ${IMAGE_NAME}:latest
+    "${IMAGE_NAME}:${IMAGE_TAG}"
 
-echo ""
-echo "⏳ 等待服务启动..."
+echo "等待容器启动..."
 sleep 5
-
-# 检查服务状态
-if docker ps | grep -q "${CONTAINER_NAME}$"; then
-    echo ""
-    echo "✅ One-Mail 启动成功！"
-    echo ""
-    echo "🌐 访问地址:"
-    echo "   - 前端界面: http://localhost"
-    echo "   - API 接口: http://localhost/api"
-    echo "   - 健康检查: http://localhost/health"
-    echo ""
-    echo "📊 常用命令:"
-    echo "   - 查看日志: docker logs -f ${CONTAINER_NAME}"
-    echo "   - 停止服务: docker stop ${CONTAINER_NAME}"
-    echo "   - 删除容器: docker rm ${CONTAINER_NAME}"
-    echo "   - 进入容器: docker exec -it ${CONTAINER_NAME} sh"
-    echo ""
-else
-    echo ""
-    echo "❌ 启动失败，查看日志:"
-    echo "   docker logs ${CONTAINER_NAME}"
+if [[ "$(docker inspect --format '{{.State.Running}}' "${CONTAINER_NAME}")" != "true" ]]; then
+    echo "错误：容器已退出，请查看 docker logs ${CONTAINER_NAME}。" >&2
     exit 1
 fi
+
+echo "容器已启动：http://localhost:${PORT}"
+echo "健康检查：http://localhost:${PORT}/health"
+echo "查看服务就绪状态：docker inspect --format '{{.State.Health.Status}}' ${CONTAINER_NAME}"
+echo "查看日志：docker logs -f ${CONTAINER_NAME}"
+echo "请持久化并备份 data 目录；未设置 CREDENTIALS_KEY 时，其中包含数据库凭证加密密钥。"

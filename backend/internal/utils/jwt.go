@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"os"
+	"strings"
 	"time"
 
 	"one-mail/backend/config"
@@ -22,42 +22,37 @@ var jwtExpires time.Duration
 
 // InitJWT 初始化 JWT 配置，应在程序启动时调用
 func InitJWT() error {
+	jwtSecret = nil
+	jwtExpires = 0
 	secret := getJWTSecret()
-	if secret == defaultSecret {
-		log.Println("⚠️  警告: 使用默认 JWT 密钥，生产环境请设置环境变量 JWT_SECRET 或配置文件 jwt.secret")
+	if len(secret) < 32 || strings.TrimSpace(secret) == "" || secret == defaultSecret ||
+		secret == "916481d3-a196-46d1-a05b-fea0a6984c04" || secret == "your-secret-key-change-in-production" {
+		return errors.New("JWT_SECRET or jwt.secret must contain at least 32 bytes and must not use a default secret")
 	}
-	jwtSecret = []byte(secret)
 
-	// 解析过期时间
-	expiresStr := "168h" // 默认 7 天
+	expiresStr := "168h"
 	if config.AppConfig != nil && config.AppConfig.JWT.Expires != "" {
 		expiresStr = config.AppConfig.JWT.Expires
 	}
-
-	var err error
-	jwtExpires, err = time.ParseDuration(expiresStr)
-	if err != nil {
-		jwtExpires = 168 * time.Hour
-		log.Printf("警告: 无效的 JWT 过期时间配置，使用默认值 168h: %v", err)
+	expires, err := time.ParseDuration(expiresStr)
+	if err != nil || expires <= 0 {
+		return errors.New("jwt.expires must be a positive duration")
 	}
 
+	jwtSecret = []byte(secret)
+	jwtExpires = expires
 	return nil
 }
 
-// getJWTSecret 获取 JWT 密钥，优先级: 环境变量 > 配置文件 > 默认值
+// getJWTSecret 获取 JWT 密钥，优先级: 环境变量 > 配置文件。
 func getJWTSecret() string {
-	// 1. 优先从环境变量获取
-	if secret := os.Getenv("JWT_SECRET"); secret != "" {
+	if secret, exists := os.LookupEnv("JWT_SECRET"); exists {
 		return secret
 	}
-
-	// 2. 从配置文件获取
-	if config.AppConfig != nil && config.AppConfig.JWT.Secret != "" {
+	if config.AppConfig != nil {
 		return config.AppConfig.JWT.Secret
 	}
-
-	// 3. 使用默认值（仅开发环境）
-	return defaultSecret
+	return ""
 }
 
 // GenerateRandomSecret 生成随机密钥（用于生产环境初始化）
@@ -70,48 +65,45 @@ func GenerateRandomSecret() (string, error) {
 }
 
 type Claims struct {
-	UserID   uint   `json:"user_id"`
-	Username string `json:"username"`
+	UserID         uint   `json:"user_id"`
+	Username       string `json:"username"`
+	SessionVersion uint   `json:"session_version"`
 	jwt.RegisteredClaims
 }
 
-func GenerateToken(userID uint, username string) (string, error) {
+func GenerateToken(userID uint, username string, sessionVersion uint) (string, error) {
 	if len(jwtSecret) == 0 {
-		return "", errors.New("JWT 未初始化，请先调用 InitJWT()")
+		return "", errors.New("JWT is not initialized")
+	}
+	if userID == 0 || sessionVersion == 0 {
+		return "", errors.New("invalid user session")
 	}
 
-	expirationTime := time.Now().Add(jwtExpires)
+	now := time.Now()
 	claims := &Claims{
-		UserID:   userID,
-		Username: username,
+		UserID:         userID,
+		Username:       username,
+		SessionVersion: sessionVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(now.Add(jwtExpires)),
+			IssuedAt:  jwt.NewNumericDate(now),
 		},
 	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(jwtSecret)
 }
 
 func ValidateToken(tokenString string) (*Claims, error) {
 	if len(jwtSecret) == 0 {
-		return nil, errors.New("JWT 未初始化，请先调用 InitJWT()")
+		return nil, errors.New("JWT is not initialized")
 	}
 
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 		return jwtSecret, nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	if !token.Valid {
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired())
+	if err != nil || !token.Valid || claims.UserID == 0 || claims.SessionVersion == 0 {
 		return nil, errors.New("invalid token")
 	}
-
 	return claims, nil
 }
 
