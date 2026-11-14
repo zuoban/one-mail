@@ -15,7 +15,7 @@ func InitializeSchema(db *gorm.DB) error {
 	fts5Enabled.Store(false)
 	if err := db.Transaction(func(tx *gorm.DB) error {
 		for _, model := range []interface{}{
-			&models.EmailAccount{}, &models.Email{}, &models.TelegramConfig{}, &models.NotificationTask{},
+			&models.EmailAccount{}, &models.Email{}, &models.TelegramConfig{}, &models.NotificationTask{}, &models.NotificationDeliveryState{},
 		} {
 			if !tx.Migrator().HasTable(model) {
 				if err := tx.Migrator().CreateTable(model); err != nil {

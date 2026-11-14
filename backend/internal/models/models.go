@@ -70,3 +70,8 @@ type NotificationTask struct {
 	NextAttemptAt   time.Time `gorm:"not null;index"`
 	LastError       string    `gorm:"type:text"`
 }
+
+type NotificationDeliveryState struct {
+	ID        uint      `gorm:"primaryKey"`
+	NotBefore time.Time `gorm:"not null"`
+}

@@ -1,12 +1,16 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { AxiosError, AxiosHeaders } from 'axios'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { telegramApi, type TelegramConfig } from '../src/api'
 import Settings from '../src/pages/Settings'
 import EmailBody from '../src/components/EmailBody'
 import { ReadingPreferencesProvider } from '../src/context/ReadingPreferencesContext'
 
 const initialConfig: TelegramConfig = { enabled: false, bot_token: 'bot-token', chat_id: 'chat-id' }
+
+beforeEach(() => {
+  vi.spyOn(telegramApi, 'listTasks').mockResolvedValue({ data: [], pending_count: 0, failed_count: 0 })
+})
 
 describe('Telegram settings', () => {
   it('loads the configuration before enabling edits and preserves save and test actions', async () => {

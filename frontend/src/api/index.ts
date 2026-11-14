@@ -103,6 +103,22 @@ export interface TelegramConfig {
   chat_id: string
 }
 
+export interface NotificationTask {
+  id: number
+  account_id: number
+  account_email: string
+  created_at: string
+  attempts: number
+  next_attempt_at: string
+  status: 'pending' | 'failed'
+  last_error: string
+}
+
+export interface NotificationList {
+  data: NotificationTask[]
+  pending_count: number
+  failed_count: number
+}
 
 export const authApi = {
   status: () => api.get<AuthStatus>('/auth/status').then(r => r.data),
@@ -138,6 +154,10 @@ export const emailApi = {
   get: (id: number, signal?: AbortSignal) => api.get<{ data: EmailDetail }>(`/emails/${id}`, { signal }).then(r => r.data),
 }
 export const telegramApi = {
+  listTasks: (signal?: AbortSignal) =>
+    api.get<NotificationList>('/telegram/tasks', { params: { status: 'failed' }, signal }).then(r => r.data),
+  retryTask: (id: number) => api.post(`/telegram/tasks/${id}/retry`),
+  deleteTask: (id: number) => api.delete(`/telegram/tasks/${id}`),
   getConfig: () => api.get<{ data: TelegramConfig }>('/telegram/config').then(r => r.data),
   updateConfig: (data: { enabled?: boolean; bot_token?: string; chat_id?: string }) =>
     api.put<{ data: TelegramConfig }>('/telegram/config', data).then(r => r.data),

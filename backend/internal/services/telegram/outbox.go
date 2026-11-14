@@ -11,6 +11,7 @@ import (
 	"one-mail/backend/internal/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Dispatcher delivers committed snapshots. Delivery is at least once: a crash
@@ -56,17 +57,34 @@ func (d *Dispatcher) deliverBatch(ctx context.Context, now time.Time, limit int)
 	if !cfg.Enabled || cfg.BotToken == "" || cfg.ChatID == "" {
 		return nil
 	}
+	var deliveryState models.NotificationDeliveryState
+	if err := db.First(&deliveryState, 1).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	if now.Before(deliveryState.NotBefore) {
+		return nil
+	}
 	token, err := credentials.Decrypt(cfg.BotToken)
 	if err != nil {
 		return errors.New("unable to unlock notification configuration")
 	}
 	var tasks []models.NotificationTask
-	if err := db.Where("next_attempt_at <= ?", now).Order("next_attempt_at, id").Limit(limit).Find(&tasks).Error; err != nil {
+	if err := PendingTasks(db).Where("next_attempt_at <= ?", now).Order("next_attempt_at, id").Limit(limit).Find(&tasks).Error; err != nil {
 		return err
 	}
 	for _, task := range tasks {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		var currentConfig models.TelegramConfig
+		if err := db.First(&currentConfig, 1).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if !currentConfig.Enabled || currentConfig.BotToken != cfg.BotToken || currentConfig.ChatID != cfg.ChatID {
+			return nil
 		}
 		var account models.EmailAccount
 		err := db.Select("id, identity_version").First(&account, task.AccountID).Error
@@ -80,7 +98,7 @@ func (d *Dispatcher) deliverBatch(ctx context.Context, now time.Time, limit int)
 			return err
 		}
 		var email models.Email
-		failure := "invalid notification snapshot"
+		failure := permanentFailurePrefix + "invalid notification snapshot"
 		if err = json.Unmarshal([]byte(task.EmailJSON), &email); err == nil {
 			err = d.client.SendNewEmailWithConfig(ctx, &email, task.AccountEmail, token, cfg.ChatID)
 			failure = "telegram delivery failed"
@@ -90,12 +108,47 @@ func (d *Dispatcher) deliverBatch(ctx context.Context, now time.Time, limit int)
 		}
 		if err != nil {
 			attempts := task.Attempts + 1
-			if err := db.Model(&task).Updates(map[string]interface{}{
-				"attempts": attempts, "next_attempt_at": now.Add(retryDelay(attempts)), "last_error": failure,
-			}).Error; err != nil {
+			delay := retryDelay(attempts)
+			var deliveryErr *DeliveryError
+			limited := errors.As(err, &deliveryErr) && deliveryErr.Code == 429
+			if deliveryErr != nil {
+				failure = deliveryErr.Reason
+				if deliveryErr.Permanent {
+					failure = permanentFailurePrefix + failure
+				}
+				delay = max(delay, deliveryErr.RetryAfter)
+			}
+			completedAt := time.Now()
+			if completedAt.Before(now) {
+				completedAt = now
+			}
+			nextAttempt := completedAt.Add(delay)
+			if err := db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Model(&task).Updates(map[string]interface{}{
+					"attempts": attempts, "next_attempt_at": nextAttempt, "last_error": failure,
+				}).Error; err != nil {
+					return err
+				}
+				if limited {
+					if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).
+						Create(&models.NotificationDeliveryState{ID: 1, NotBefore: nextAttempt}).Error; err != nil {
+						return err
+					}
+					return PendingTasks(tx).Where("next_attempt_at < ?", nextAttempt).Update("next_attempt_at", nextAttempt).Error
+				}
+				return nil
+			}); err != nil {
 				return err
 			}
-			log.Printf("event=notification_retry task_id=%d account_id=%d attempts=%d", task.ID, task.AccountID, attempts)
+			event := "notification_retry"
+			task.Attempts, task.LastError = attempts, failure
+			if TaskFailed(&task) {
+				event = "notification_failed"
+			}
+			log.Printf("event=%s task_id=%d account_id=%d attempts=%d", event, task.ID, task.AccountID, attempts)
+			if limited {
+				return nil
+			}
 			continue
 		}
 		if err := db.Delete(&task).Error; err != nil {

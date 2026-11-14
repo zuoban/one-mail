@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { telegramApi } from '../api'
 import { Save } from 'lucide-react'
+import NotificationTasks from '../components/NotificationTasks'
 import axios from 'axios'
 import type { TelegramConfig } from '../api'
 import useReadingPreferences from '../context/useReadingPreferences'
@@ -253,6 +254,7 @@ export default function Settings() {
             </fieldset>
           </form>
         </section>
+        <NotificationTasks />
     </div>
   )
 }

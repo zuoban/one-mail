@@ -20,7 +20,6 @@ import (
 	"one-mail/backend/internal/application"
 	"one-mail/backend/internal/handlers"
 	"one-mail/backend/internal/middleware"
-	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
 	"one-mail/backend/internal/services/telegram"
 
@@ -139,11 +138,15 @@ func logResourceStats(ctx context.Context, db *sql.DB, appDB *gorm.DB, pool *ima
 			stats := db.Stats()
 			imapStats := pool.GetStats()
 			var pending int64
+			var failed int64
 			countCtx, cancel := context.WithTimeout(ctx, readinessTimeout)
-			err := appDB.WithContext(countCtx).Model(&models.NotificationTask{}).Count(&pending).Error
+			err := telegram.PendingTasks(appDB.WithContext(countCtx)).Count(&pending).Error
+			if err == nil {
+				err = telegram.FailedTasks(appDB.WithContext(countCtx)).Count(&failed).Error
+			}
 			cancel()
-			log.Printf("event=resource_stats db_open=%d db_in_use=%d db_idle=%d db_wait_count=%d db_wait_duration_ms=%d imap_connections=%v imap_wait_count=%v imap_wait_duration_ms=%v notification_pending=%d notification_stats_ok=%t",
-				stats.OpenConnections, stats.InUse, stats.Idle, stats.WaitCount, stats.WaitDuration.Milliseconds(), imapStats["total_connections"], imapStats["wait_count"], imapStats["wait_duration_ms"], pending, err == nil)
+			log.Printf("event=resource_stats db_open=%d db_in_use=%d db_idle=%d db_wait_count=%d db_wait_duration_ms=%d imap_connections=%v imap_wait_count=%v imap_wait_duration_ms=%v notification_pending=%d notification_failed=%d notification_stats_ok=%t",
+				stats.OpenConnections, stats.InUse, stats.Idle, stats.WaitCount, stats.WaitDuration.Milliseconds(), imapStats["total_connections"], imapStats["wait_count"], imapStats["wait_duration_ms"], pending, failed, err == nil)
 		}
 	}
 }
@@ -230,6 +233,9 @@ func buildRouter(instanceAccess *access.Access, db *gorm.DB, pool *imap.Connecti
 		api.PUT("/telegram/config", telegramHandler.UpdateTelegramConfig)
 		api.POST("/telegram/test", telegramHandler.TestTelegramConnection)
 		api.POST("/telegram/send/:id", telegramHandler.SendEmailToTelegram)
+		api.GET("/telegram/tasks", telegramHandler.ListTasks)
+		api.POST("/telegram/tasks/:id/retry", telegramHandler.RetryTask)
+		api.DELETE("/telegram/tasks/:id", telegramHandler.DeleteTask)
 	}
 
 	r.GET("/health", health(db))

@@ -33,7 +33,7 @@ func outboxDatabase(t *testing.T, path string) *gorm.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&models.EmailAccount{}, &models.TelegramConfig{}, &models.NotificationTask{}); err != nil {
+	if err := db.AutoMigrate(&models.EmailAccount{}, &models.TelegramConfig{}, &models.NotificationTask{}, &models.NotificationDeliveryState{}); err != nil {
 		t.Fatal(err)
 	}
 	return db

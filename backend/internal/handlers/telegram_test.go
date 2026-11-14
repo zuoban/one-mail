@@ -34,7 +34,41 @@ func telegramTestRouter(t *testing.T, db *gorm.DB) *gin.Engine {
 	r.PUT("/telegram", h.UpdateTelegramConfig)
 	r.POST("/telegram/test", h.TestTelegramConnection)
 	r.POST("/emails/:id/telegram", h.SendEmailToTelegram)
+	r.GET("/telegram/tasks", h.ListTasks)
+	r.POST("/telegram/tasks/:id/retry", h.RetryTask)
+	r.DELETE("/telegram/tasks/:id", h.DeleteTask)
 	return r
+}
+
+func TestNotificationTaskEndpointsValidateAndManageFailures(t *testing.T) {
+	db := setupEmailHandlerTestDB(t)
+	tasks := []models.NotificationTask{
+		{MessageKey: "pending"},
+		{MessageKey: "failed", Attempts: telegram.MaxDeliveryAttempts},
+	}
+	if err := db.Create(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := telegramTestRouter(t, db)
+	for _, test := range []struct {
+		method string
+		path   string
+		status int
+	}{
+		{http.MethodGet, "/telegram/tasks?status=failed", http.StatusOK},
+		{http.MethodGet, "/telegram/tasks?limit=invalid", http.StatusBadRequest},
+		{http.MethodGet, "/telegram/tasks?status=unknown", http.StatusBadRequest},
+		{http.MethodPost, "/telegram/tasks/invalid/retry", http.StatusBadRequest},
+		{http.MethodPost, "/telegram/tasks/999/retry", http.StatusNotFound},
+		{http.MethodDelete, fmt.Sprintf("/telegram/tasks/%d", tasks[0].ID), http.StatusConflict},
+		{http.MethodPost, fmt.Sprintf("/telegram/tasks/%d/retry", tasks[1].ID), http.StatusOK},
+		{http.MethodDelete, fmt.Sprintf("/telegram/tasks/%d", tasks[1].ID), http.StatusConflict},
+	} {
+		response := telegramRequest(router, test.method, test.path, "")
+		if response.Code != test.status {
+			t.Fatalf("%s %s returned %d: %s", test.method, test.path, response.Code, response.Body.String())
+		}
+	}
 }
 
 func TestTelegramConfigurationUsesInstanceSingleton(t *testing.T) {

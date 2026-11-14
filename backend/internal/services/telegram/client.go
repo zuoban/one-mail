@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
@@ -18,6 +20,15 @@ import (
 type Client struct {
 	httpClient *http.Client
 }
+
+type DeliveryError struct {
+	Code       int
+	RetryAfter time.Duration
+	Permanent  bool
+	Reason     string
+}
+
+func (e *DeliveryError) Error() string { return e.Reason }
 
 var (
 	styleTagRegex     = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
@@ -37,53 +48,58 @@ func (c *Client) SendNewEmailWithConfig(ctx context.Context, email *models.Email
 
 func (c *Client) formatMessage(email *models.Email, accountEmail string) string {
 	var sb strings.Builder
-
 	sb.WriteString("📧 *新邮件通知*\n\n")
-
 	from := email.From
 	if email.FromName != "" {
 		from = fmt.Sprintf("%s (%s)", email.FromName, email.From)
 	}
-	sb.WriteString(fmt.Sprintf("*账户:* %s\n", escapeMarkdown(accountEmail)))
-	sb.WriteString(fmt.Sprintf("*发件人:* %s\n", escapeMarkdown(from)))
-	sb.WriteString(fmt.Sprintf("*收件人:* %s\n", escapeMarkdown(email.To)))
-
-	if email.Subject != "" {
-		sb.WriteString(fmt.Sprintf("*主题:* %s\n", escapeMarkdown(email.Subject)))
+	writeField := func(label, value string, limit int) {
+		sb.WriteString("*" + label + ":* ")
+		sb.WriteString(escapeMarkdownLimit(value, limit))
+		sb.WriteByte('\n')
 	}
-
-	sb.WriteString(fmt.Sprintf("*时间:* %s\n", escapeMarkdown(email.Date.Format("2006-01-02 15:04:05"))))
-
+	writeField("账户", accountEmail, 256)
+	writeField("发件人", from, 512)
+	writeField("收件人", email.To, 256)
+	if email.Subject != "" {
+		writeField("主题", email.Subject, 512)
+	}
+	writeField("时间", email.Date.Format("2006-01-02 15:04:05"), 64)
 	if email.HasAttachment {
 		sb.WriteString("*附件:* 有\n")
 	}
-
 	sb.WriteString("\n")
-
 	body := email.BodyText
 	if body == "" && email.BodyHTML != "" {
 		body = stripHTML(email.BodyHTML)
 	}
-
 	if body != "" {
 		sb.WriteString("*正文:*\n")
-		maxLen := 3500
-		if utf8.RuneCountInString(body) > maxLen {
-			body = string([]rune(body)[:maxLen]) + "..."
+		units := 0
+		for _, character := range sb.String() {
+			units++
+			if character > 0xffff {
+				units++
+			}
 		}
-		sb.WriteString(escapeMarkdown(body))
+		sb.WriteString(escapeMarkdownLimit(body, min(3500, 4096-units)))
 	}
-
 	return sb.String()
 }
 
 func (c *Client) sendMessage(ctx context.Context, botToken, chatID, text string) error {
+	return c.send(ctx, botToken, chatID, text, "MarkdownV2")
+}
+
+func (c *Client) send(ctx context.Context, botToken, chatID, text, parseMode string) error {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 
 	payload := map[string]interface{}{
-		"chat_id":    chatID,
-		"text":       text,
-		"parse_mode": "MarkdownV2",
+		"chat_id": chatID,
+		"text":    text,
+	}
+	if parseMode != "" {
+		payload["parse_mode"] = parseMode
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -93,83 +109,93 @@ func (c *Client) sendMessage(ctx context.Context, botToken, chatID, text string)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return errors.New("invalid telegram request")
+		return &DeliveryError{Permanent: true, Reason: "invalid telegram request"}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return errors.New("telegram request failed")
+		return &DeliveryError{Reason: "telegram request failed"}
 	}
 	defer resp.Body.Close()
 
 	var result struct {
 		OK          bool   `json:"ok"`
 		Description string `json:"description"`
+		ErrorCode   int    `json:"error_code"`
+		Parameters  struct {
+			RetryAfter int64 `json:"retry_after"`
+		} `json:"parameters"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return errors.New("invalid telegram response")
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result); err != nil && resp.StatusCode == http.StatusOK {
+		return &DeliveryError{Reason: "invalid telegram response"}
 	}
 
 	if resp.StatusCode != http.StatusOK || !result.OK {
-		return errors.New("telegram rejected the message; check bot token and chat ID")
+		code := result.ErrorCode
+		if code == 0 {
+			code = resp.StatusCode
+		}
+		reason := "telegram request failed"
+		switch code {
+		case 400:
+			reason = "telegram message rejected"
+		case 401:
+			reason = "telegram bot token rejected"
+		case 403:
+			reason = "telegram chat access denied"
+		case 429:
+			reason = "telegram rate limited"
+		}
+		retryAfter := time.Duration(0)
+		if result.Parameters.RetryAfter > 0 {
+			retryAfter = time.Duration(min(result.Parameters.RetryAfter, math.MaxInt64/int64(time.Second))) * time.Second
+		}
+		return &DeliveryError{
+			Code: code, RetryAfter: retryAfter, Reason: reason,
+			Permanent: code >= 400 && code < 500 && code != 408 && code != 429,
+		}
 	}
 
 	return nil
 }
 
 func (c *Client) TestConnection(ctx context.Context, botToken, chatID string) error {
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
-
-	payload := map[string]interface{}{
-		"chat_id": chatID,
-		"text":    "✅ One-Mail Telegram 通知测试成功！",
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return errors.New("failed to encode telegram request")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return errors.New("invalid telegram request")
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return errors.New("telegram request failed")
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		OK          bool   `json:"ok"`
-		Description string `json:"description"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return errors.New("invalid telegram response")
-	}
-
-	if resp.StatusCode != http.StatusOK || !result.OK {
-		return errors.New("telegram rejected the message; check bot token and chat ID")
-	}
-
-	return nil
+	return c.send(ctx, botToken, chatID, "✅ One-Mail Telegram 通知测试成功！", "")
 }
 
 func escapeMarkdown(text string) string {
+	return escapeMarkdownLimit(text, math.MaxInt32)
+}
+
+func escapeMarkdownLimit(text string, limit int) string {
 	var result strings.Builder
-	for _, r := range text {
-		switch r {
-		case '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!':
-			result.WriteRune('\\')
-			result.WriteRune(r)
-		default:
-			result.WriteRune(r)
+	units := 0
+	for offset, character := range text {
+		if character < ' ' && character != '\n' && character != '\t' {
+			continue
 		}
+		escaped := strings.ContainsRune("\\_*[]()~`>#+-=|{}.!", character)
+		width := 1
+		if character > 0xffff {
+			width++
+		}
+		if escaped {
+			width++
+		}
+		last := offset+utf8.RuneLen(character) >= len(text)
+		if units+width > limit || (!last && units+width == limit) {
+			if units < limit {
+				result.WriteRune('…')
+			}
+			break
+		}
+		if escaped {
+			result.WriteByte('\\')
+		}
+		result.WriteRune(character)
+		units += width
 	}
 	return result.String()
 }
