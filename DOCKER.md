@@ -2,18 +2,18 @@
 
 One-Mail 使用一个镜像运行 Nginx、Go 后端和前端静态资源，由 Supervisor 管理服务进程。
 
-## 先配置部署密钥
+## 可选的访问密码与凭证密钥
 
-`JWT_SECRET` 必填，至少 32 字节，必须使用随机值。推荐另行设置 `CREDENTIALS_KEY`：它必须是 **32 字节随机数据的标准 Base64 编码**，用于加密邮箱凭证，不能与 JWT 密钥共用。
+One-Mail 供个人使用，没有注册、用户名、用户资料或应用内修改密码功能。设置非空的 `ADMIN_PASSWORD` 后，页面只需输入该密码；未设置或设为空字符串时，直接进入应用。修改环境变量后重启服务生效。会话最多有效 7 天，服务重启后需要重新登录。
 
-在仓库根目录执行以下命令，将随机密钥直接写入权限为 `600` 的 `.env` 文件，不在终端输出真实秘密。命令需要 OpenSSL，且会拒绝覆盖已有 `.env`：
+`CREDENTIALS_KEY` 用于加密邮箱凭证，与访问密码独立。可以由部署平台注入 **32 字节随机数据的标准 Base64 编码**，也可以使用自动生成的密钥文件。需要显式设置密码和凭证密钥时，可在仓库根目录生成权限为 `600` 的 `.env`；以下命令需要 OpenSSL，不打印秘密并拒绝覆盖已有文件：
 
 ```bash
 (
   set -eC
   umask 077
   {
-    printf 'JWT_SECRET='
+    printf 'ADMIN_PASSWORD='
     openssl rand -hex 32
     printf 'CREDENTIALS_KEY='
     openssl rand -base64 32
@@ -27,7 +27,7 @@ One-Mail 使用一个镜像运行 Nginx、Go 后端和前端静态资源，由 S
 
 ## 使用 Docker Compose
 
-Compose 会自动读取根目录 `.env`。缺少或空的 `JWT_SECRET` 会在启动前报错；少于 32 字节或无效的密钥会被后端拒绝。
+Compose 会自动读取根目录 `.env`。不需要密码时，可直接启动，无需创建 `.env`；`ADMIN_PASSWORD` 默认为空。
 
 ```bash
 docker compose pull
@@ -36,7 +36,7 @@ docker compose ps
 docker compose logs -f
 ```
 
-默认拉取 `ghcr.io/zuoban/one-mail:latest`，映射宿主机 `80` 端口，使用 `one-mail-data` 命名卷持久化 `/app/data`。`CREDENTIALS_KEY` 是可选环境变量，时区默认为 `Asia/Shanghai`。更新镜像后再次运行 `docker compose up -d` 即可重建容器并继续使用原数据卷。
+默认拉取 `ghcr.io/zuoban/one-mail:latest`，映射宿主机 `80` 端口，使用 `one-mail-data` 命名卷持久化 `/app/data`。`ADMIN_PASSWORD` 和 `CREDENTIALS_KEY` 均为可选环境变量，时区默认为 `Asia/Shanghai`。更新镜像后再次运行 `docker compose up -d` 即可重建容器并继续使用原数据卷。
 
 ## 本地构建和启动
 
@@ -45,27 +45,29 @@ docker compose logs -f
 ```bash
 ./docker-build.sh
 
-# 脚本只从已导出的环境读取秘密，不自动执行环境文件。
-set -a
-. ./.env
-set +a
+# 可选：如创建了 .env，先加载；不配置密码可跳过。
+if [ -f .env ]; then
+  set -a
+  . ./.env
+  set +a
+fi
 ./docker-run.sh
 
-# 也可以使用 Make（同样需要先加载环境变量）
+# 也可以使用 Make
 make docker-build
 make docker-run
 ```
 
-启动脚本会先校验 `JWT_SECRET` 至少为 32 字节，再替换已有的 `one-mail` 容器。秘密通过 `docker run --env JWT_SECRET --env CREDENTIALS_KEY` 传入，不拼接真实值到命令行，也不会由脚本写入仓库文件。脚本将仓库根目录的 `data` 挂载到 `/app/data`。
+启动脚本通过 `docker run --env ADMIN_PASSWORD --env CREDENTIALS_KEY` 传入可选环境变量，不拼接真实值到命令行，也不会由脚本写入仓库文件。脚本将仓库根目录的 `data` 挂载到 `/app/data`。
 
-`IMAGE_NAME`、`IMAGE_TAG` 可覆盖构建和启动镜像，`PORT` 可覆盖脚本映射的宿主机端口。例如，在加载密钥后执行：
+`IMAGE_NAME`、`IMAGE_TAG` 可覆盖构建和启动镜像，`PORT` 可覆盖脚本映射的宿主机端口。例如：
 
 ```bash
 IMAGE_NAME=one-mail IMAGE_TAG=local ./docker-build.sh
 IMAGE_NAME=one-mail IMAGE_TAG=local PORT=8088 ./docker-run.sh
 ```
 
-也可以直接使用 Docker；先按前面的步骤加载环境变量，再执行：
+也可以直接使用 Docker；可选环境变量需先导出，然后执行：
 
 ```bash
 docker build -t one-mail:latest .
@@ -73,7 +75,7 @@ mkdir -p data
 docker run -d \
   -p 80:80 \
   -v "$(pwd)/data:/app/data" \
-  --env JWT_SECRET \
+  --env ADMIN_PASSWORD \
   --env CREDENTIALS_KEY \
   --name one-mail \
   --restart unless-stopped \
@@ -104,7 +106,9 @@ docker compose down
 
 脚本使用宿主机 `./data`；Compose 使用 `one-mail-data` 命名卷。两种方式是独立的数据位置，切换部署方式时需要迁移数据库和密钥。
 
-停服务后备份整个数据目录或数据卷，并安全备份 `.env` 或部署平台保存的密钥。恢复数据库时同时恢复原凭证加密密钥，保留自动生成密钥文件的 `0600` 权限。重建镜像、删除容器或 `make clean` 都不应删除持久化数据；不要使用 `docker compose down -v` 删除需要保留的数据卷。JWT 密钥应保持稳定，更换它会使现有登录令牌失效。
+停服务后备份整个数据目录或数据卷，并安全备份 `.env` 或部署平台保存的凭证加密密钥。恢复数据库时同时恢复原凭证加密密钥，保留自动生成密钥文件的 `0600` 权限。重建镜像、删除容器或 `make clean` 不应删除持久化数据；不要使用 `docker compose down -v` 删除需要保留的数据卷。
+
+从旧账号版本升级时，自动迁移保留全部邮箱、邮件、缓存及加密凭证，移除用户表与所有权字段。Telegram 配置合并为全局单例：优先选择最近更新的完整配置，没有完整配置时保留最新记录。升级后旧用户登录令牌不再有效。
 
 ## 构建与持续集成
 
@@ -118,7 +122,7 @@ docker compose down
 
 - `Dockerfile`：多阶段构建、运行时和健康检查。
 - `.github/workflows/docker.yml`：发布前检查、多架构镜像构建与发布。
-- `docker-compose.yml`：必填 JWT 环境变量、可选凭证密钥和持久化卷。
+- `docker-compose.yml`：可选管理员密码、可选凭证密钥和持久化卷。
 - `docker/nginx-single.conf`、`docker/nginx.conf`：静态资源和后端反向代理。
 - `docker/supervisord.conf`：Nginx 和后端进程管理。
 - `docker-build.sh`、`docker-run.sh`、`Makefile`：本地构建与部署入口。

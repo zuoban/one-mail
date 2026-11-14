@@ -3,8 +3,8 @@ import useAuth from '../context/useAuth'
 import { MailStore } from './MailStore'
 import { MailContext } from './mail-context'
 
-function SessionMailProvider({ token, children }: { token: string; children: ReactNode }) {
-  const [store] = useState(() => new MailStore(undefined, () => localStorage.getItem('token') === token))
+function SessionMailProvider({ generation, sessionValid, children }: { generation: number; sessionValid: (generation: number) => boolean; children: ReactNode }) {
+  const [store] = useState(() => new MailStore(undefined, () => sessionValid(generation)))
   const cleanupTimer = useRef<number | undefined>(undefined)
   useEffect(() => {
     window.clearTimeout(cleanupTimer.current)
@@ -16,7 +16,7 @@ function SessionMailProvider({ token, children }: { token: string; children: Rea
 }
 
 export default function MailProvider({ children }: { children: ReactNode }) {
-  const { token, user } = useAuth()
-  if (!token || !user) return null
-  return <SessionMailProvider key={`${user.id}:${token}`} token={token}>{children}</SessionMailProvider>
+  const { authenticated, loading, error, sessionGeneration, isSessionCurrent } = useAuth()
+  if (loading || error || !authenticated) return null
+  return <SessionMailProvider key={sessionGeneration} generation={sessionGeneration} sessionValid={isSessionCurrent}>{children}</SessionMailProvider>
 }

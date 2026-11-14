@@ -1,7 +1,7 @@
 # One-Mail
 
 <p align="center">
-  <strong>一个现代化的全栈邮件客户端应用</strong>
+  <strong>供个人使用的全栈邮件客户端，支持接入多个邮箱</strong>
 </p>
 
 <p align="center">
@@ -41,7 +41,7 @@ one-mail/
 │   │   ├── middleware/   # 中间件
 │   │   ├── models/       # 数据模型
 │   │   ├── services/    # 业务逻辑 (IMAP)
-│   │   └── utils/        # 工具函数
+│   │   └── access/       # 可选管理员密码鉴权
 │   └── data/             # SQLite 数据目录
 ├── frontend/             # React 前端
 │   ├── src/
@@ -61,7 +61,7 @@ one-mail/
 ### 前置要求
 
 - Go 1.25+
-- Node.js 18+
+- Node.js 22+
 - npm 或 yarn
 
 ### 本地开发
@@ -78,13 +78,13 @@ cd backend && go mod download
 
 2. 启动开发服务器
 
-后端启动前必须设置独立的 JWT 密钥（至少 32 字节）；缺失、过短或旧默认密钥会阻止启动。开发时可在当前终端生成：
+默认不需要登录，启动后即可使用。需要访问密码时，在启动后端前设置 `ADMIN_PASSWORD`，页面只要求输入这个密码，无需注册或用户名：
 
 ```bash
-export JWT_SECRET="$(openssl rand -hex 32)"
+export ADMIN_PASSWORD='your-private-password'
 ```
 
-生产部署请按 [Docker 部署文档](DOCKER.md) 创建权限为 `600` 的 `.env` 文件，持久保存 `JWT_SECRET` 和 `CREDENTIALS_KEY`，不要在每次重启时重新生成。
+未设置或设为空字符串即关闭密码鉴权。密码变更后重启服务生效；重启后现有登录会话失效，需重新输入密码。邮箱凭证加密与数据备份见 [Docker 部署文档](DOCKER.md)。
 
 ```bash
 # 同时启动前后端
@@ -113,7 +113,7 @@ make frontend  # 前端 :5173
 # 使用 Docker 运行
 docker run -d \
   --name one-mail \
-  --env-file .env \
+  --env ADMIN_PASSWORD \
   -p 80:80 \
   -v one-mail-data:/app/data \
   ghcr.io/zuoban/one-mail:latest
@@ -131,7 +131,6 @@ version: '3.8'
 
 services:
   one-mail:
-    env_file: .env
     image: ghcr.io/zuoban/one-mail:latest
     container_name: one-mail
     restart: unless-stopped
@@ -141,6 +140,8 @@ services:
       - one-mail-data:/app/data
     environment:
       - TZ=Asia/Shanghai
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - CREDENTIALS_KEY=${CREDENTIALS_KEY:-}
 
 volumes:
   one-mail-data:
@@ -186,10 +187,10 @@ make docker-stop
 
 ```bash
 # 使用命名卷
-docker run --env-file .env -v one-mail-data:/app/data ghcr.io/zuoban/one-mail:latest
+docker run --env ADMIN_PASSWORD -v one-mail-data:/app/data ghcr.io/zuoban/one-mail:latest
 
 # 或使用主机目录
-docker run --env-file .env -v /path/to/data:/app/data ghcr.io/zuoban/one-mail:latest
+docker run --env ADMIN_PASSWORD -v /path/to/data:/app/data ghcr.io/zuoban/one-mail:latest
 ```
 
 ### 环境配置
@@ -197,12 +198,12 @@ docker run --env-file .env -v /path/to/data:/app/data ghcr.io/zuoban/one-mail:la
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `TZ` | 时区设置 | `UTC` |
-| `JWT_SECRET` | 必填，独立随机签名密钥，至少 32 字节；更换后所有会话失效 | 无 |
+| `ADMIN_PASSWORD` | 可选的管理员访问密码，非空时需要登录；修改后重启生效 | 空，直接使用 |
 | `CREDENTIALS_KEY` | 建议显式提供的 32 字节 Base64 密钥，用于 AES-GCM 加密邮箱凭证 | 未设置时在数据库旁生成权限 `600` 的 `.key` 文件 |
 
-首次升级会在事务中加密已有邮箱凭证（包含软删除账户），并验证已有密文能由当前密钥解密。必须备份数据库及其独立密钥；旧备份可能仍含明文凭证。密钥遗失将无法恢复邮箱授权码。修改登录密码会撤销该用户所有旧令牌。
+邮箱凭证以 AES-GCM 加密保存，已有明文凭证会在首次升级时迁移。必须备份数据库及其独立密钥；旧备份可能仍含明文凭证，密钥遗失将无法恢复邮箱授权码。
 
-Telegram 配置按用户隔离。旧全局配置只有在存在唯一有效用户时自动归属；多用户实例中的旧配置会禁用，各用户需重新配置自己的通知目标。
+应用为单人模式，没有注册、用户资料或应用内修改密码功能。升级会保留全部邮箱与邮件，并移除旧用户数据及所有权字段。Telegram 使用一份全局配置；旧库存在多份时保留最近更新的一份完整配置，无完整配置时保留最新记录。
 
 ### 反向代理配置
 
@@ -238,9 +239,10 @@ mail.example.com {
 ## 📡 API 接口
 
 ### 认证
-- `POST /api/auth/register` - 用户注册
-- `POST /api/auth/login` - 用户登录
-- `GET /api/auth/me` - 获取当前用户
+- `GET /api/auth/status` - 查询是否需要管理员密码及当前会话是否有效
+- `POST /api/auth/login` - 提交 `{ "password": "..." }` 验证管理员密码，成功返回 `{ "token": "..." }`
+
+设置了管理员密码时，业务接口需要 `Authorization: Bearer <token>`；未设置时无需鉴权。会话最多有效 7 天，服务重启后失效。
 
 ### 邮箱账户
 - `GET /api/accounts` - 获取账户列表
@@ -277,9 +279,6 @@ database:
   type: "sqlite"
   path: "./data/one-mail.db"
 
-jwt:
-  secret: ""  # 通过 JWT_SECRET 注入至少 32 字节的独立密钥
-  expires: "168h"
 ```
 
 ## 🔧 开发命令

@@ -6,7 +6,7 @@ import Tooltip from './Tooltip'
 
 export default function Layout() {
   const location = useLocation()
-  const { user, logout } = useAuth()
+  const { passwordRequired, logout } = useAuth()
   const { resolvedTheme, setTheme } = useTheme()
 
   const navItems = [
@@ -50,6 +50,7 @@ export default function Layout() {
                 <Moon className="w-4 h-4" strokeWidth={1.5} />
               )}
             </button>
+            {passwordRequired && (
             <button
               type="button"
               onClick={logout}
@@ -59,6 +60,7 @@ export default function Layout() {
             >
               <LogOut className="w-4 h-4" strokeWidth={1.5} />
             </button>
+            )}
           </div>
         </div>
       </header>
@@ -107,15 +109,7 @@ export default function Layout() {
         </nav>
 
         <div className="h-12 px-3 border-t border-[var(--border-light)] flex items-center flex-shrink-0">
-          <div className="flex w-full items-center justify-between gap-2 px-1">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="avatar avatar-sm">
-                {user?.username?.[0]?.toUpperCase() || '?'}
-              </div>
-              <span className="text-sm font-medium text-[var(--text-primary)] truncate">
-                {user?.username}
-              </span>
-            </div>
+          <div className="flex w-full items-center justify-end gap-2 px-1">
             <div className="flex items-center gap-0.5 flex-shrink-0">
               <Tooltip content={resolvedTheme === 'dark' ? '浅色模式' : '深色模式'}>
                 <button
@@ -131,6 +125,7 @@ export default function Layout() {
                   )}
                 </button>
               </Tooltip>
+              {passwordRequired && (
               <Tooltip content="退出登录">
                 <button
                   type="button"
@@ -141,6 +136,7 @@ export default function Layout() {
                   <LogOut className="w-4 h-4 text-[var(--text-tertiary)]" strokeWidth={1.5} />
                 </button>
               </Tooltip>
+              )}
             </div>
           </div>
         </div>

@@ -3,52 +3,23 @@ package middleware
 import (
 	"bytes"
 	"compress/gzip"
-	"errors"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
 
 	"one-mail/backend/config"
-	"one-mail/backend/database"
-	"one-mail/backend/internal/models"
-	"one-mail/backend/internal/utils"
+	"one-mail/backend/internal/access"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
-func AuthMiddleware() gin.HandlerFunc {
+func AuthMiddleware(instanceAccess *access.Access) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authorization := strings.Fields(c.GetHeader("Authorization"))
-		if len(authorization) != 2 || !strings.EqualFold(authorization[0], "Bearer") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authorization bearer token is required"})
+		if !instanceAccess.Authorized(c.GetHeader("Authorization")) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
 			return
 		}
-		claims, err := utils.ValidateToken(authorization[1])
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-			return
-		}
-
-		db := database.GetDB()
-		if db == nil {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "authentication unavailable"})
-			return
-		}
-		var user models.User
-		err = db.Select("id", "username", "session_version").First(&user, claims.UserID).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && user.SessionVersion != claims.SessionVersion) {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "session expired"})
-			return
-		}
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "authentication unavailable"})
-			return
-		}
-
-		c.Set("user_id", user.ID)
-		c.Set("username", user.Username)
 		c.Next()
 	}
 }

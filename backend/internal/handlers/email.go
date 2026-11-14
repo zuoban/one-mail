@@ -36,11 +36,10 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetUint("user_id")
 	db := database.GetDB()
 
 	var accounts []models.EmailAccount
-	accountQuery := db.Select("id").Where("user_id = ?", userID)
+	accountQuery := db.Select("id")
 	if query.AccountID > 0 {
 		accountQuery = accountQuery.Where("id = ?", query.AccountID)
 	}
@@ -118,12 +117,11 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 
 func (h *EmailHandler) GetEmail(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetUint("user_id")
 
 	var email models.Email
 	if err := database.GetDB().
 		Joins("JOIN email_accounts ON email_accounts.id = emails.account_id").
-		Where("emails.id = ? AND email_accounts.user_id = ? AND email_accounts.deleted_at IS NULL", id, userID).
+		Where("emails.id = ? AND email_accounts.deleted_at IS NULL", id).
 		First(&email).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "email not found"})
 		return
@@ -204,7 +202,7 @@ func (h *EmailHandler) setReadState(c *gin.Context, seen bool) {
 	var email models.Email
 	db := database.GetDB()
 	if err := db.Joins("JOIN email_accounts ON email_accounts.id = emails.account_id").
-		Where("emails.id = ? AND email_accounts.user_id = ? AND email_accounts.deleted_at IS NULL", c.Param("id"), c.GetUint("user_id")).
+		Where("emails.id = ? AND email_accounts.deleted_at IS NULL", c.Param("id")).
 		First(&email).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "email not found"})
 		return
@@ -283,13 +281,11 @@ func (h *EmailHandler) BatchMarkAsRead(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetUint("user_id")
-
 	var emails []models.Email
 	db := database.GetDB()
 	if err := db.Select("emails.id, emails.account_id, emails.uid_validity").
 		Joins("JOIN email_accounts ON email_accounts.id = emails.account_id").
-		Where("emails.id IN ? AND email_accounts.user_id = ? AND email_accounts.deleted_at IS NULL", req.IDs, userID).
+		Where("emails.id IN ? AND email_accounts.deleted_at IS NULL", req.IDs).
 		Find(&emails).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load emails"})
 		return
@@ -333,12 +329,11 @@ func (h *EmailHandler) BatchMarkAsRead(c *gin.Context) {
 
 func (h *EmailHandler) DeleteEmail(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetUint("user_id")
 
 	var email models.Email
 	if err := database.GetDB().
 		Joins("JOIN email_accounts ON email_accounts.id = emails.account_id").
-		Where("emails.id = ? AND email_accounts.user_id = ? AND email_accounts.deleted_at IS NULL", id, userID).
+		Where("emails.id = ? AND email_accounts.deleted_at IS NULL", id).
 		First(&email).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "email not found"})
 		return
@@ -361,11 +356,10 @@ func (h *EmailHandler) RefreshEmails(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetUint("user_id")
 	db := database.GetDB()
 
 	var accounts []models.EmailAccount
-	q := db.Where("user_id = ? AND status = ?", userID, "active")
+	q := db.Where("status = ?", "active")
 	if query.AccountID > 0 {
 		q = q.Where("id = ?", query.AccountID)
 	}
@@ -409,11 +403,10 @@ func (h *EmailHandler) RefreshEmails(c *gin.Context) {
 
 func (h *EmailHandler) RefreshAccountEmails(c *gin.Context) {
 	accountID := c.Param("id")
-	userID := c.GetUint("user_id")
 	db := database.GetDB()
 
 	var account models.EmailAccount
-	if err := db.Where("id = ? AND user_id = ?", accountID, userID).First(&account).Error; err != nil {
+	if err := db.Where("id = ?", accountID).First(&account).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
 		return
 	}

@@ -23,16 +23,16 @@ func (f telegramRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, err
 	return f(req)
 }
 
-func TestConfigurationCacheAndDeliveryAreScopedByOwner(t *testing.T) {
+func TestConfigurationCacheAndDeliveryUseSingleton(t *testing.T) {
 	oldDB := database.DB
 	configCacheMu.Lock()
-	oldCache := cachedConfigs
-	cachedConfigs = make(map[uint]*models.TelegramConfig)
+	oldCache := cachedConfig
+	cachedConfig = nil
 	configCacheMu.Unlock()
 	t.Cleanup(func() {
 		database.DB = oldDB
 		configCacheMu.Lock()
-		cachedConfigs = oldCache
+		cachedConfig = oldCache
 		configCacheMu.Unlock()
 	})
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "telegram.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
@@ -48,20 +48,9 @@ func TestConfigurationCacheAndDeliveryAreScopedByOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	database.DB = db
-	configs := []models.TelegramConfig{
-		{UserID: 0, Enabled: true, BotToken: "unassigned-global-token", ChatID: "legacy-chat"},
-		{UserID: 1, Enabled: true, BotToken: "alice-token", ChatID: "alice-chat"},
-		{UserID: 2, Enabled: true, BotToken: "bob-token", ChatID: "bob-chat"},
-	}
-	if err := db.Create(&configs).Error; err != nil {
+	extra := models.TelegramConfig{ID: 2, Enabled: true, BotToken: "unrelated-token", ChatID: "unrelated-chat"}
+	if err := db.Create(&extra).Error; err != nil {
 		t.Fatal(err)
-	}
-	if getConfig(0) != nil || getConfig(99) != nil {
-		t.Fatal("unassigned configuration must never be used as an owner fallback")
-	}
-	first, second := getConfig(1), getConfig(2)
-	if first == nil || second == nil || first.ChatID != "alice-chat" || second.ChatID != "bob-chat" {
-		t.Fatal("owners did not load isolated configuration")
 	}
 	type delivery struct{ token, chat string }
 	var deliveries []delivery
@@ -76,33 +65,67 @@ func TestConfigurationCacheAndDeliveryAreScopedByOwner(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Header: make(http.Header)}, nil
 	})}}
 	email := &models.Email{Subject: "private mail", From: "sender@example.com"}
-	if err := client.SendNewEmail(1, email, "alice@example.com"); err != nil {
+	if getConfig() != nil || client.IsEnabled() {
+		t.Fatal("missing singleton must not load another configuration")
+	}
+	if err := client.SendNewEmail(email, "first@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.SendNewEmail(2, email, "bob@example.com"); err != nil {
+	if len(deliveries) != 0 {
+		t.Fatal("missing singleton sent a notification")
+	}
+	cfg := models.TelegramConfig{ID: 1, Enabled: true, BotToken: "instance-token", ChatID: "instance-chat"}
+	if err := db.Create(&cfg).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&models.TelegramConfig{}).Where("user_id = ?", 1).
-		Updates(map[string]interface{}{"bot_token": "alice-new-token", "chat_id": "alice-new-chat"}).Error; err != nil {
+	first := getConfig()
+	if first == nil || first.ID != 1 || !client.IsEnabled() {
+		t.Fatal("complete singleton was not loaded")
+	}
+	if err := client.SendNewEmail(email, "first@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	InvalidateConfigCache(1)
-	if getConfig(2) != second {
-		t.Fatal("invalidating one owner cleared another owner's cached config")
-	}
-	if err := client.SendNewEmail(1, email, "alice@example.com"); err != nil {
+	if err := db.Model(&models.TelegramConfig{}).Where("id = ?", 1).
+		Updates(map[string]interface{}{"bot_token": "updated-token", "chat_id": "updated-chat"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := client.SendNewEmail(99, email, "missing@example.com"); err != nil {
+	if getConfig() != first {
+		t.Fatal("cached configuration changed without invalidation")
+	}
+	InvalidateConfigCache()
+	if refreshed := getConfig(); refreshed == nil || refreshed == first || refreshed.BotToken != "updated-token" || refreshed.ChatID != "updated-chat" {
+		t.Fatal("invalidation did not reload the singleton")
+	}
+	if err := client.SendNewEmail(email, "second@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	want := []delivery{{"/botalice-token/sendMessage", "alice-chat"}, {"/botbob-token/sendMessage", "bob-chat"}, {"/botalice-new-token/sendMessage", "alice-new-chat"}}
+	if err := db.Model(&models.TelegramConfig{}).Where("id = ?", 1).Update("enabled", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	InvalidateConfigCache()
+	if client.IsEnabled() {
+		t.Fatal("disabled configuration remained enabled")
+	}
+	if err := client.SendNewEmail(email, "first@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Delete(&cfg).Error; err != nil {
+		t.Fatal(err)
+	}
+	InvalidateConfigCache()
+	if getConfig() != nil {
+		t.Fatal("deleting singleton loaded another row")
+	}
+	if err := client.SendNewEmail(email, "first@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	want := []delivery{{"/botinstance-token/sendMessage", "instance-chat"}, {"/botupdated-token/sendMessage", "updated-chat"}}
 	if len(deliveries) != len(want) {
 		t.Fatalf("unexpected delivery count: %d", len(deliveries))
 	}
 	for i := range want {
 		if deliveries[i] != want[i] {
-			t.Fatalf("delivery %d used another owner's config: %+v", i, deliveries[i])
+			t.Fatalf("delivery %d used the wrong configuration: %+v", i, deliveries[i])
 		}
 	}
 }

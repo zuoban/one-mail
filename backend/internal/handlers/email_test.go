@@ -45,20 +45,11 @@ func setupEmailHandlerTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func TestListEmails_Latest50UnreadOwnershipAndSearch(t *testing.T) {
+func TestListEmails_Latest50UnreadSharedAccountsAndSearch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupEmailHandlerTestDB(t)
-	u1 := models.User{Username: "user1", Password: "p", Email: "u1@example.com"}
-	u2 := models.User{Username: "user2", Password: "p", Email: "u2@example.com"}
-	if err := db.Create(&u1).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&u2).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	acc1 := models.EmailAccount{UserID: u1.ID, Email: "u1@example.com", Provider: "custom", IMAPHost: "imap.example.com", IMAPPort: 993, SMTPHost: "smtp.example.com", SMTPPort: 587, Username: "u1", Password: "p"}
-	acc2 := models.EmailAccount{UserID: u2.ID, Email: "u2@example.com", Provider: "custom", IMAPHost: "imap.example.com", IMAPPort: 993, SMTPHost: "smtp.example.com", SMTPPort: 587, Username: "u2", Password: "p"}
+	acc1 := models.EmailAccount{Email: "u1@example.com", Provider: "custom", IMAPHost: "imap.example.com", IMAPPort: 993, SMTPHost: "smtp.example.com", SMTPPort: 587, Username: "u1", Password: "p"}
+	acc2 := models.EmailAccount{Email: "u2@example.com", Provider: "custom", IMAPHost: "imap.example.com", IMAPPort: 993, SMTPHost: "smtp.example.com", SMTPPort: 587, Username: "u2", Password: "p"}
 	if err := db.Create(&acc1).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +63,7 @@ func TestListEmails_Latest50UnreadOwnershipAndSearch(t *testing.T) {
 		{AccountID: acc1.ID, MessageID: "m2", From: "bob@acme.com", FromName: "Bob", To: "u1@example.com", Subject: "电子发票通知", Date: baseTime.Add(2 * time.Hour), IsRead: false, Folder: "INBOX", UID: 2},
 		{AccountID: acc1.ID, MessageID: "m3", From: "carol@acme.com", FromName: "Carol", To: "u1@example.com", Subject: "System Alert", Date: baseTime.Add(3 * time.Hour), IsRead: false, Folder: "INBOX", UID: 3},
 		{AccountID: acc1.ID, MessageID: "m4", From: "dave@acme.com", FromName: "Dave", To: "u1@example.com", Subject: "项目周报", Date: baseTime.Add(4 * time.Hour), IsRead: true, Folder: "INBOX", UID: 4},
-		{AccountID: acc2.ID, MessageID: "m5", From: "other@acme.com", FromName: "Other", To: "u2@example.com", Subject: "Secret Other User", Date: baseTime.Add(5 * time.Hour), IsRead: false, Folder: "INBOX", UID: 5},
+		{AccountID: acc2.ID, MessageID: "m5", From: "other@acme.com", FromName: "Other", To: "u2@example.com", Subject: "Second Mailbox", Date: baseTime.Add(5 * time.Hour), IsRead: false, Folder: "INBOX", UID: 5},
 	}
 	if err := db.Create(&emails).Error; err != nil {
 		t.Fatal(err)
@@ -80,10 +71,6 @@ func TestListEmails_Latest50UnreadOwnershipAndSearch(t *testing.T) {
 
 	handler := NewEmailHandler()
 	r := gin.New()
-	r.Use(func(c *gin.Context) {
-		c.Set("user_id", uint(1))
-		c.Next()
-	})
 	r.GET("/emails", handler.ListEmails)
 
 	type listResp struct {
@@ -91,8 +78,8 @@ func TestListEmails_Latest50UnreadOwnershipAndSearch(t *testing.T) {
 		Total int            `json:"total"`
 	}
 
-	// 1. Cross-user account_id isolation check
-	req := httptest.NewRequest(http.MethodGet, "/emails?account_id=2", nil)
+	// An explicit account filter includes that mailbox without an application user.
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/emails?account_id=%d", acc2.ID), nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -102,21 +89,21 @@ func TestListEmails_Latest50UnreadOwnershipAndSearch(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Data) != 0 || resp.Total != 0 {
-		t.Fatalf("expected 0 emails for another user's account, got %d", len(resp.Data))
+	if len(resp.Data) != 1 || resp.Total != 1 || resp.Data[0].AccountID != acc2.ID {
+		t.Fatalf("expected the selected mailbox email, got %+v", resp)
 	}
 
-	// 2. Returns all 4 emails ordered newest first
+	// All configured mailboxes are included, ordered newest first.
 	req = httptest.NewRequest(http.MethodGet, "/emails", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Data) != 4 || resp.Total != 4 {
+	if len(resp.Data) != 5 || resp.Total != 5 {
 		t.Fatalf("unexpected response: len=%d total=%d", len(resp.Data), resp.Total)
 	}
-	if resp.Data[0].Subject != "项目周报" || resp.Data[1].Subject != "System Alert" || resp.Data[2].Subject != "电子发票通知" || resp.Data[3].Subject != "Weekly Report" {
+	if resp.Data[0].Subject != "Second Mailbox" || resp.Data[1].Subject != "项目周报" || resp.Data[2].Subject != "System Alert" || resp.Data[3].Subject != "电子发票通知" || resp.Data[4].Subject != "Weekly Report" {
 		t.Fatalf("unexpected order: %+v", resp.Data)
 	}
 
@@ -128,8 +115,8 @@ func TestListEmails_Latest50UnreadOwnershipAndSearch(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &unreadResp); err != nil {
 		t.Fatal(err)
 	}
-	if len(unreadResp.Data) != 2 || unreadResp.Total != 2 {
-		t.Fatalf("expected 2 unread emails, got %d (total=%d)", len(unreadResp.Data), unreadResp.Total)
+	if len(unreadResp.Data) != 3 || unreadResp.Total != 3 {
+		t.Fatalf("expected 3 unread emails, got %d (total=%d)", len(unreadResp.Data), unreadResp.Total)
 	}
 
 	// 4. Search filter (tests FTS5 trigram if enabled, or LIKE fallback)

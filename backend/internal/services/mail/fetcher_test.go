@@ -38,12 +38,8 @@ func setupFetcherTestDB(t *testing.T) *gorm.DB {
 func TestReconcileLatestEmails_CapsAt50UpdatesFlagsAndRespectsDeletes(t *testing.T) {
 	db := setupFetcherTestDB(t)
 
-	u := models.User{Username: "u", Password: "p", Email: "u@example.com"}
-	if err := db.Create(&u).Error; err != nil {
-		t.Fatal(err)
-	}
 	acc := models.EmailAccount{
-		UserID: u.ID, Email: "u@example.com", Provider: "custom",
+		Email: "u@example.com", Provider: "custom",
 		IMAPHost: "imap.example.com", IMAPPort: 993, SMTPHost: "smtp.example.com", SMTPPort: 587,
 		Username: "u", Password: "p",
 	}

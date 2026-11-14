@@ -1,13 +1,16 @@
 import { createContext } from 'react'
-import type { User } from '../api'
 
 export interface AuthContextType {
-  user: User | null
+  passwordRequired: boolean | null
+  authenticated: boolean
   token: string | null
   loading: boolean
-  login: (token: string, user: User) => void
+  error: string | null
+  sessionGeneration: number
+  isSessionCurrent: (generation: number) => boolean
+  retry: () => Promise<void>
+  login: (password: string) => Promise<void>
   logout: () => void
-  updateUser: (user: User) => void
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)

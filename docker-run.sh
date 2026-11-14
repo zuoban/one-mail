@@ -15,15 +15,7 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
-if [[ -z "${JWT_SECRET:-}" ]]; then
-    echo "错误：必须通过环境设置 JWT_SECRET（至少 32 字节）。请按 DOCKER.md 生成并加载权限为 600 的 .env 文件。" >&2
-    exit 1
-fi
-if [[ ${#JWT_SECRET} -lt 32 ]]; then
-    echo "错误：JWT_SECRET 必须至少为 32 字节。" >&2
-    exit 1
-fi
-export JWT_SECRET
+export ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 export CREDENTIALS_KEY="${CREDENTIALS_KEY:-}"
 
 if ! docker image inspect "${IMAGE_NAME}:${IMAGE_TAG}" >/dev/null 2>&1; then
@@ -41,7 +33,7 @@ mkdir -p "${SCRIPT_DIR}/data"
 docker run -d \
     -p "${PORT}:80" \
     -v "${SCRIPT_DIR}/data:/app/data" \
-    --env JWT_SECRET \
+    --env ADMIN_PASSWORD \
     --env CREDENTIALS_KEY \
     --env "TZ=${TZ:-Asia/Shanghai}" \
     --name "${CONTAINER_NAME}" \

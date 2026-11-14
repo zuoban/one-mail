@@ -1,53 +1,114 @@
-import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react'
-import { authApi, type User } from '../api'
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react'
+import { authApi, SESSION_EXPIRED_EVENT } from '../api'
 import AuthContext from './auth-context'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
+  const [passwordRequired, setPasswordRequired] = useState<boolean | null>(null)
+  const [authenticated, setAuthenticated] = useState(false)
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
-  const [loading, setLoading] = useState(() => Boolean(localStorage.getItem('token')))
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [sessionGeneration, setSessionGeneration] = useState(0)
+  const session = useRef({ generation: 0, authenticated: false, passwordRequired: false, token: null as string | null })
+  const request = useRef(0)
+
+  const invalidate = useCallback(() => {
+    const current = session.current
+    current.generation += 1
+    current.authenticated = false
+    current.token = null
+    setSessionGeneration(current.generation)
+    setAuthenticated(false)
+  }, [])
+
+  const retry = useCallback(async () => {
+    const currentRequest = ++request.current
+    invalidate()
+    setLoading(true)
+    setError(null)
+    try {
+      const status = await authApi.status()
+      if (currentRequest !== request.current) return
+      const restoredToken = status.password_required && status.authenticated ? localStorage.getItem('token') : null
+      if (!restoredToken) localStorage.removeItem('token')
+      const current = session.current
+      current.authenticated = status.authenticated
+      current.passwordRequired = status.password_required
+      current.token = restoredToken
+      setPasswordRequired(status.password_required)
+      setAuthenticated(status.authenticated)
+      setToken(restoredToken)
+    } catch {
+      if (currentRequest !== request.current) return
+      setError('无法确认访问状态，请检查网络后重试')
+    } finally {
+      if (currentRequest === request.current) setLoading(false)
+    }
+  }, [invalidate])
+
+  const cancelPendingRequests = useCallback(() => {
+    ++request.current
+  }, [])
 
   useEffect(() => {
-    if (!token || user) return
-    authApi.me()
-      .then(res => {
-        setUser(res.data)
-      })
-      .catch(() => {
-        localStorage.removeItem('token')
-        setToken(null)
-      })
-      .finally(() => setLoading(false))
-  }, [token, user])
+    // Keep one mutable owner for this provider lifetime, including effect cleanup.
+    const currentSession = session.current
+    const expire = () => {
+      localStorage.removeItem('token')
+      setToken(null)
+      void retry()
+    }
+    window.addEventListener(SESSION_EXPIRED_EVENT, expire)
+    void retry()
+    return () => {
+      window.removeEventListener(SESSION_EXPIRED_EVENT, expire)
+      cancelPendingRequests()
+      currentSession.authenticated = false
+    }
+  }, [retry, cancelPendingRequests])
 
-  const login = useCallback((newToken: string, newUser: User) => {
-    localStorage.setItem('token', newToken)
-    setToken(newToken)
-    setUser(newUser)
-  }, [])
+  const login = useCallback(async (password: string) => {
+    const currentRequest = ++request.current
+    const result = await authApi.login({ password })
+    if (currentRequest !== request.current) throw new Error('访问状态已变化，请重试')
+    if (!result.token) {
+      localStorage.removeItem('token')
+      setToken(null)
+      await retry()
+      return
+    }
+    localStorage.setItem('token', result.token)
+    const current = session.current
+    current.generation += 1
+    current.authenticated = true
+    current.passwordRequired = true
+    current.token = result.token
+    setSessionGeneration(current.generation)
+    setToken(result.token)
+    setPasswordRequired(true)
+    setAuthenticated(true)
+    setError(null)
+  }, [retry])
 
   const logout = useCallback(() => {
+    ++request.current
+    invalidate()
     localStorage.removeItem('token')
     setToken(null)
-    setUser(null)
-  }, [])
+    setError(null)
+    setLoading(false)
+  }, [invalidate])
 
-  const updateUser = useCallback((updatedUser: User) => {
-    setUser(updatedUser)
+  const isSessionCurrent = useCallback((generation: number) => {
+    const current = session.current
+    return current.authenticated && current.generation === generation &&
+      (!current.passwordRequired || localStorage.getItem('token') === current.token)
   }, [])
 
   const value = useMemo(() => ({
-    user,
-    token,
-    loading,
-    login,
-    logout,
-    updateUser,
-  }), [user, token, loading, login, logout, updateUser])
+    passwordRequired, authenticated, token, loading, error, sessionGeneration,
+    isSessionCurrent, retry, login, logout,
+  }), [passwordRequired, authenticated, token, loading, error, sessionGeneration, isSessionCurrent, retry, login, logout])
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  )
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

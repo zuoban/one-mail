@@ -27,38 +27,32 @@ type TelegramConfigRequest struct {
 	ChatID   string `json:"chat_id"`
 }
 
-func getOrCreateTelegramConfig(userID uint) (*models.TelegramConfig, error) {
+func getOrCreateTelegramConfig() (*models.TelegramConfig, error) {
 	db := database.GetDB()
-	if db == nil || userID == 0 {
+	if db == nil {
 		return nil, errors.New("telegram configuration unavailable")
 	}
 	var cfg models.TelegramConfig
-	err := db.Where("user_id = ?", userID).First(&cfg).Error
+	err := db.Where("id = ?", 1).First(&cfg).Error
 	if err == nil {
 		return &cfg, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	cfg = models.TelegramConfig{UserID: userID}
+	cfg = models.TelegramConfig{ID: 1}
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&cfg).Error; err != nil {
 		return nil, err
 	}
 	var saved models.TelegramConfig
-	if err := db.Where("user_id = ?", userID).First(&saved).Error; err != nil {
+	if err := db.Where("id = ?", 1).First(&saved).Error; err != nil {
 		return nil, err
 	}
 	return &saved, nil
 }
 
 func telegramConfigForRequest(c *gin.Context) (*models.TelegramConfig, bool) {
-	owner, exists := c.Get("user_id")
-	userID, valid := owner.(uint)
-	if !exists || !valid || userID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return nil, false
-	}
-	cfg, err := getOrCreateTelegramConfig(userID)
+	cfg, err := getOrCreateTelegramConfig()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load telegram configuration"})
 		return nil, false
@@ -106,12 +100,12 @@ func UpdateTelegramConfig(c *gin.Context) {
 		cfg.ChatID = req.ChatID
 	}
 
-	if err := db.Model(&models.TelegramConfig{}).Where("id = ? AND user_id = ?", cfg.ID, cfg.UserID).
+	if err := db.Model(&models.TelegramConfig{}).Where("id = ?", 1).
 		Updates(map[string]interface{}{"enabled": cfg.Enabled, "bot_token": cfg.BotToken, "chat_id": cfg.ChatID}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save config"})
 		return
 	}
-	telegram.InvalidateConfigCache(cfg.UserID)
+	telegram.InvalidateConfigCache()
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": TelegramConfigResponse{
@@ -171,7 +165,7 @@ func SendEmailToTelegram(c *gin.Context) {
 	db := database.GetDB()
 	var email models.Email
 	err = db.Joins("JOIN email_accounts ON email_accounts.id = emails.account_id AND email_accounts.deleted_at IS NULL").
-		Where("emails.id = ? AND email_accounts.user_id = ?", emailID, cfg.UserID).First(&email).Error
+		Where("emails.id = ?", emailID).First(&email).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "email not found"})
 		return
@@ -181,7 +175,7 @@ func SendEmailToTelegram(c *gin.Context) {
 		return
 	}
 	var account models.EmailAccount
-	if err := db.Where("id = ? AND user_id = ?", email.AccountID, cfg.UserID).First(&account).Error; err != nil {
+	if err := db.Where("id = ?", email.AccountID).First(&account).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "email not found"})
 		return
 	}

@@ -9,7 +9,7 @@ services:
       - one-mail-data:/app/data
     environment:
       TZ: Asia/Shanghai
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a random secret of at least 32 bytes}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
 
 volumes:

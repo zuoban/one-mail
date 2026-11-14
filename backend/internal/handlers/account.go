@@ -37,10 +37,8 @@ func NewAccountHandler() *AccountHandler {
 }
 
 func (h *AccountHandler) ListAccounts(c *gin.Context) {
-	userID := c.GetUint("user_id")
-
 	var accounts []models.EmailAccount
-	if err := database.GetDB().Where("user_id = ?", userID).Find(&accounts).Error; err != nil {
+	if err := database.GetDB().Find(&accounts).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -61,8 +59,6 @@ type AddAccountRequest struct {
 }
 
 func (h *AccountHandler) AddAccount(c *gin.Context) {
-	userID := c.GetUint("user_id")
-
 	var req AddAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -88,7 +84,6 @@ func (h *AccountHandler) AddAccount(c *gin.Context) {
 	}
 
 	account := models.EmailAccount{
-		UserID:   userID,
 		Email:    req.Email,
 		Provider: req.Provider,
 		IMAPHost: imapHost,
@@ -132,12 +127,11 @@ func (h *AccountHandler) AddAccount(c *gin.Context) {
 }
 
 func (h *AccountHandler) DeleteAccount(c *gin.Context) {
-	userID := c.GetUint("user_id")
 	id := c.Param("id")
 
 	var account models.EmailAccount
 	err := database.GetDB().Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&account).Error; err != nil {
+		if err := tx.Where("id = ?", id).First(&account).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("account_id = ?", account.ID).Delete(&models.Email{}).Error; err != nil {
@@ -167,11 +161,10 @@ type UpdateAccountRequest struct {
 }
 
 func (h *AccountHandler) UpdateAccount(c *gin.Context) {
-	userID := c.GetUint("user_id")
 	id := c.Param("id")
 
 	var account models.EmailAccount
-	if err := database.GetDB().Where("user_id = ?", userID).First(&account, id).Error; err != nil {
+	if err := database.GetDB().Where("id = ?", id).First(&account).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
 		return
 	}
@@ -225,12 +218,10 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 }
 
 func (h *AccountHandler) TestAccount(c *gin.Context) {
-	userID := c.GetUint("user_id")
 	id := c.Param("id")
 
-	// 验证账户所有权
 	var account models.EmailAccount
-	if err := database.GetDB().Where("id = ? AND user_id = ?", id, userID).First(&account).Error; err != nil {
+	if err := database.GetDB().Where("id = ?", id).First(&account).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
 		return
 	}

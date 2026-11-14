@@ -338,7 +338,7 @@ func ReconcileLatestEmails(db *gorm.DB, account *models.EmailAccount, folder str
 	}
 	if hadExisting && len(newEmails) > 0 {
 		for i := range newEmails {
-			telegram.SendNewEmailAsync(account.UserID, &newEmails[i], account.Email)
+			telegram.SendNewEmailAsync(&newEmails[i], account.Email)
 		}
 	}
 	if expiredPending {

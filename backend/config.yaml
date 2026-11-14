@@ -6,10 +6,6 @@ database:
   type: sqlite
   path: ./data/one-mail.db
 
-jwt:
-  secret: ""  # 必须设置 JWT_SECRET（至少 32 字节）或提供独立的安全密钥
-  expires: 168h  # 7天
-
 cors:
   # 允许的域名列表，留空则允许所有来源（仅开发环境推荐）
   # 生产环境示例: ["https://mail.example.com", "https://admin.example.com"]

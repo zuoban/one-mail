@@ -2,228 +2,45 @@ package handlers
 
 import (
 	"net/http"
-	"one-mail/backend/database"
-	"one-mail/backend/internal/models"
-	"one-mail/backend/internal/utils"
+
+	"one-mail/backend/internal/access"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
-type AuthHandler struct{}
-
-type RegisterRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required,min=6"`
-	Email    string `json:"email" binding:"required,email"`
+type AuthHandler struct {
+	access *access.Access
 }
 
 type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
-}
-
-type UpdateProfileRequest struct {
-	Username string `json:"username" binding:"omitempty,min=3"`
-	Email    string `json:"email" binding:"omitempty,email"`
-}
-
-type ChangePasswordRequest struct {
-	OldPassword string `json:"old_password" binding:"required"`
-	NewPassword string `json:"new_password" binding:"required,min=6"`
+	Password string `json:"password"`
 }
 
 type AuthResponse struct {
-	Token string      `json:"token"`
-	User  models.User `json:"user"`
+	Token string `json:"token"`
 }
 
-func NewAuthHandler() *AuthHandler {
-	return &AuthHandler{}
+func NewAuthHandler(instanceAccess *access.Access) *AuthHandler {
+	return &AuthHandler{access: instanceAccess}
 }
 
-func (h *AuthHandler) Register(c *gin.Context) {
-	var req RegisterRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	db := database.GetDB()
-	var existingUser models.User
-	if err := db.Where("username = ?", req.Username).First(&existingUser).Error; err == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "username already exists"})
-		return
-	}
-
-	hashedPassword, err := utils.HashPassword(req.Password)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
-		return
-	}
-
-	user := models.User{
-		Username:       req.Username,
-		Password:       hashedPassword,
-		Email:          req.Email,
-		SessionVersion: 1,
-	}
-
-	if err := db.Create(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
-		return
-	}
-
-	token, err := utils.GenerateToken(user.ID, user.Username, user.SessionVersion)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
-		return
-	}
-
-	c.JSON(http.StatusCreated, AuthResponse{
-		Token: token,
-		User:  user,
+func (h *AuthHandler) Status(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"password_required": h.access.PasswordRequired(),
+		"authenticated":     h.access.Authorized(c.GetHeader("Authorization")),
 	})
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
 		return
 	}
-
-	db := database.GetDB()
-	var user models.User
-	if err := db.Where("username = ?", req.Username).First(&user).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库错误"})
-		return
-	}
-
-	if !utils.CheckPassword(req.Password, user.Password) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
-		return
-	}
-
-	token, err := utils.GenerateToken(user.ID, user.Username, user.SessionVersion)
+	token, err := h.access.Login(req.Password)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
 		return
 	}
-
-	c.JSON(http.StatusOK, AuthResponse{
-		Token: token,
-		User:  user,
-	})
-}
-
-func (h *AuthHandler) Me(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	db := database.GetDB()
-	var user models.User
-	if err := db.First(&user, userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"data": user})
-}
-
-func (h *AuthHandler) UpdateProfile(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	var req UpdateProfileRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	db := database.GetDB()
-	var user models.User
-	if err := db.First(&user, userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
-		return
-	}
-
-	if req.Username != "" && req.Username != user.Username {
-		var existingUser models.User
-		if err := db.Where("username = ? AND id != ?", req.Username, userID).First(&existingUser).Error; err == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "用户名已被使用"})
-			return
-		}
-		user.Username = req.Username
-	}
-
-	if req.Email != "" {
-		user.Email = req.Email
-	}
-
-	if err := db.Model(&user).Updates(map[string]interface{}{"username": user.Username, "email": user.Email}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"data": user})
-}
-
-func (h *AuthHandler) ChangePassword(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	var req ChangePasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	db := database.GetDB()
-	var user models.User
-	if err := db.First(&user, userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
-		return
-	}
-
-	if !utils.CheckPassword(req.OldPassword, user.Password) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "原密码错误"})
-		return
-	}
-
-	hashedPassword, err := utils.HashPassword(req.NewPassword)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "密码加密失败"})
-		return
-	}
-
-	result := db.Model(&models.User{}).
-		Where("id = ? AND password = ? AND session_version = ?", user.ID, user.Password, user.SessionVersion).
-		Updates(map[string]interface{}{
-			"password":        hashedPassword,
-			"session_version": gorm.Expr("session_version + 1"),
-		})
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "密码更新失败"})
-		return
-	}
-	if result.RowsAffected != 1 {
-		c.JSON(http.StatusConflict, gin.H{"error": "密码已更改，请重新登录"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "密码修改成功"})
+	c.JSON(http.StatusOK, AuthResponse{Token: token})
 }

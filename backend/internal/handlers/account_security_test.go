@@ -24,11 +24,7 @@ func TestAccountUpdateEncryptsPasswordAndDeleteCleansMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := models.User{Username: "mail-owner"}
-	if err := db.Create(&user).Error; err != nil {
-		t.Fatal(err)
-	}
-	account := models.EmailAccount{UserID: user.ID, Password: sealed}
+	account := models.EmailAccount{Password: sealed}
 	if err := db.Create(&account).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +34,6 @@ func TestAccountUpdateEncryptsPasswordAndDeleteCleansMessages(t *testing.T) {
 	}
 	h := NewAccountHandler()
 	r := gin.New()
-	r.Use(func(c *gin.Context) { c.Set("user_id", user.ID) })
 	r.PUT("/accounts/:id", h.UpdateAccount)
 	r.DELETE("/accounts/:id", h.DeleteAccount)
 	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/accounts/%d", account.ID), strings.NewReader(`{"password":"updated-secret"}`))
@@ -78,7 +73,7 @@ func TestAccountUpdateEncryptsPasswordAndDeleteCleansMessages(t *testing.T) {
 func TestBodyFetchFailureDoesNotReturnEmptySuccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupEmailHandlerTestDB(t)
-	account := models.EmailAccount{UserID: 1, IMAPHost: "127.0.0.1", IMAPPort: 1, Username: "owner", Password: "temporary", UIDValidity: 11}
+	account := models.EmailAccount{IMAPHost: "127.0.0.1", IMAPPort: 1, Username: "owner", Password: "temporary", UIDValidity: 11}
 	if err := db.Create(&account).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +82,6 @@ func TestBodyFetchFailureDoesNotReturnEmptySuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := gin.New()
-	r.Use(func(c *gin.Context) { c.Set("user_id", uint(1)) })
 	r.GET("/emails/:id", NewEmailHandler().GetEmail)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/emails/%d", email.ID), nil))
@@ -100,5 +94,59 @@ func TestBodyFetchFailureDoesNotReturnEmptySuccess(t *testing.T) {
 	}
 	if stored.BodyFetched {
 		t.Fatal("failed body fetch was cached as empty")
+	}
+}
+
+func TestMissingAndDeletedAccountsRemainUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupEmailHandlerTestDB(t)
+	account := models.EmailAccount{Email: "deleted@example.com", Username: "remote-login", Password: "remote-password"}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Delete(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	h := NewAccountHandler()
+	emails := NewEmailHandler()
+	r := gin.New()
+	r.GET("/accounts", h.ListAccounts)
+	r.PUT("/accounts/:id", h.UpdateAccount)
+	r.DELETE("/accounts/:id", h.DeleteAccount)
+	r.POST("/accounts/:id/test", h.TestAccount)
+	r.POST("/accounts/:id/refresh", emails.RefreshAccountEmails)
+	r.POST("/emails/refresh", emails.RefreshEmails)
+	for _, id := range []uint{account.ID, account.ID + 100} {
+		for _, operation := range []struct{ method, suffix string }{
+			{http.MethodPut, ""},
+			{http.MethodDelete, ""},
+			{http.MethodPost, "/test"},
+			{http.MethodPost, "/refresh"},
+		} {
+			req := httptest.NewRequest(operation.method, fmt.Sprintf("/accounts/%d%s", id, operation.suffix), strings.NewReader(`{"username":"replacement"}`))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("unavailable mailbox %d accessible via %s %s: %d", id, operation.method, operation.suffix, w.Code)
+			}
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, fmt.Sprintf("/emails/refresh?account_id=%d", id), nil))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("refresh included unavailable mailbox %d: %d", id, w.Code)
+		}
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/accounts", nil))
+	if w.Code != http.StatusOK || w.Body.String() != `{"data":[]}` {
+		t.Fatalf("deleted mailbox appeared in account list: %d %s", w.Code, w.Body.String())
+	}
+	var stored models.EmailAccount
+	if err := db.Unscoped().First(&stored, account.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !stored.DeletedAt.Valid || stored.Username != account.Username || stored.Password != account.Password {
+		t.Fatal("unavailable mailbox credentials or deletion state were modified")
 	}
 }

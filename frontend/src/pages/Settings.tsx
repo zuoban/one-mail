@@ -1,34 +1,11 @@
-import { useState, useEffect } from 'react'
-import { authApi, telegramApi } from '../api'
-import useAuth from '../context/useAuth'
-import { User, Lock, Save, Send } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { telegramApi } from '../api'
+import { Save } from 'lucide-react'
 import axios from 'axios'
 import type { TelegramConfig } from '../api'
 
-const settingsTabs = [
-  { key: 'profile', label: '个人信息', icon: User },
-  { key: 'password', label: '修改密码', icon: Lock },
-  { key: 'telegram', label: 'Telegram 通知', icon: Send },
-] as const
-
 export default function Settings() {
-  const { user, updateUser } = useAuth()
-  const [loading, setLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<'profile' | 'password' | 'telegram'>('profile')
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-
-  const [profileForm, setProfileForm] = useState({
-    username: '',
-    email: '',
-  })
-  const [profileError, setProfileError] = useState('')
-
-  const [passwordForm, setPasswordForm] = useState({
-    old_password: '',
-    new_password: '',
-    confirm_password: '',
-  })
-  const [passwordError, setPasswordError] = useState('')
 
   const [telegramConfig, setTelegramConfig] = useState<TelegramConfig>({
     enabled: false,
@@ -38,82 +15,31 @@ export default function Settings() {
   const [telegramLoading, setTelegramLoading] = useState(false)
   const [telegramTesting, setTelegramTesting] = useState(false)
   const [telegramError, setTelegramError] = useState('')
+  const [configLoading, setConfigLoading] = useState(true)
+  const [configLoaded, setConfigLoaded] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const toastTimer = useRef<number | undefined>(undefined)
 
   useEffect(() => {
-    if (user) {
-      setProfileForm({
-        username: user.username || '',
-        email: user.email || '',
-      })
-    }
-    loadTelegramConfig()
-  }, [user])
+    let active = true
+    telegramApi.getConfig().then(res => {
+      if (!active) return
+      setTelegramConfig(res.data)
+      setConfigLoaded(true)
+    }).catch(() => {
+      if (active) setTelegramError('无法加载 Telegram 配置，请重试')
+    }).finally(() => {
+      if (active) setConfigLoading(false)
+    })
+    return () => { active = false }
+  }, [loadAttempt])
+
+  useEffect(() => () => window.clearTimeout(toastTimer.current), [])
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type })
-    window.setTimeout(() => setToast(null), 2000)
-  }
-
-  const loadTelegramConfig = async () => {
-    try {
-      const res = await telegramApi.getConfig()
-      setTelegramConfig(res.data)
-    } catch (err) {
-      console.error('Failed to load telegram config:', err)
-    }
-  }
-
-  const handleProfileSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setProfileError('')
-    setLoading(true)
-    try {
-      const res = await authApi.updateProfile({
-        username: profileForm.username,
-        email: profileForm.email,
-      })
-      updateUser(res.data)
-      showToast('个人信息已保存', 'success')
-    } catch (err: unknown) {
-      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
-      setProfileError(message || '更新失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handlePasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setPasswordError('')
-
-    if (passwordForm.new_password !== passwordForm.confirm_password) {
-      setPasswordError('两次输入的新密码不一致')
-      return
-    }
-
-    if (passwordForm.new_password.length < 6) {
-      setPasswordError('新密码至少需要 6 个字符')
-      return
-    }
-
-    setLoading(true)
-    try {
-      await authApi.changePassword({
-        old_password: passwordForm.old_password,
-        new_password: passwordForm.new_password,
-      })
-      showToast('密码已更新', 'success')
-      setPasswordForm({
-        old_password: '',
-        new_password: '',
-        confirm_password: '',
-      })
-    } catch (err: unknown) {
-      const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
-      setPasswordError(message || '修改失败')
-    } finally {
-      setLoading(false)
-    }
+    window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(null), 2000)
   }
 
   const handleTelegramSubmit = async (e: React.FormEvent) => {
@@ -157,7 +83,7 @@ export default function Settings() {
     <div className="max-w-3xl mx-auto p-4 md:p-8">
       {toast && (
         <div className="fixed left-4 right-4 top-4 z-50 md:left-auto md:right-4">
-          <div
+          <div role="status"
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-[8px] text-sm border shadow-[var(--shadow-md)] ${
               toast.type === 'success'
                 ? 'bg-[var(--bg-primary)] text-[var(--text-primary)] border-[var(--border-default)]'
@@ -174,155 +100,10 @@ export default function Settings() {
       <div className="mb-6">
         <h1 className="text-2xl font-medium tracking-[-0.015em] text-[var(--text-primary)]">设置</h1>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          管理账号资料、登录密码与 Telegram 邮件推送
+          管理 Telegram 邮件推送
         </p>
       </div>
 
-      {/* Segmented Tabs */}
-      <div className="mb-6 segmented flex sm:inline-flex w-full sm:w-auto">
-        {settingsTabs.map((tab) => {
-          const Icon = tab.icon
-          const isActive = activeTab === tab.key
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              aria-pressed={isActive}
-              className={`segmented-item flex-1 sm:flex-initial h-8 px-2.5 sm:px-3.5 text-xs sm:text-sm gap-1.5 sm:gap-2 ${isActive ? 'segmented-item-active' : ''}`}
-            >
-              <Icon className={`w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 ${isActive ? 'text-[var(--primary-500)]' : 'text-[var(--text-tertiary)]'}`} strokeWidth={1.5} />
-              <span className="truncate">{tab.label}</span>
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Profile Panel */}
-      {activeTab === 'profile' && (
-        <section className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-5 md:p-6 shadow-[var(--shadow-sm)]">
-          <div className="pb-4 mb-5 border-b border-[var(--border-light)]">
-            <h2 className="text-base font-medium text-[var(--text-primary)]">个人信息</h2>
-            <p className="mt-0.5 text-sm text-[var(--text-secondary)]">更新用户名和联系邮箱</p>
-          </div>
-
-          {profileError && (
-            <div className="alert alert-error mb-4">{profileError}</div>
-          )}
-
-          <form onSubmit={handleProfileSubmit} className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
-                  用户名
-                </label>
-                <input
-                  type="text"
-                  value={profileForm.username}
-                  onChange={(e) => setProfileForm({ ...profileForm, username: e.target.value })}
-                  placeholder="请输入用户名"
-                  minLength={3}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
-                  联系邮箱
-                </label>
-                <input
-                  type="email"
-                  value={profileForm.email}
-                  onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
-                  placeholder="name@example.com"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                type="submit"
-                disabled={loading}
-                className="btn btn-primary w-full sm:w-auto"
-              >
-                <Save className="w-4 h-4" strokeWidth={1.5} />
-                <span>{loading ? '保存中' : '保存修改'}</span>
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
-
-      {/* Password Panel */}
-      {activeTab === 'password' && (
-        <section className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-5 md:p-6 shadow-[var(--shadow-sm)]">
-          <div className="pb-4 mb-5 border-b border-[var(--border-light)]">
-            <h2 className="text-base font-medium text-[var(--text-primary)]">修改密码</h2>
-            <p className="mt-0.5 text-sm text-[var(--text-secondary)]">更新当前账号的登录密码</p>
-          </div>
-
-          {passwordError && (
-            <div className="alert alert-error mb-4">{passwordError}</div>
-          )}
-
-          <form onSubmit={handlePasswordSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
-                原密码
-              </label>
-              <input
-                type="password"
-                value={passwordForm.old_password}
-                onChange={(e) => setPasswordForm({ ...passwordForm, old_password: e.target.value })}
-                placeholder="输入当前密码"
-                required
-              />
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
-                  新密码
-                </label>
-                <input
-                  type="password"
-                  value={passwordForm.new_password}
-                  onChange={(e) => setPasswordForm({ ...passwordForm, new_password: e.target.value })}
-                  placeholder="至少 6 个字符"
-                  minLength={6}
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
-                  确认新密码
-                </label>
-                <input
-                  type="password"
-                  value={passwordForm.confirm_password}
-                  onChange={(e) => setPasswordForm({ ...passwordForm, confirm_password: e.target.value })}
-                  placeholder="再次输入新密码"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                type="submit"
-                disabled={loading}
-                className="btn btn-primary w-full sm:w-auto"
-              >
-                <Lock className="w-4 h-4" strokeWidth={1.5} />
-                <span>{loading ? '修改中' : '更新密码'}</span>
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
-
-      {/* Telegram Panel */}
-      {activeTab === 'telegram' && (
         <section className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-5 md:p-6 shadow-[var(--shadow-sm)]">
           <div className="pb-4 mb-5 border-b border-[var(--border-light)]">
             <h2 className="text-base font-medium text-[var(--text-primary)]">Telegram 通知</h2>
@@ -330,10 +111,15 @@ export default function Settings() {
           </div>
 
           {telegramError && (
-            <div className="alert alert-error mb-4">{telegramError}</div>
+            <div role="alert" className="alert alert-error mb-4">{telegramError}</div>
+          )}
+          {configLoading && <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">加载 Telegram 配置中...</p>}
+          {!configLoading && !configLoaded && (
+            <button type="button" className="btn btn-secondary mb-4" onClick={() => { setConfigLoading(true); setTelegramError(''); setLoadAttempt(attempt => attempt + 1) }}>重新加载</button>
           )}
 
           <form onSubmit={handleTelegramSubmit} className="space-y-4">
+            <fieldset disabled={configLoading || !configLoaded || telegramLoading || telegramTesting} className="space-y-4">
             <div className="flex items-center justify-between gap-4 p-4 rounded-[10px] bg-[var(--bg-secondary)] border border-[var(--border-light)]">
               <div>
                 <span className="block text-sm font-medium text-[var(--text-primary)]">启用自动推送</span>
@@ -344,6 +130,7 @@ export default function Settings() {
               <button
                 type="button"
                 role="switch"
+                aria-label="启用自动推送"
                 aria-checked={telegramConfig.enabled}
                 onClick={() => setTelegramConfig({ ...telegramConfig, enabled: !telegramConfig.enabled })}
                 className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer ${
@@ -359,10 +146,11 @@ export default function Settings() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+              <label htmlFor="telegram-bot-token" className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
                 Bot Token
               </label>
               <input
+                id="telegram-bot-token"
                 type="text"
                 value={telegramConfig.bot_token}
                 onChange={(e) => setTelegramConfig({ ...telegramConfig, bot_token: e.target.value })}
@@ -373,10 +161,11 @@ export default function Settings() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+              <label htmlFor="telegram-chat-id" className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
                 Chat ID
               </label>
               <input
+                id="telegram-chat-id"
                 type="text"
                 value={telegramConfig.chat_id}
                 onChange={(e) => setTelegramConfig({ ...telegramConfig, chat_id: e.target.value })}
@@ -404,9 +193,9 @@ export default function Settings() {
                 <span>{telegramLoading ? '保存中' : '保存配置'}</span>
               </button>
             </div>
+            </fieldset>
           </form>
         </section>
-      )}
     </div>
   )
 }

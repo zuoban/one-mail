@@ -16,11 +16,7 @@ import (
 func TestReadStateIsDurableWhenRemoteSyncFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupEmailHandlerTestDB(t)
-	user := models.User{Username: "owner"}
-	if err := db.Create(&user).Error; err != nil {
-		t.Fatal(err)
-	}
-	account := models.EmailAccount{UserID: user.ID, Email: "owner@example.com", IMAPHost: "127.0.0.1", IMAPPort: 1, Username: "owner", Password: "temporary", UIDValidity: 11}
+	account := models.EmailAccount{Email: "owner@example.com", IMAPHost: "127.0.0.1", IMAPPort: 1, Username: "owner", Password: "temporary", UIDValidity: 11}
 	if err := db.Create(&account).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +26,6 @@ func TestReadStateIsDurableWhenRemoteSyncFails(t *testing.T) {
 	}
 	h := NewEmailHandler()
 	r := gin.New()
-	r.Use(func(c *gin.Context) { c.Set("user_id", user.ID) })
 	r.POST("/emails/:id/read", h.MarkAsRead)
 	r.POST("/emails/:id/unread", h.MarkAsUnread)
 	r.POST("/emails/batch/read", h.BatchMarkAsRead)
@@ -73,11 +68,7 @@ func TestReadStateIsDurableWhenRemoteSyncFails(t *testing.T) {
 func TestDeletedAccountEmailsAreInaccessible(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupEmailHandlerTestDB(t)
-	user := models.User{Username: "deleted-owner"}
-	if err := db.Create(&user).Error; err != nil {
-		t.Fatal(err)
-	}
-	account := models.EmailAccount{UserID: user.ID}
+	account := models.EmailAccount{}
 	if err := db.Create(&account).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -91,19 +82,111 @@ func TestDeletedAccountEmailsAreInaccessible(t *testing.T) {
 	}
 	h := NewEmailHandler()
 	r := gin.New()
-	r.Use(func(c *gin.Context) { c.Set("user_id", user.ID) })
 	r.GET("/emails/:id", h.GetEmail)
 	r.POST("/emails/:id/read", h.MarkAsRead)
+	r.POST("/emails/:id/unread", h.MarkAsUnread)
 	r.DELETE("/emails/:id", h.DeleteEmail)
-	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
-		path := fmt.Sprintf("/emails/%d", email.ID)
-		if method == http.MethodPost {
-			path += "/read"
-		}
+	for _, operation := range []struct{ method, suffix string }{
+		{http.MethodGet, ""},
+		{http.MethodPost, "/read"},
+		{http.MethodPost, "/unread"},
+		{http.MethodDelete, ""},
+	} {
+		path := fmt.Sprintf("/emails/%d%s", email.ID, operation.suffix)
 		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+		r.ServeHTTP(w, httptest.NewRequest(operation.method, path, nil))
 		if w.Code != http.StatusNotFound {
-			t.Fatalf("deleted account email accessible via %s: %d", method, w.Code)
+			t.Fatalf("deleted account email accessible via %s %s: %d", operation.method, operation.suffix, w.Code)
 		}
+	}
+	r.GET("/emails", h.ListEmails)
+	r.POST("/emails/batch/read", h.BatchMarkAsRead)
+	list := httptest.NewRecorder()
+	r.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/emails", nil))
+	var listed struct {
+		Data []models.Email `json:"data"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if list.Code != http.StatusOK || len(listed.Data) != 0 {
+		t.Fatalf("deleted mailbox appeared in list: %d %s", list.Code, list.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodPost, "/emails/batch/read", strings.NewReader(fmt.Sprintf(`{"ids":[%d]}`, email.ID)))
+	req.Header.Set("Content-Type", "application/json")
+	batch := httptest.NewRecorder()
+	r.ServeHTTP(batch, req)
+	var response struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(batch.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if batch.Code != http.StatusOK || response.Count != 0 {
+		t.Fatalf("batch modified deleted mailbox: %d %s", batch.Code, batch.Body.String())
+	}
+	var stored models.Email
+	if err := db.First(&stored, email.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.IsRead || stored.PendingRead != nil || stored.DeletedAt.Valid {
+		t.Fatal("inaccessible mailbox message was modified")
+	}
+}
+
+func TestMissingAndDeletedEmailsRemainUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupEmailHandlerTestDB(t)
+	account := models.EmailAccount{Email: "mailbox@example.com"}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	email := models.Email{AccountID: account.ID, MessageID: "removed-message", BodyText: "cached body"}
+	if err := db.Create(&email).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Delete(&email).Error; err != nil {
+		t.Fatal(err)
+	}
+	h := NewEmailHandler()
+	r := gin.New()
+	r.GET("/emails/:id", h.GetEmail)
+	r.POST("/emails/:id/read", h.MarkAsRead)
+	r.POST("/emails/:id/unread", h.MarkAsUnread)
+	r.POST("/emails/batch/read", h.BatchMarkAsRead)
+	r.DELETE("/emails/:id", h.DeleteEmail)
+	for _, id := range []uint{email.ID, email.ID + 100} {
+		for _, operation := range []struct{ method, suffix string }{
+			{http.MethodGet, ""},
+			{http.MethodPost, "/read"},
+			{http.MethodPost, "/unread"},
+			{http.MethodDelete, ""},
+		} {
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(operation.method, fmt.Sprintf("/emails/%d%s", id, operation.suffix), nil))
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("unavailable message %d accessible via %s %s: %d", id, operation.method, operation.suffix, w.Code)
+			}
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/emails/batch/read", strings.NewReader(fmt.Sprintf(`{"ids":[%d,%d]}`, email.ID, email.ID+100)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var response struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || response.Count != 0 {
+		t.Fatalf("batch included unavailable messages: %d %s", w.Code, w.Body.String())
+	}
+	var stored models.Email
+	if err := db.Unscoped().First(&stored, email.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !stored.DeletedAt.Valid || stored.IsRead || stored.PendingRead != nil {
+		t.Fatal("batch modified a deleted message")
 	}
 }

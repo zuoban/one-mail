@@ -6,24 +6,11 @@ import (
 	"gorm.io/gorm"
 )
 
-type User struct {
-	ID             uint           `gorm:"primaryKey" json:"id"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
-	Username       string         `gorm:"unique;not null" json:"username"`
-	Password       string         `gorm:"not null" json:"-"`
-	SessionVersion uint           `gorm:"not null;default:1" json:"-"`
-	Email          string         `json:"email"`
-	Accounts       []EmailAccount `gorm:"foreignKey:UserID" json:"accounts,omitempty"`
-}
-
 type EmailAccount struct {
 	ID           uint           `gorm:"primaryKey" json:"id"`
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-	UserID       uint           `gorm:"not null;index" json:"user_id"`
 	Email        string         `gorm:"not null" json:"email"`
 	Provider     string         `gorm:"not null" json:"provider"`
 	IMAPHost     string         `gorm:"not null" json:"imap_host"`
@@ -65,7 +52,6 @@ type Email struct {
 
 type TelegramConfig struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
-	UserID    uint      `gorm:"uniqueIndex:idx_telegram_user,where:user_id > 0" json:"-"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Enabled   bool      `gorm:"default:false" json:"enabled"`
 	BotToken  string    `gorm:"type:text" json:"bot_token"`

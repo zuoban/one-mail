@@ -25,7 +25,7 @@ var (
 	globalClient      *Client
 	clientOnce        sync.Once
 	configCacheMu     sync.RWMutex
-	cachedConfigs     = make(map[uint]*models.TelegramConfig)
+	cachedConfig      *models.TelegramConfig
 	styleTagRegex     = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
 	multiNewlineRegex = regexp.MustCompile(`\n\s*\n\s*\n+`)
 	entityRegex       = regexp.MustCompile(`&#(\d+);`)
@@ -41,50 +41,47 @@ func GetClient() *Client {
 	return globalClient
 }
 
-// InvalidateConfigCache reloads this owner's configuration on the next send.
-func InvalidateConfigCache(userID uint) {
+// InvalidateConfigCache reloads the instance configuration on the next send.
+func InvalidateConfigCache() {
 	configCacheMu.Lock()
-	delete(cachedConfigs, userID)
+	cachedConfig = nil
 	configCacheMu.Unlock()
 }
 
-func getConfig(userID uint) *models.TelegramConfig {
-	if userID == 0 {
-		return nil
-	}
+func getConfig() *models.TelegramConfig {
 	configCacheMu.RLock()
-	cfg, exists := cachedConfigs[userID]
+	cfg := cachedConfig
 	configCacheMu.RUnlock()
-	if exists {
+	if cfg != nil {
 		return cfg
 	}
 
 	// Serialize cache fills with invalidation so an old DB snapshot cannot
-	// replace the configuration after its owner has updated it.
+	// replace the configuration after it has been updated.
 	configCacheMu.Lock()
 	defer configCacheMu.Unlock()
-	if cfg, exists := cachedConfigs[userID]; exists {
-		return cfg
+	if cachedConfig != nil {
+		return cachedConfig
 	}
 	db := database.GetDB()
 	if db == nil {
 		return nil
 	}
 	var loaded models.TelegramConfig
-	if err := db.Where("user_id = ?", userID).First(&loaded).Error; err != nil {
+	if err := db.Where("id = ?", 1).First(&loaded).Error; err != nil {
 		return nil
 	}
-	cachedConfigs[userID] = &loaded
+	cachedConfig = &loaded
 	return &loaded
 }
 
-func (c *Client) IsEnabled(userID uint) bool {
-	cfg := getConfig(userID)
+func (c *Client) IsEnabled() bool {
+	cfg := getConfig()
 	return cfg != nil && cfg.Enabled && cfg.BotToken != "" && cfg.ChatID != ""
 }
 
-func (c *Client) SendNewEmail(userID uint, email *models.Email, accountEmail string) error {
-	cfg := getConfig(userID)
+func (c *Client) SendNewEmail(email *models.Email, accountEmail string) error {
+	cfg := getConfig()
 	if cfg == nil || !cfg.Enabled || cfg.BotToken == "" || cfg.ChatID == "" {
 		return nil
 	}
@@ -334,7 +331,6 @@ func decodeHTMLEntities(s string) string {
 }
 
 type notifyJob struct {
-	userID       uint
 	email        models.Email
 	accountEmail string
 }
@@ -353,7 +349,7 @@ func initNotifyQueue() {
 				client := GetClient()
 				for job := range notifyQueue {
 					emailCopy := job.email
-					if err := client.SendNewEmail(job.userID, &emailCopy, job.accountEmail); err != nil {
+					if err := client.SendNewEmail(&emailCopy, job.accountEmail); err != nil {
 						log.Printf("Failed to send telegram notification: %v", err)
 					}
 				}
@@ -362,13 +358,13 @@ func initNotifyQueue() {
 	})
 }
 
-func SendNewEmailAsync(userID uint, email *models.Email, accountEmail string) {
-	if userID == 0 || email == nil {
+func SendNewEmailAsync(email *models.Email, accountEmail string) {
+	if email == nil {
 		return
 	}
 	initNotifyQueue()
 	select {
-	case notifyQueue <- notifyJob{userID: userID, email: *email, accountEmail: accountEmail}:
+	case notifyQueue <- notifyJob{email: *email, accountEmail: accountEmail}:
 	default:
 		log.Printf("Telegram notify queue full, dropping notification for subject=%q", email.Subject)
 	}

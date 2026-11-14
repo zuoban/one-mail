@@ -123,25 +123,117 @@ func SetupSQLite(db *gorm.DB, isSQLite bool) error {
 	return nil
 }
 
-// MigrateAndOptimize runs schema AutoMigrate, fixes misaligned composite indexes, and sets up FTS5 if compiled in.
+// MigrateAndOptimize removes legacy application users, migrates the personal
+// instance schema, fixes composite indexes, and sets up FTS5 if compiled in.
 func MigrateAndOptimize(db *gorm.DB) error {
-	if err := db.AutoMigrate(
-		&models.User{},
-		&models.EmailAccount{},
-		&models.Email{},
-		&models.TelegramConfig{},
-	); err != nil {
-		return fmt.Errorf("failed to migrate database: %w", err)
-	}
-	if err := migrateUserSettings(db); err != nil {
-		return fmt.Errorf("migrate user settings: %w", err)
-	}
-
-	if err := ensureEmailIndexes(db); err != nil {
-		return fmt.Errorf("failed to optimize email indexes: %w", err)
+	// SQLite cannot disable foreign keys inside a transaction. Pin the connection
+	// so the table cutover and restoration use the same connection-scoped setting.
+	if err := db.Connection(func(conn *gorm.DB) (result error) {
+		// Connection hands out a handle that reuses its Statement. Start a clean
+		// session so PRAGMA scans cannot leak their destination into later queries.
+		conn = conn.Session(&gorm.Session{NewDB: true})
+		var foreignKeys int
+		if err := conn.Raw("PRAGMA foreign_keys").Scan(&foreignKeys).Error; err != nil {
+			return err
+		}
+		if foreignKeys != 0 {
+			if err := conn.Exec("PRAGMA foreign_keys = OFF").Error; err != nil {
+				return err
+			}
+			defer func() {
+				if err := conn.Exec("PRAGMA foreign_keys = ON").Error; err != nil {
+					if result == nil {
+						result = fmt.Errorf("restore foreign keys: %w", err)
+					} else {
+						result = fmt.Errorf("%w; restore foreign keys: %v", result, err)
+					}
+				}
+			}()
+		}
+		return conn.Transaction(func(tx *gorm.DB) error {
+			// SQLite table replacements reset sqlite_sequence to MAX(id). Save the
+			// account high-water mark before either our cutover or GORM can rebuild.
+			var accountSequence int64
+			if tx.Migrator().HasTable("sqlite_sequence") {
+				if err := tx.Raw("SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name = 'email_accounts'").Scan(&accountSequence).Error; err != nil {
+					return err
+				}
+			}
+			if err := migratePersonalSchema(tx); err != nil {
+				return err
+			}
+			if err := migratePersonalModels(tx); err != nil {
+				return err
+			}
+			if err := mergeTelegramConfig(tx); err != nil {
+				return err
+			}
+			if err := ensureEmailIndexes(tx); err != nil {
+				return err
+			}
+			// Restore only after every schema migration, including AutoMigrate.
+			// Repeating startup must never lower a previously reserved account ID.
+			if accountSequence > 0 {
+				if err := tx.Exec("INSERT INTO sqlite_sequence(name, seq) SELECT 'email_accounts', ? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'email_accounts')", accountSequence).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("UPDATE sqlite_sequence SET seq = MAX(COALESCE(seq, 0), ?) WHERE name = 'email_accounts'", accountSequence).Error; err != nil {
+					return err
+				}
+			}
+			var violations []struct {
+				Table  string
+				RowID  *int64
+				Parent string
+			}
+			if err := tx.Raw("PRAGMA foreign_key_check").Scan(&violations).Error; err != nil {
+				return err
+			}
+			if len(violations) != 0 {
+				return fmt.Errorf("foreign key violation in %s referencing %s", violations[0].Table, violations[0].Parent)
+			}
+			return nil
+		})
+	}); err != nil {
+		return fmt.Errorf("failed to migrate personal database: %w", err)
 	}
 
 	setupFTS5(db)
+	return nil
+}
+
+func migratePersonalModels(tx *gorm.DB) error {
+	if !tx.Migrator().HasTable(&models.Email{}) {
+		return tx.AutoMigrate(&models.EmailAccount{}, &models.Email{}, &models.TelegramConfig{})
+	}
+
+	// AlterColumn on SQLite replaces the table and drops its triggers. Existing
+	// emails need only additive migrations, including installations with cached
+	// bodies predating body_fetched, pending_read, and uid_validity.
+	independent := tx.Session(&gorm.Session{})
+	independent.Config.IgnoreRelationshipsWhenMigrating = true
+	if err := independent.AutoMigrate(&models.EmailAccount{}, &models.TelegramConfig{}); err != nil {
+		return err
+	}
+	stmt := &gorm.Statement{DB: tx}
+	if err := stmt.Parse(&models.Email{}); err != nil {
+		return err
+	}
+	migrator := tx.Migrator()
+	for _, name := range stmt.Schema.DBNames {
+		if !migrator.HasColumn(&models.Email{}, name) {
+			if err := migrator.AddColumn(&models.Email{}, name); err != nil {
+				return err
+			}
+		}
+	}
+	for _, index := range stmt.Schema.ParseIndexes() {
+		if !migrator.HasIndex(&models.Email{}, index.Name) {
+			if err := migrator.CreateIndex(&models.Email{}, index.Name); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -171,39 +263,91 @@ func migrateCredentials(db *gorm.DB) error {
 	})
 }
 
-// A legacy global Telegram configuration can be assigned only when its owner
-// is unambiguous. Other legacy rows remain disabled and inaccessible.
-func migrateUserSettings(db *gorm.DB) error {
-	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.User{}).Where("session_version IS NULL OR session_version = 0").
-			UpdateColumn("session_version", 1).Error; err != nil {
-			return err
+// Only the two tables containing user_id are rebuilt. The emails table and its
+// existing account foreign key, body cache, pending reads, and FTS triggers stay
+// in place. Copying SQL values also preserves encrypted passwords and soft deletes.
+func migratePersonalSchema(tx *gorm.DB) error {
+	if tx.Migrator().HasColumn("email_accounts", "user_id") {
+		if err := rebuildPersonalTable(tx, "email_accounts", `CREATE TABLE email_accounts_personal (
+			id integer PRIMARY KEY AUTOINCREMENT,
+			created_at datetime, updated_at datetime, deleted_at datetime,
+			email text NOT NULL, provider text NOT NULL,
+			imap_host text NOT NULL, imap_port integer NOT NULL,
+			smtp_host text NOT NULL, smtp_port integer NOT NULL,
+			username text NOT NULL, password text NOT NULL,
+			last_sync_time datetime, uid_validity integer NOT NULL DEFAULT 0,
+			status text DEFAULT 'active', color text DEFAULT '#6366f1'
+		)`); err != nil {
+			return fmt.Errorf("remove email account ownership: %w", err)
 		}
-		var users []models.User
-		if err := tx.Select("id").Limit(2).Find(&users).Error; err != nil {
-			return err
+	}
+	if tx.Migrator().HasColumn("telegram_configs", "user_id") {
+		if err := rebuildPersonalTable(tx, "telegram_configs", `CREATE TABLE telegram_configs_personal (
+			id integer PRIMARY KEY AUTOINCREMENT, updated_at datetime,
+			enabled numeric DEFAULT false, bot_token text, chat_id text
+		)`); err != nil {
+			return fmt.Errorf("remove Telegram ownership: %w", err)
 		}
-		legacy := "user_id IS NULL OR user_id = 0"
-		if len(users) == 1 {
-			var owned int64
-			if err := tx.Model(&models.TelegramConfig{}).Where("user_id = ?", users[0].ID).Count(&owned).Error; err != nil {
-				return err
-			}
-			if owned == 0 {
-				var cfg models.TelegramConfig
-				err := tx.Where(legacy).Order("id").First(&cfg).Error
-				if err != nil && err != gorm.ErrRecordNotFound {
-					return err
-				}
-				if err == nil {
-					if err := tx.Model(&cfg).UpdateColumn("user_id", users[0].ID).Error; err != nil {
-						return err
-					}
-				}
-			}
+	}
+	return tx.Exec("DROP TABLE IF EXISTS users").Error
+}
+
+func rebuildPersonalTable(tx *gorm.DB, table, ddl string) error {
+	// The SQLite driver's DDL parser treats tabs as quoting characters. Emit
+	// compact indentation so later schema inspection sees every column.
+	if err := tx.Exec(strings.ReplaceAll(ddl, "\t", "")).Error; err != nil {
+		return err
+	}
+	// Older installations may not yet have newer columns such as uid_validity.
+	// Copy only shared columns so the new columns receive their schema defaults.
+	type column struct {
+		Name string
+	}
+	var previous, current []column
+	if err := tx.Raw("PRAGMA table_info(" + table + ")").Scan(&previous).Error; err != nil {
+		return err
+	}
+	if err := tx.Raw("PRAGMA table_info(" + table + "_personal)").Scan(&current).Error; err != nil {
+		return err
+	}
+	available := make(map[string]bool, len(previous))
+	for _, col := range previous {
+		available[col.Name] = true
+	}
+	columns := make([]string, 0, len(current))
+	for _, col := range current {
+		if available[col.Name] {
+			columns = append(columns, `"`+col.Name+`"`)
 		}
-		return tx.Model(&models.TelegramConfig{}).Where(legacy).UpdateColumn("enabled", false).Error
-	})
+	}
+	projection := strings.Join(columns, ", ")
+	if err := tx.Exec("INSERT INTO " + table + "_personal (" + projection + ") SELECT " + projection + " FROM " + table).Error; err != nil {
+		return err
+	}
+	if err := tx.Exec("DROP TABLE " + table).Error; err != nil {
+		return err
+	}
+	return tx.Exec("ALTER TABLE " + table + "_personal RENAME TO " + table).Error
+}
+
+func mergeTelegramConfig(tx *gorm.DB) error {
+	var cfg models.TelegramConfig
+	err := tx.Order("CASE WHEN TRIM(COALESCE(bot_token, '')) <> '' AND TRIM(COALESCE(chat_id, '')) <> '' THEN 0 ELSE 1 END").
+		Order("updated_at DESC").Order("id DESC").First(&cfg).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if cfg.ID == 1 {
+		return tx.Where("id <> ?", 1).Delete(&models.TelegramConfig{}).Error
+	}
+	if err := tx.Where("1 = 1").Delete(&models.TelegramConfig{}).Error; err != nil {
+		return err
+	}
+	cfg.ID = 1
+	return tx.Create(&cfg).Error
 }
 
 func ensureEmailIndexes(db *gorm.DB) error {
