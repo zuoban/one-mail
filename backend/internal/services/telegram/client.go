@@ -59,6 +59,9 @@ func getConfig() *models.TelegramConfig {
 	configCacheMu.RUnlock()
 
 	db := database.GetDB()
+	if db == nil {
+		return nil
+	}
 	var cfg models.TelegramConfig
 	if err := db.First(&cfg).Error; err != nil {
 		return nil

@@ -8,7 +8,6 @@ import (
 	"one-mail/backend/database"
 	"one-mail/backend/internal/handlers"
 	"one-mail/backend/internal/middleware"
-	syncservice "one-mail/backend/internal/services/sync"
 	"one-mail/backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
@@ -29,14 +28,6 @@ func main() {
 		log.Fatalf("Failed to init JWT: %v", err)
 	}
 
-	if err := syncservice.InitSyncCache(); err != nil {
-		log.Printf("Warning: Failed to init sync cache: %v", err)
-	}
-
-	scheduler := syncservice.GetScheduler()
-	scheduler.Start()
-	log.Println("Sync scheduler started")
-
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.GzipMiddleware())
@@ -44,8 +35,6 @@ func main() {
 	accountHandler := handlers.NewAccountHandler()
 	emailHandler := handlers.NewEmailHandler()
 	authHandler := handlers.NewAuthHandler()
-	syncHandler := handlers.NewSyncHandler()
-
 	auth := r.Group("/api/auth")
 	{
 		auth.POST("/register", authHandler.Register)
@@ -64,26 +53,15 @@ func main() {
 		api.PUT("/accounts/:id", accountHandler.UpdateAccount)
 		api.DELETE("/accounts/:id", accountHandler.DeleteAccount)
 		api.POST("/accounts/:id/test", accountHandler.TestAccount)
-		api.GET("/accounts/:id/folders", accountHandler.ListFolders)
+		api.POST("/accounts/:id/refresh", emailHandler.RefreshAccountEmails)
 
 		api.GET("/emails", emailHandler.ListEmails)
+		api.POST("/emails/refresh", emailHandler.RefreshEmails)
 		api.GET("/emails/:id", emailHandler.GetEmail)
 		api.POST("/emails/:id/read", emailHandler.MarkAsRead)
 		api.POST("/emails/:id/unread", emailHandler.MarkAsUnread)
 		api.POST("/emails/batch/read", emailHandler.BatchMarkAsRead)
 		api.DELETE("/emails/:id", emailHandler.DeleteEmail)
-		api.POST("/accounts/:id/sync", syncHandler.TriggerSync)
-		api.GET("/accounts/:id/sync/preview", syncHandler.PreviewSync)
-
-		api.GET("/sync/status", syncHandler.GetAllStatuses)
-		api.GET("/sync/status/:id", syncHandler.GetStatus)
-		api.PUT("/accounts/:id/sync/config", syncHandler.UpdateConfig)
-		api.POST("/sync/start", syncHandler.StartScheduler)
-		api.POST("/sync/stop", syncHandler.StopScheduler)
-		api.GET("/sync/logs", syncHandler.GetSyncLogs)
-		api.GET("/sync/logs/:account_id", syncHandler.GetSyncLogs)
-		api.DELETE("/sync/logs/:account_id", syncHandler.ClearSyncLogs)
-
 		api.GET("/telegram/config", handlers.GetTelegramConfig)
 		api.PUT("/telegram/config", handlers.UpdateTelegramConfig)
 		api.POST("/telegram/test", handlers.TestTelegramConnection)

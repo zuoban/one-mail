@@ -1,11 +1,18 @@
 package imap
 
 import (
+	"context"
 	"encoding/base64"
+	"errors"
+	"net"
 	"reflect"
+	"strconv"
 	"testing"
+	"time"
 
 	goimap "github.com/emersion/go-imap/v2"
+
+	"one-mail/backend/internal/models"
 )
 
 func TestSelectBodyParts(t *testing.T) {
@@ -96,33 +103,74 @@ func TestDecodeBodyPart(t *testing.T) {
 	}
 }
 
-func TestSelectUIDBatch(t *testing.T) {
-	uids := []goimap.UID{30, 10, 50, 20, 40}
-
-	// Initial sync (lastUID == 0) grabs newest `limit` UIDs without pagination
-	initialBatch, hasMore := selectUIDBatch(uids, 0, 3)
-	if hasMore {
-		t.Fatal("expected hasMore=false on initial sync")
-	}
-	if !reflect.DeepEqual(initialBatch, []goimap.UID{30, 40, 50}) {
-		t.Fatalf("unexpected initial batch: %v", initialBatch)
+func TestComputeLatestSeqRange(t *testing.T) {
+	start, end, ok := computeLatestSeqRange(0, 50)
+	if ok || start != 0 || end != 0 {
+		t.Fatalf("expected empty mailbox (0,0,false), got (%d,%d,%v)", start, end, ok)
 	}
 
-	// Incremental sync (lastUID > 0) grabs oldest `limit` UIDs sequentially and signals hasMore=true
-	incBatch, hasMore := selectUIDBatch(uids, 5, 3)
-	if !hasMore {
-		t.Fatal("expected hasMore=true on incremental sync when len > limit")
-	}
-	if !reflect.DeepEqual(incBatch, []goimap.UID{10, 20, 30}) {
-		t.Fatalf("unexpected incremental batch: %v", incBatch)
+	start, end, ok = computeLatestSeqRange(12, 50)
+	if !ok || start != 1 || end != 12 {
+		t.Fatalf("expected (1,12,true), got (%d,%d,%v)", start, end, ok)
 	}
 
-	// Within limit returns all sorted UIDs with hasMore=false
-	fullBatch, hasMore := selectUIDBatch(uids, 5, 10)
-	if hasMore {
-		t.Fatal("expected hasMore=false when len <= limit")
+	start, end, ok = computeLatestSeqRange(200, 50)
+	if !ok || start != 151 || end != 200 {
+		t.Fatalf("expected (151,200,true), got (%d,%d,%v)", start, end, ok)
 	}
-	if !reflect.DeepEqual(fullBatch, []goimap.UID{10, 20, 30, 40, 50}) {
-		t.Fatalf("unexpected full batch: %v", fullBatch)
+
+	start, end, ok = computeLatestSeqRange(50, 0)
+	if !ok || start != 1 || end != 50 {
+		t.Fatalf("expected default limit 50 -> (1,50,true), got (%d,%d,%v)", start, end, ok)
+	}
+}
+
+func TestConnectContext_CancelsStalledServerAndAuthErrors(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	doneAccept := make(chan struct{})
+	go func() {
+		defer close(doneAccept)
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		time.Sleep(2 * time.Second)
+	}()
+
+	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	client := NewClient(&models.EmailAccount{
+		IMAPHost: "127.0.0.1",
+		IMAPPort: port,
+		Username: "u",
+		Password: "p",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err = client.ConnectContext(ctx)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected ConnectContext to fail on stalled server")
+	}
+	if elapsed > time.Second {
+		t.Fatalf("expected ConnectContext to cancel promptly, took %v", elapsed)
+	}
+	<-doneAccept
+
+	if !IsAuthError(errors.New("imap: NO [AUTHENTICATIONFAILED] Login fail.")) {
+		t.Fatal("expected IsAuthError to match QQ AUTHENTICATIONFAILED")
+	}
+	if IsAuthError(errors.New("i/o timeout")) {
+		t.Fatal("did not expect IsAuthError to match i/o timeout")
 	}
 }

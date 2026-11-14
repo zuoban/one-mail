@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
-import { emailApi, accountApi, syncApi, telegramApi } from '../api'
+import { emailApi, accountApi, telegramApi } from '../api'
 import axios from 'axios'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 import { useTheme } from '../context/ThemeContext'
-import type { Email, EmailAccount, SyncStatus } from '../api'
+import type { Email, EmailAccount } from '../api'
 import {
   Search,
   Mail,
@@ -192,11 +192,8 @@ export default function Dashboard() {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'unread'>('all')
-  const [syncStatuses, setSyncStatuses] = useState<Record<string, SyncStatus>>({})
-  const [syncing, setSyncing] = useState(false)
-  const [total, setTotal] = useState(0)
-  const [hasMore, setHasMore] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [loadingList, setLoadingList] = useState(false)
   const [toast, setToast] = useState<{
     message: string
     type: 'success' | 'error'
@@ -205,7 +202,6 @@ export default function Dashboard() {
   } | null>(null)
   const toastTimer = useRef<number | null>(null)
   const deleteTimers = useRef<Record<number, number>>({})
-  const syncPollTimer = useRef<number | null>(null)
   const [pendingDeletes, setPendingDeletes] = useState<Record<number, Email>>({})
   const [contextMenu, setContextMenu] = useState<{
     email: Email
@@ -230,16 +226,16 @@ export default function Dashboard() {
   const [showShortcuts, setShowShortcuts] = useState(false)
 
   const formatSyncTime = (value?: string) => {
-    if (!value) return '未同步'
+    if (!value) return '未刷新'
     const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return '未同步'
+    if (Number.isNaN(date.getTime()) || date.getFullYear() < 1970) return '未刷新'
     const diffMinutes = Math.floor((Date.now() - date.getTime()) / 60000)
-    if (diffMinutes < 1) return '刚刚同步'
-    if (diffMinutes < 60) return `${diffMinutes} 分钟前`
+    if (diffMinutes < 1) return '刚刚刷新'
+    if (diffMinutes < 60) return `${diffMinutes} 分钟前刷新`
     const diffHours = Math.floor(diffMinutes / 60)
-    if (diffHours < 24) return `${diffHours} 小时前`
+    if (diffHours < 24) return `${diffHours} 小时前刷新`
     const diffDays = Math.floor(diffHours / 24)
-    if (diffDays < 7) return `${diffDays} 天前`
+    if (diffDays < 7) return `${diffDays} 天前刷新`
     return date.toLocaleDateString('zh-CN')
   }
 
@@ -275,20 +271,6 @@ export default function Dashboard() {
     }
   }, [])
 
-  const loadSyncStatuses = useCallback(async () => {
-    try {
-      const res = await syncApi.getAllStatuses()
-      setSyncStatuses(res.data)
-      return res.data
-    } catch (e) {
-      console.error(e)
-      return null
-    }
-  }, [])
-
-  const loadingMoreRef = useRef(false)
-  const hasMoreRef = useRef(true)
-  const nextCursorRef = useRef<{ date: string; id: number } | null>(null)
   const listAbortRef = useRef<AbortController | null>(null)
   const activeEmailIdRef = useRef<number | null>(null)
   const detailCacheRef = useRef<Map<number, { email: Email; sanitizedHtml: string }>>(new Map())
@@ -300,57 +282,33 @@ export default function Dashboard() {
     return () => window.clearTimeout(timer)
   }, [search])
 
-  const loadEmails = useCallback(async (append: boolean = false) => {
-    if (append && (loadingMoreRef.current || !hasMoreRef.current)) return
-
-    if (!append) {
-      listAbortRef.current?.abort()
-    }
+  const loadEmails = useCallback(async () => {
+    listAbortRef.current?.abort()
     const controller = new AbortController()
-    if (!append) {
-      listAbortRef.current = controller
-    }
+    listAbortRef.current = controller
 
-    loadingMoreRef.current = true
-    setLoadingMore(true)
-
+    setLoadingList(true)
     try {
-      const cursor = append ? nextCursorRef.current : null
       const res = await emailApi.list(
         {
-          page: 1,
-          page_size: 50,
           search: debouncedSearch || undefined,
           account_id: selectedAccountId || undefined,
           unread: filter === 'unread' ? true : undefined,
-          cursor_date: cursor?.date,
-          cursor_id: cursor?.id,
         },
         controller.signal,
       )
-
-      if (append) {
-        setEmails(prev => {
-          const existingIds = new Set(prev.map(item => item.id))
-          const incoming = res.data.filter(item => !existingIds.has(item.id))
-          return [...prev, ...incoming]
-        })
-      } else {
-        setEmails(res.data)
-        setTotal(res.total)
+      if (listAbortRef.current === controller && !controller.signal.aborted) {
+        setEmails(res.data || [])
       }
-
-      nextCursorRef.current = res.next_cursor ?? null
-      const hasMoreVal = Boolean(res.has_more)
-      hasMoreRef.current = hasMoreVal
-      setHasMore(hasMoreVal)
     } catch (e) {
-      if (!axios.isCancel(e)) {
+      if (listAbortRef.current === controller && !controller.signal.aborted && !axios.isCancel(e)) {
         console.error(e)
       }
     } finally {
-      loadingMoreRef.current = false
-      setLoadingMore(false)
+      if (listAbortRef.current === controller) {
+        listAbortRef.current = null
+        setLoadingList(false)
+      }
     }
   }, [debouncedSearch, selectedAccountId, filter])
 
@@ -384,36 +342,25 @@ export default function Dashboard() {
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const target = e.target as HTMLDivElement
-    const { scrollTop, scrollHeight, clientHeight } = target
-    listScrollTopRef.current = scrollTop
+    listScrollTopRef.current = target.scrollTop
     syncVirtualWindow(emails.length)
-    if (scrollHeight - scrollTop - clientHeight < 240 && !loadingMore && hasMore) {
-      loadEmails(true)
-    }
-  }, [emails.length, syncVirtualWindow, loadEmails, hasMore, loadingMore])
+  }, [emails.length, syncVirtualWindow])
 
   useEffect(() => {
     loadAccounts()
-    loadSyncStatuses()
     return () => {
       listAbortRef.current?.abort()
-      if (syncPollTimer.current) {
-        window.clearInterval(syncPollTimer.current)
-      }
+      listAbortRef.current = null
     }
-  }, [loadAccounts, loadSyncStatuses])
+  }, [loadAccounts])
 
   useEffect(() => {
-    setTotal(0)
-    nextCursorRef.current = null
-    hasMoreRef.current = true
-    setHasMore(true)
     if (listScrollRef.current) {
       listScrollRef.current.scrollTop = 0
     }
     listScrollTopRef.current = 0
     syncVirtualWindow(0)
-    loadEmails(false)
+    loadEmails()
   }, [debouncedSearch, selectedAccountId, filter, loadEmails, syncVirtualWindow])
   const showToast = useCallback((
     message: string,
@@ -457,41 +404,33 @@ export default function Dashboard() {
     return parseEmailDate(fallback)
   }, [parseEmailDate])
 
-  const handleQuickSync = useCallback(async () => {
-    if (syncing || accounts.length === 0) return
-    setSyncing(true)
+  const handleRefresh = useCallback(async () => {
+    if (refreshing || accounts.length === 0) return
+    setRefreshing(true)
     try {
-      const targetIds = selectedAccountId
-        ? [selectedAccountId]
-        : accounts.filter(a => a.status === 'active').map(a => a.id)
-      const idsToSync = targetIds.length > 0 ? targetIds : accounts.map(a => a.id)
-      await Promise.allSettled(idsToSync.map(id => accountApi.sync(id)))
-      showToast('正在同步邮件', 'success')
-      await loadSyncStatuses()
-
-      if (syncPollTimer.current) {
-        window.clearInterval(syncPollTimer.current)
+      const res = await emailApi.refresh(selectedAccountId || undefined)
+      await Promise.all([loadEmails(), loadAccounts()])
+      const errorEntries = res.errors ? Object.entries(res.errors) : []
+      if (errorEntries.length > 0) {
+        const [failedAccount, failedReason] = errorEntries[0]
+        showToast(
+          errorEntries.length === 1
+            ? `${failedAccount} 刷新失败: ${failedReason}`
+            : `刷新完成（${errorEntries.length} 个账户失败，如 ${failedAccount}）`,
+          'error',
+        )
+      } else if (res.new_count > 0) {
+        showToast(`已刷新，新增 ${res.new_count} 封邮件`, 'success')
+      } else {
+        showToast('已是最新邮件', 'success')
       }
-      let attempts = 0
-      syncPollTimer.current = window.setInterval(async () => {
-        attempts += 1
-        const statuses = await loadSyncStatuses()
-        const stillRunning = statuses && idsToSync.some(id => statuses[String(id)]?.running)
-        if (!stillRunning || attempts >= 20) {
-          if (syncPollTimer.current) {
-            window.clearInterval(syncPollTimer.current)
-            syncPollTimer.current = null
-          }
-          setSyncing(false)
-          await Promise.all([loadEmails(false), loadAccounts()])
-        }
-      }, 1500)
     } catch (e) {
-      console.error(e)
-      showToast('同步启动失败', 'error')
-      setSyncing(false)
+      const message = axios.isAxiosError(e) ? e.response?.data?.error : undefined
+      showToast(message || '刷新失败', 'error')
+    } finally {
+      setRefreshing(false)
     }
-  }, [syncing, accounts, selectedAccountId, showToast, loadSyncStatuses, loadEmails, loadAccounts])
+  }, [refreshing, accounts.length, selectedAccountId, showToast, loadEmails, loadAccounts])
 
   const sanitizeEmailHtml = useCallback((rawHtml?: string) => {
     if (!rawHtml) return ''
@@ -893,7 +832,7 @@ export default function Dashboard() {
         }
       } else if (event.key === 'r' || event.key === 'R') {
         event.preventDefault()
-        loadEmails(false).then(() => showToast('已刷新', 'success'))
+        handleRefresh()
       } else if ((event.key === 'Backspace' || event.key === 'Delete') && selectedEmail) {
         event.preventDefault()
         setConfirmDelete({ email: selectedEmail })
@@ -905,7 +844,7 @@ export default function Dashboard() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [
-    loadEmails,
+    handleRefresh,
     handleRead,
     scrollToEmailIndex,
     handleMarkAsUnread,
@@ -1129,15 +1068,15 @@ export default function Dashboard() {
               {filteredEmails.length} 封{unreadCount > 0 ? ` · ${unreadCount} 未读` : ''}
             </span>
           </div>
-          <Tooltip content="立即同步邮件">
+          <Tooltip content="拉取最近 50 封邮件 (r)">
             <button
               type="button"
-              onClick={handleQuickSync}
-              disabled={syncing || accounts.length === 0}
+              onClick={handleRefresh}
+              disabled={refreshing || accounts.length === 0}
               className="btn btn-ghost btn-sm px-2 text-xs text-[var(--text-secondary)]"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} strokeWidth={1.5} />
-              <span>{syncing ? '同步中' : '同步'}</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} strokeWidth={1.5} />
+              <span>{refreshing ? '刷新中' : '刷新'}</span>
             </button>
           </Tooltip>
         </div>
@@ -1191,9 +1130,7 @@ export default function Dashboard() {
               {accounts.map(account => {
                 const providerText = providers.find(p => p.value === account.provider)?.label || account.provider
                 const statusText = account.status === 'active' ? '已连接' : '未连接'
-                const syncStatus = syncStatuses[String(account.id)]
-                const isSyncing = syncStatus?.running === true
-                const syncInfo = isSyncing ? '同步中' : formatSyncTime(account.last_sync_time)
+                const syncInfo = formatSyncTime(account.last_sync_time)
                 const tip = `${account.email} · ${providerText} · ${statusText} · ${syncInfo}`
                 const isSelected = selectedAccountId === account.id
                 const accountColor = account.color || '#2563EB'
@@ -1210,14 +1147,10 @@ export default function Dashboard() {
                           : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-light)] hover:border-[var(--border-hover)]'
                       }`}
                     >
-                      {isSyncing ? (
-                        <Loader2 className="w-3 h-3 animate-spin text-[var(--primary-500)]" strokeWidth={1.5} />
-                      ) : (
-                        <span
-                          className="w-2 h-2 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: accountColor }}
-                        />
-                      )}
+                      <span
+                        className="w-2 h-2 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: accountColor }}
+                      />
                       <span className="max-w-[110px] truncate">{shortName}</span>
                     </button>
                   </Tooltip>
@@ -1306,7 +1239,7 @@ export default function Dashboard() {
 
         {/* Email List */}
         <div ref={listScrollRef} className="flex-1 overflow-auto thin-scrollbar" onScroll={handleScroll}>
-          {loadingMore && emails.length === 0 ? (
+          {loadingList && emails.length === 0 ? (
             <div className="empty-state">
               <p className="text-xs text-[var(--text-tertiary)]">正在加载邮件</p>
             </div>
@@ -1319,7 +1252,7 @@ export default function Dashboard() {
                   ? '没有匹配当前关键词的邮件'
                   : filter === 'unread'
                   ? '当前筛选下没有未读邮件'
-                  : '添加邮箱账户并同步后显示'}
+                  : '添加邮箱账户并点击刷新获取最近 50 封邮件'}
               </p>
               {(search || filter === 'unread') && (
                 <button
@@ -1360,15 +1293,9 @@ export default function Dashboard() {
                 />
               ))}
 
-              {loadingMore && (
-                <div className="flex items-center justify-center py-4 gap-2">
-                  <Loader2 className="w-4 h-4 text-[var(--text-tertiary)] animate-spin" strokeWidth={1.5} />
-                  <span className="text-xs text-[var(--text-tertiary)]">加载中</span>
-                </div>
-              )}
-              {!hasMore && emails.length > 0 && (
+              {emails.length > 0 && (
                 <div className="text-center py-4 font-mono tabular-nums text-xs text-[var(--text-tertiary)]">
-                  共 {total} 封邮件
+                  仅展示最近 50 封邮件 · 当前 {emails.length} 封
                 </div>
               )}
             </div>

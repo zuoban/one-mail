@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"context"
+	"log"
 	"math/rand"
 	"net/http"
+	"time"
 
 	"one-mail/backend/database"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
+	"one-mail/backend/internal/services/mail"
 
 	"github.com/gin-gonic/gin"
 )
@@ -43,16 +47,15 @@ func (h *AccountHandler) ListAccounts(c *gin.Context) {
 }
 
 type AddAccountRequest struct {
-	Email          string `json:"email" binding:"required"`
-	Provider       string `json:"provider" binding:"required"`
-	Username       string `json:"username" binding:"required"`
-	Password       string `json:"password" binding:"required"`
-	IMAPHost       string `json:"imap_host"`
-	IMAPPort       int    `json:"imap_port"`
-	SMTPHost       string `json:"smtp_host"`
-	SMTPPort       int    `json:"smtp_port"`
-	Color          string `json:"color"`
-	EnableAutoSync bool   `json:"enable_auto_sync"`
+	Email    string `json:"email" binding:"required"`
+	Provider string `json:"provider" binding:"required"`
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+	IMAPHost string `json:"imap_host"`
+	IMAPPort int    `json:"imap_port"`
+	SMTPHost string `json:"smtp_host"`
+	SMTPPort int    `json:"smtp_port"`
+	Color    string `json:"color"`
 }
 
 func (h *AccountHandler) AddAccount(c *gin.Context) {
@@ -83,18 +86,17 @@ func (h *AccountHandler) AddAccount(c *gin.Context) {
 	}
 
 	account := models.EmailAccount{
-		UserID:         userID,
-		Email:          req.Email,
-		Provider:       req.Provider,
-		IMAPHost:       imapHost,
-		IMAPPort:       imapPort,
-		SMTPHost:       smtpHost,
-		SMTPPort:       smtpPort,
-		Username:       req.Username,
-		Password:       req.Password,
-		Status:         "active",
-		Color:          req.Color,
-		EnableAutoSync: req.EnableAutoSync,
+		UserID:   userID,
+		Email:    req.Email,
+		Provider: req.Provider,
+		IMAPHost: imapHost,
+		IMAPPort: imapPort,
+		SMTPHost: smtpHost,
+		SMTPPort: smtpPort,
+		Username: req.Username,
+		Password: req.Password,
+		Status:   "active",
+		Color:    req.Color,
 	}
 
 	if account.Color == "" {
@@ -110,6 +112,12 @@ func (h *AccountHandler) AddAccount(c *gin.Context) {
 	if err := database.GetDB().Create(&account).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	if _, err := mail.RefreshAccount(ctx, database.GetDB(), &account, mail.MaxLatestEmails); err != nil {
+		log.Printf("Initial fetch for account %d failed: %v", account.ID, err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": account})
@@ -135,12 +143,11 @@ func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 }
 
 type UpdateAccountRequest struct {
-	Email          string `json:"email"`
-	Provider       string `json:"provider"`
-	Username       string `json:"username"`
-	Password       string `json:"password"`
-	Color          string `json:"color"`
-	EnableAutoSync *bool  `json:"enable_auto_sync"`
+	Email    string `json:"email"`
+	Provider string `json:"provider"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Color    string `json:"color"`
 }
 
 func (h *AccountHandler) UpdateAccount(c *gin.Context) {
@@ -175,9 +182,6 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 	if req.Color != "" {
 		account.Color = req.Color
 	}
-	if req.EnableAutoSync != nil {
-		account.EnableAutoSync = *req.EnableAutoSync
-	}
 
 	if err := database.GetDB().Save(&account).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -205,33 +209,4 @@ func (h *AccountHandler) TestAccount(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "connection successful"})
-}
-
-func (h *AccountHandler) ListFolders(c *gin.Context) {
-	userID := c.GetUint("user_id")
-	id := c.Param("id")
-
-	var account models.EmailAccount
-	if err := database.GetDB().Where("user_id = ?", userID).First(&account, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
-		return
-	}
-
-	client, release, err := imap.GetConnectionPool().AcquireConnection(&account)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	healthy := true
-	defer func() {
-		release(healthy)
-	}()
-
-	folders, err := client.ListFoldersWithStatus()
-	if err != nil {
-		healthy = false
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": folders})
 }

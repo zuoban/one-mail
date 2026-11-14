@@ -5,6 +5,7 @@ import (
 	"log"
 	"math/rand/v2"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -116,7 +117,6 @@ func MigrateAndOptimize(db *gorm.DB) error {
 		&models.User{},
 		&models.EmailAccount{},
 		&models.Email{},
-		&models.SyncState{},
 		&models.TelegramConfig{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
@@ -166,12 +166,19 @@ func ensureEmailIndexes(db *gorm.DB) error {
 }
 
 func setupFTS5(db *gorm.DB) {
+	var existingDDL string
+	_ = db.Raw("SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='table' AND name='emails_fts'").Scan(&existingDDL).Error
+	if existingDDL != "" && (strings.Contains(existingDDL, "content='emails'") || strings.Contains(existingDDL, "sender")) {
+		_ = db.Exec("DROP TRIGGER IF EXISTS emails_fts_ai").Error
+		_ = db.Exec("DROP TRIGGER IF EXISTS emails_fts_ad").Error
+		_ = db.Exec("DROP TRIGGER IF EXISTS emails_fts_au").Error
+		_ = db.Exec("DROP TABLE IF EXISTS emails_fts").Error
+	}
+
 	ftsDDL := `CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
 		subject,
-		sender,
+		"from",
 		from_name,
-		content='emails',
-		content_rowid='id',
 		tokenize='trigram'
 	);`
 	if err := db.Exec(ftsDDL).Error; err != nil {
@@ -182,17 +189,15 @@ func setupFTS5(db *gorm.DB) {
 
 	triggers := []string{
 		`CREATE TRIGGER IF NOT EXISTS emails_fts_ai AFTER INSERT ON emails WHEN NEW.deleted_at IS NULL BEGIN
-			INSERT INTO emails_fts(rowid, subject, sender, from_name)
+			INSERT OR REPLACE INTO emails_fts(rowid, subject, "from", from_name)
 			VALUES (NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW."from", ''), COALESCE(NEW.from_name, ''));
 		END;`,
 		`CREATE TRIGGER IF NOT EXISTS emails_fts_ad AFTER DELETE ON emails BEGIN
-			INSERT INTO emails_fts(emails_fts, rowid, subject, sender, from_name)
-			VALUES ('delete', OLD.id, COALESCE(OLD.subject, ''), COALESCE(OLD."from", ''), COALESCE(OLD.from_name, ''));
+			DELETE FROM emails_fts WHERE rowid = OLD.id;
 		END;`,
 		`CREATE TRIGGER IF NOT EXISTS emails_fts_au AFTER UPDATE OF subject, "from", from_name, deleted_at ON emails BEGIN
-			INSERT INTO emails_fts(emails_fts, rowid, subject, sender, from_name)
-			VALUES ('delete', OLD.id, COALESCE(OLD.subject, ''), COALESCE(OLD."from", ''), COALESCE(OLD.from_name, ''));
-			INSERT INTO emails_fts(rowid, subject, sender, from_name)
+			DELETE FROM emails_fts WHERE rowid = OLD.id;
+			INSERT INTO emails_fts(rowid, subject, "from", from_name)
 			SELECT NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW."from", ''), COALESCE(NEW.from_name, '')
 			WHERE NEW.deleted_at IS NULL;
 		END;`,
@@ -207,7 +212,7 @@ func setupFTS5(db *gorm.DB) {
 
 	var needsBackfill bool
 	if err := db.Raw("SELECT (NOT EXISTS(SELECT 1 FROM emails_fts)) AND EXISTS(SELECT 1 FROM emails WHERE deleted_at IS NULL)").Scan(&needsBackfill).Error; err == nil && needsBackfill {
-		if err := db.Exec(`INSERT INTO emails_fts(rowid, subject, sender, from_name)
+		if err := db.Exec(`INSERT OR REPLACE INTO emails_fts(rowid, subject, "from", from_name)
 			SELECT id, COALESCE(subject, ''), COALESCE("from", ''), COALESCE(from_name, '')
 			FROM emails WHERE deleted_at IS NULL`).Error; err != nil {
 			log.Printf("Warning: FTS5 backfill failed: %v", err)

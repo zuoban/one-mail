@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Users, Inbox, LogOut, Settings, Sun, Moon, FileText } from 'lucide-react'
+import { Users, Inbox, LogOut, Settings, Sun, Moon } from 'lucide-react'
 import useAuth from '../context/useAuth'
 import { useTheme } from '../context/ThemeContext'
 import Tooltip from './Tooltip'
@@ -12,7 +12,6 @@ export default function Layout() {
   const navItems = [
     { path: '/inbox', label: '收件箱', icon: Inbox },
     { path: '/accounts', label: '邮箱账户', icon: Users },
-    { path: '/sync-logs', label: '同步日志', icon: FileText },
     { path: '/settings', label: '设置', icon: Settings },
   ]
   const currentNav = navItems.find((item) => location.pathname.startsWith(item.path)) ?? navItems[0]

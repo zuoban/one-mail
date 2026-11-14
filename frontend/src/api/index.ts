@@ -1,7 +1,8 @@
 import axios from 'axios'
 
 const api = axios.create({
-  baseURL: 'http://localhost:8080/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
+  timeout: 30000,
 })
 
 api.interceptors.request.use((config) => {
@@ -28,9 +29,6 @@ export interface User {
   id: number
   username: string
   email: string
-  default_sync_interval: number
-  default_sync_folders: string
-  default_enable_auto_sync: boolean
 }
 
 export interface EmailAccount {
@@ -41,34 +39,6 @@ export interface EmailAccount {
   status: string
   last_sync_time: string
   color: string
-  sync_folders: string
-  enable_auto_sync: boolean
-}
-
-export interface FolderStatus {
-  name: string
-  messages: number
-  unseen: number
-}
-
-export interface SyncStatus {
-  account_id: number
-  running: boolean
-  last_sync_time: string
-  error: string
-  new_count: number
-}
-
-export interface SyncLog {
-  id: number
-  created_at: string
-  account_id: number
-  start_time: string
-  end_time: string
-  status: string
-  new_count: number
-  error: string
-  duration_ms: number
 }
 
 export interface Email {
@@ -87,16 +57,16 @@ export interface Email {
   folder: string
 }
 
-export interface EmailCursor {
-  date: string
-  id: number
-}
-
 export interface EmailListResponse {
   data: Email[]
   total: number
-  has_more: boolean
-  next_cursor: EmailCursor | null
+}
+
+export interface RefreshEmailsResponse {
+  message: string
+  refreshed_accounts?: number
+  new_count: number
+  errors?: Record<string, string>
 }
 export interface TelegramConfig {
   enabled: boolean
@@ -123,43 +93,29 @@ export const authApi = {
 
 export const accountApi = {
   list: () => api.get<{ data: EmailAccount[] }>('/accounts').then(r => r.data),
-  add: (data: { email: string; provider: string; username: string; password: string; color?: string; enable_auto_sync?: boolean }) =>
+  add: (data: { email: string; provider: string; username: string; password: string; color?: string }) =>
     api.post<{ data: EmailAccount }>('/accounts', data).then(r => r.data),
-  update: (id: number, data: { email?: string; provider?: string; username?: string; password?: string; color?: string; enable_auto_sync?: boolean }) =>
+  update: (id: number, data: { email?: string; provider?: string; username?: string; password?: string; color?: string }) =>
     api.put<{ data: EmailAccount }>(`/accounts/${id}`, data).then(r => r.data),
   delete: (id: number) => api.delete(`/accounts/${id}`),
   test: (id: number) => api.post(`/accounts/${id}/test`),
-  sync: (id: number) => api.post(`/accounts/${id}/sync`),
-  listFolders: (id: number) => api.get<{ data: FolderStatus[] }>(`/accounts/${id}/folders`).then(r => r.data),
-  updateSyncConfig: (id: number, data: { sync_interval?: number; sync_folders?: string; enable_auto_sync?: boolean }) =>
-    api.put(`/accounts/${id}/sync/config`, data),
+  refresh: (id: number) => api.post<RefreshEmailsResponse>(`/accounts/${id}/refresh`, null, { timeout: 45000 }).then(r => r.data),
 }
 
-export const syncApi = {
-  getStatus: (id: number) => api.get<{ data: SyncStatus }>(`/sync/status/${id}`).then(r => r.data),
-  getAllStatuses: () => api.get<{ data: Record<string, SyncStatus> }>('/sync/status').then(r => r.data),
-  start: () => api.post('/sync/start'),
-  stop: () => api.post('/sync/stop'),
-  getLogs: (params?: { account_id?: number; page?: number; page_size?: number }) =>
-    api.get<{ data: SyncLog[]; total: number; page: number; page_size: number }>('/sync/logs', { params }).then(r => r.data),
-  getLogsByAccount: (accountId: number, params?: { page?: number; page_size?: number }) =>
-    api.get<{ data: SyncLog[]; total: number; page: number; page_size: number }>(`/sync/logs/${accountId}`, { params }).then(r => r.data),
-  clearLogs: (accountId: number) => api.delete(`/sync/logs/${accountId}`),
-  applyToAll: () => api.post<{ message: string; updated_count: number }>('/sync/apply-to-all').then(r => r.data),
-}
 export const emailApi = {
   list: (
     params?: {
       account_id?: number
-      page?: number
-      page_size?: number
       search?: string
       unread?: boolean
-      cursor_date?: string
-      cursor_id?: number
     },
     signal?: AbortSignal,
   ) => api.get<EmailListResponse>('/emails', { params, signal }).then(r => r.data),
+  refresh: (accountId?: number) =>
+    api.post<RefreshEmailsResponse>('/emails/refresh', null, {
+      params: accountId ? { account_id: accountId } : undefined,
+      timeout: 45000,
+    }).then(r => r.data),
   get: (id: number) => api.get<{ data: Email }>(`/emails/${id}`).then(r => r.data),
   markAsRead: (id: number) => api.post(`/emails/${id}/read`),
   markAsUnread: (id: number) => api.post(`/emails/${id}/unread`),

@@ -7,7 +7,6 @@ import Layout from './components/Layout'
 
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Accounts = lazy(() => import('./pages/Accounts'))
-const SyncLogs = lazy(() => import('./pages/SyncLogs'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Login = lazy(() => import('./pages/Login'))
 const Register = lazy(() => import('./pages/Register'))
@@ -41,7 +40,6 @@ function App() {
                 <Route index element={<Navigate to="/inbox" replace />} />
                 <Route path="inbox" element={<Dashboard />} />
                 <Route path="accounts" element={<Accounts />} />
-                <Route path="sync-logs" element={<SyncLogs />} />
                 <Route path="settings" element={<Settings />} />
               </Route>
             </Routes>

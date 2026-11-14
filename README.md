@@ -93,6 +93,8 @@ make frontend  # 前端 :5173
 - 后端 API: http://localhost:8080
 - 健康检查: http://localhost:8080/health
 
+前端默认通过同源 `/api` 请求后端。开发模式由 Vite 代理到 `http://127.0.0.1:8080`，Docker 部署由 Nginx 代理。若前后端部署在不同域名，可在前端构建时设置 `VITE_API_BASE_URL=https://api.example.com/api`，并在后端配置允许的跨域来源。
+
 ## 🚀 部署
 
 ### Docker 快速部署（推荐）
@@ -229,14 +231,16 @@ mail.example.com {
 - `POST /api/accounts` - 添加邮箱账户
 - `DELETE /api/accounts/:id` - 删除账户
 - `POST /api/accounts/:id/test` - 测试账户连接
-- `POST /api/accounts/:id/sync` - 同步邮件
+- `POST /api/accounts/:id/refresh` - 拉取该账户最近 50 封邮件
 
 ### 邮件
-- `GET /api/emails` - 获取邮件列表
-- `GET /api/emails/:id` - 获取邮件详情
+- `GET /api/emails` - 获取最近 50 封邮件列表
+- `POST /api/emails/refresh` - 手动刷新邮件（拉取最近 50 封）
 - `POST /api/emails/:id/read` - 标记已读
 - `POST /api/emails/:id/unread` - 标记未读
 - `DELETE /api/emails/:id` - 删除邮件
+
+刷新时仅加载与本批邮件 Message-ID 或 UID 匹配的已有记录，旧邮件由数据库直接清理。新增邮件、已读/星标状态、旧邮件清理和刷新时间在同一事务中提交；任一步骤失败都会回滚并返回错误。Telegram 新邮件通知在事务提交后发送，本地删除的邮件不会因刷新恢复。
 
 ## ⚙️ 配置
 

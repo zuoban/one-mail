@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -44,6 +45,10 @@ func GetConnectionPool() *ConnectionPool {
 // Callers MUST invoke the returned release(healthy) function when done; passing healthy=false
 // closes and discards the connection (e.g. after timeout or network error).
 func (p *ConnectionPool) AcquireConnection(account *models.EmailAccount) (*Client, func(healthy bool), error) {
+	return p.AcquireConnectionContext(context.Background(), account)
+}
+
+func (p *ConnectionPool) AcquireConnectionContext(ctx context.Context, account *models.EmailAccount) (*Client, func(healthy bool), error) {
 	// 1. Try primary slot
 	p.mu.Lock()
 	wrapper, exists := p.connections[account.ID]
@@ -63,13 +68,16 @@ func (p *ConnectionPool) AcquireConnection(account *models.EmailAccount) (*Clien
 		if client != nil {
 			client.ForceClose()
 		}
-		newClient, err := p.dialWithRetry(account)
+		newClient, err := p.dialWithRetryContext(ctx, account)
 		if err != nil {
 			p.mu.Lock()
 			wrapper.inUse = false
 			wrapper.mu.Lock()
 			wrapper.client = nil
 			wrapper.mu.Unlock()
+			if cur, ok := p.connections[account.ID]; ok && cur == wrapper {
+				delete(p.connections, account.ID)
+			}
 			p.mu.Unlock()
 			return nil, nil, err
 		}
@@ -92,7 +100,7 @@ func (p *ConnectionPool) AcquireConnection(account *models.EmailAccount) (*Clien
 		p.connections[account.ID] = wrapper
 		p.mu.Unlock()
 
-		newClient, err := p.dialWithRetry(account)
+		newClient, err := p.dialWithRetryContext(ctx, account)
 		if err != nil {
 			p.mu.Lock()
 			if cur, ok := p.connections[account.ID]; ok && cur == wrapper {
@@ -130,7 +138,7 @@ func (p *ConnectionPool) AcquireConnection(account *models.EmailAccount) (*Clien
 	}
 
 	// 4. Dial overflow connection
-	newClient, err := p.dialWithRetry(account)
+	newClient, err := p.dialWithRetryContext(ctx, account)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -204,19 +212,36 @@ func (p *ConnectionPool) releaseExtra(accountID uint, client *Client, healthy bo
 }
 
 func (p *ConnectionPool) dialWithRetry(account *models.EmailAccount) (*Client, error) {
+	return p.dialWithRetryContext(context.Background(), account)
+}
+
+func (p *ConnectionPool) dialWithRetryContext(ctx context.Context, account *models.EmailAccount) (*Client, error) {
 	var lastErr error
-	for retry := range 3 {
-		client := NewClient(account)
-		if err := client.Connect(); err != nil {
-			lastErr = err
-			if retry < 2 {
-				time.Sleep(time.Second * time.Duration(1<<retry))
-			}
-			continue
+	const maxAttempts = 2
+	for retry := range maxAttempts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		return client, nil
+		attemptCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		client := NewClient(account)
+		err := client.ConnectContext(attemptCtx)
+		cancel()
+		if err == nil {
+			return client, nil
+		}
+		lastErr = err
+		if IsAuthError(err) || ctx.Err() != nil {
+			return nil, lastErr
+		}
+		if retry < maxAttempts-1 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second):
+			}
+		}
 	}
-	return nil, fmt.Errorf("failed to connect after 3 retries: %w", lastErr)
+	return nil, fmt.Errorf("failed to connect after %d attempts: %w", maxAttempts, lastErr)
 }
 
 func (p *ConnectionPool) GetConnection(account *models.EmailAccount) (*Client, error) {

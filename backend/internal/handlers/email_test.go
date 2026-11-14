@@ -2,16 +2,16 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/gin-gonic/gin"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"one-mail/backend/database"
 	"one-mail/backend/internal/models"
@@ -36,7 +36,7 @@ func setupEmailHandlerTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func TestListEmails_CursorUnreadOwnershipAndSearch(t *testing.T) {
+func TestListEmails_Latest50UnreadOwnershipAndSearch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupEmailHandlerTestDB(t)
 	u1 := models.User{Username: "user1", Password: "p", Email: "u1@example.com"}
@@ -78,10 +78,8 @@ func TestListEmails_CursorUnreadOwnershipAndSearch(t *testing.T) {
 	r.GET("/emails", handler.ListEmails)
 
 	type listResp struct {
-		Data       []models.Email `json:"data"`
-		Total      int64          `json:"total"`
-		HasMore    bool           `json:"has_more"`
-		NextCursor *EmailCursor   `json:"next_cursor"`
+		Data  []models.Email `json:"data"`
+		Total int            `json:"total"`
 	}
 
 	// 1. Cross-user account_id isolation check
@@ -99,32 +97,18 @@ func TestListEmails_CursorUnreadOwnershipAndSearch(t *testing.T) {
 		t.Fatalf("expected 0 emails for another user's account, got %d", len(resp.Data))
 	}
 
-	// 2. Cursor pagination across all pages (page_size=2)
-	req = httptest.NewRequest(http.MethodGet, "/emails?page_size=2", nil)
+	// 2. Returns all 4 emails ordered newest first
+	req = httptest.NewRequest(http.MethodGet, "/emails", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Data) != 2 || resp.Total != 4 || !resp.HasMore || resp.NextCursor == nil {
-		t.Fatalf("unexpected page 1 response: len=%d total=%d hasMore=%v cursor=%v", len(resp.Data), resp.Total, resp.HasMore, resp.NextCursor)
+	if len(resp.Data) != 4 || resp.Total != 4 {
+		t.Fatalf("unexpected response: len=%d total=%d", len(resp.Data), resp.Total)
 	}
-	if resp.Data[0].Subject != "项目周报" || resp.Data[1].Subject != "System Alert" {
-		t.Fatalf("unexpected page 1 order: %q, %q", resp.Data[0].Subject, resp.Data[1].Subject)
-	}
-
-	req = httptest.NewRequest(http.MethodGet, "/emails?page_size=2&cursor_id=3&cursor_date="+resp.NextCursor.Date.Format(time.RFC3339Nano), nil)
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	var resp2 listResp
-	if err := json.Unmarshal(w.Body.Bytes(), &resp2); err != nil {
-		t.Fatal(err)
-	}
-	if len(resp2.Data) != 2 || resp2.HasMore || resp2.Total != 0 {
-		t.Fatalf("unexpected cursor page 2: len=%d hasMore=%v total=%d", len(resp2.Data), resp2.HasMore, resp2.Total)
-	}
-	if resp2.Data[0].Subject != "电子发票通知" || resp2.Data[1].Subject != "Weekly Report" {
-		t.Fatalf("unexpected page 2 order: %q, %q", resp2.Data[0].Subject, resp2.Data[1].Subject)
+	if resp.Data[0].Subject != "项目周报" || resp.Data[1].Subject != "System Alert" || resp.Data[2].Subject != "电子发票通知" || resp.Data[3].Subject != "Weekly Report" {
+		t.Fatalf("unexpected order: %+v", resp.Data)
 	}
 
 	// 3. Unread filter
@@ -151,26 +135,35 @@ func TestListEmails_CursorUnreadOwnershipAndSearch(t *testing.T) {
 		t.Fatalf("expected 1 search result for 发票, got %+v", searchResp.Data)
 	}
 
-	// 5. Single-page total shortcut and out-of-range page fallback
-	req = httptest.NewRequest(http.MethodGet, "/emails?page=1&page_size=10", nil)
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	var singleResp listResp
-	if err := json.Unmarshal(w.Body.Bytes(), &singleResp); err != nil {
-		t.Fatal(err)
+	// 5. Caps at latest 50 emails even when DB contains > 50 rows
+	extra := make([]models.Email, 0, 55)
+	for i := 1; i <= 55; i++ {
+		extra = append(extra, models.Email{
+			AccountID: acc1.ID,
+			MessageID: fmt.Sprintf("extra-%d", i),
+			From:      "bulk@acme.com",
+			To:        "u1@example.com",
+			Subject:   fmt.Sprintf("Bulk %d", i),
+			Date:      baseTime.Add(time.Duration(10+i) * time.Hour),
+			Folder:    "INBOX",
+			UID:       uint(100 + i),
+		})
 	}
-	if len(singleResp.Data) != 4 || singleResp.Total != 4 || singleResp.HasMore {
-		t.Fatalf("expected single-page total=4 hasMore=false, got len=%d total=%d hasMore=%v", len(singleResp.Data), singleResp.Total, singleResp.HasMore)
+	if err := db.Create(&extra).Error; err != nil {
+		t.Fatal(err)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/emails?page=3&page_size=10", nil)
+	req = httptest.NewRequest(http.MethodGet, "/emails", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	var emptyPageResp listResp
-	if err := json.Unmarshal(w.Body.Bytes(), &emptyPageResp); err != nil {
+	var cappedResp listResp
+	if err := json.Unmarshal(w.Body.Bytes(), &cappedResp); err != nil {
 		t.Fatal(err)
 	}
-	if len(emptyPageResp.Data) != 0 || emptyPageResp.Total != 4 || emptyPageResp.HasMore {
-		t.Fatalf("expected empty page 3 with total=4, got len=%d total=%d hasMore=%v", len(emptyPageResp.Data), emptyPageResp.Total, emptyPageResp.HasMore)
+	if len(cappedResp.Data) != 50 || cappedResp.Total != 50 {
+		t.Fatalf("expected capped at 50 emails, got len=%d total=%d", len(cappedResp.Data), cappedResp.Total)
+	}
+	if cappedResp.Data[0].Subject != "Bulk 55" || cappedResp.Data[49].Subject != "Bulk 6" {
+		t.Fatalf("expected Bulk 55..Bulk 6, got first=%q last=%q", cappedResp.Data[0].Subject, cappedResp.Data[49].Subject)
 	}
 }

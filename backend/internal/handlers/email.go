@@ -11,9 +11,9 @@ import (
 	"one-mail/backend/database"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
+	"one-mail/backend/internal/services/mail"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 type EmailHandler struct{}
@@ -23,33 +23,15 @@ func NewEmailHandler() *EmailHandler {
 }
 
 type ListEmailsQuery struct {
-	AccountID  uint   `form:"account_id"`
-	Folder     string `form:"folder"`
-	Page       int    `form:"page"`
-	PageSize   int    `form:"page_size"`
-	Search     string `form:"search"`
-	Unread     bool   `form:"unread"`
-	CursorDate string `form:"cursor_date"`
-	CursorID   uint   `form:"cursor_id"`
-}
-
-type EmailCursor struct {
-	Date time.Time `json:"date"`
-	ID   uint      `json:"id"`
+	AccountID uint   `form:"account_id"`
+	Folder    string `form:"folder"`
+	Search    string `form:"search"`
+	Unread    bool   `form:"unread"`
 }
 
 func (h *EmailHandler) ListEmails(c *gin.Context) {
 	var query ListEmailsQuery
 	_ = c.ShouldBindQuery(&query)
-	if query.Page < 1 {
-		query.Page = 1
-	}
-	if query.PageSize <= 0 {
-		query.PageSize = 20
-	}
-	if query.PageSize > 100 {
-		query.PageSize = 100
-	}
 
 	userID := c.GetUint("user_id")
 	db := database.GetDB()
@@ -63,10 +45,8 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 
 	if len(accounts) == 0 {
 		c.JSON(http.StatusOK, gin.H{
-			"data":        []interface{}{},
-			"total":       0,
-			"has_more":    false,
-			"next_cursor": nil,
+			"data":  []interface{}{},
+			"total": 0,
 		})
 		return
 	}
@@ -80,7 +60,7 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 
 	folder := query.Folder
 	if folder == "" {
-		folder = "INBOX"
+		folder = mail.DefaultFolder
 	}
 	q = q.Where("folder = ?", folder)
 
@@ -100,9 +80,6 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 		}
 	}
 
-	useCursor := query.CursorID > 0 && query.CursorDate != ""
-	var total int64
-
 	type EmailListItem struct {
 		ID            uint      `json:"id"`
 		CreatedAt     time.Time `json:"created_at"`
@@ -117,65 +94,19 @@ func (h *EmailHandler) ListEmails(c *gin.Context) {
 		Folder        string    `json:"folder"`
 	}
 
-	listQuery := q.Session(&gorm.Session{}).
-		Select("id, created_at, account_id, `from`, from_name, `to`, subject, date, has_attachment, is_read, folder").
-		Order("date DESC, id DESC")
-
 	var emails []EmailListItem
-	hasMore := false
-	var nextCursor *EmailCursor
-
-	if useCursor {
-		cursorTime, err := time.Parse(time.RFC3339Nano, query.CursorDate)
-		if err != nil {
-			cursorTime, err = time.Parse(time.RFC3339, query.CursorDate)
-		}
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor_date"})
-			return
-		}
-		listQuery = listQuery.Where("(date < ? OR (date = ? AND id < ?))", cursorTime, cursorTime, query.CursorID).
-			Limit(query.PageSize + 1)
-		if err := listQuery.Find(&emails).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if len(emails) > query.PageSize {
-			hasMore = true
-			emails = emails[:query.PageSize]
-		}
-	} else {
-		offset := (query.Page - 1) * query.PageSize
-		if err := listQuery.Offset(offset).Limit(query.PageSize + 1).Find(&emails).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if len(emails) > query.PageSize {
-			hasMore = true
-			emails = emails[:query.PageSize]
-			q.Session(&gorm.Session{}).Count(&total)
-		} else if offset == 0 || len(emails) > 0 {
-			total = int64(offset + len(emails))
-		} else {
-			q.Session(&gorm.Session{}).Count(&total)
-		}
-	}
-
-	if len(emails) > 0 && hasMore {
-		last := emails[len(emails)-1]
-		nextCursor = &EmailCursor{
-			Date: last.Date,
-			ID:   last.ID,
-		}
+	if err := q.
+		Select("id, created_at, account_id, `from`, from_name, `to`, subject, date, has_attachment, is_read, folder").
+		Order("date DESC, id DESC").
+		Limit(mail.MaxLatestEmails).
+		Find(&emails).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data":        emails,
-		"total":       total,
-		"page":        query.Page,
-		"page_size":   query.PageSize,
-		"has_more":    hasMore,
-		"next_cursor": nextCursor,
+		"data":  emails,
+		"total": len(emails),
 	})
 }
 
@@ -208,7 +139,7 @@ func (h *EmailHandler) fetchAndCacheBody(ctx context.Context, email *models.Emai
 	}
 
 	pool := imap.GetConnectionPool()
-	imapClient, release, err := pool.AcquireConnection(&account)
+	imapClient, release, err := pool.AcquireConnectionContext(ctx, &account)
 	if err != nil {
 		return
 	}
@@ -386,84 +317,77 @@ func (h *EmailHandler) DeleteEmail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
 }
 
-func (h *EmailHandler) SyncEmails(c *gin.Context) {
+func (h *EmailHandler) RefreshEmails(c *gin.Context) {
+	var query struct {
+		AccountID uint `form:"account_id"`
+	}
+	_ = c.ShouldBindQuery(&query)
+
+	userID := c.GetUint("user_id")
+	db := database.GetDB()
+
+	var accounts []models.EmailAccount
+	q := db.Where("user_id = ? AND status = ?", userID, "active")
+	if query.AccountID > 0 {
+		q = q.Where("id = ?", query.AccountID)
+	}
+	if err := q.Find(&accounts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if len(accounts) == 0 {
+		if query.AccountID > 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"message":            "no active accounts",
+			"refreshed_accounts": 0,
+			"new_count":          0,
+		})
+		return
+	}
+
+	summary := mail.RefreshAccounts(c.Request.Context(), db, accounts, mail.MaxLatestEmails)
+	if summary.Refreshed == 0 && len(summary.Errors) > 0 {
+		for _, errMsg := range summary.Errors {
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error":              errMsg,
+				"refreshed_accounts": 0,
+				"new_count":          0,
+				"errors":             summary.Errors,
+			})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":            "refreshed",
+		"refreshed_accounts": summary.Refreshed,
+		"new_count":          summary.NewCount,
+		"errors":             summary.Errors,
+	})
+}
+
+func (h *EmailHandler) RefreshAccountEmails(c *gin.Context) {
 	accountID := c.Param("id")
 	userID := c.GetUint("user_id")
+	db := database.GetDB()
 
 	var account models.EmailAccount
-	if err := database.GetDB().
-		Where("id = ? AND user_id = ?", accountID, userID).
-		First(&account).Error; err != nil {
+	if err := db.Where("id = ? AND user_id = ?", accountID, userID).First(&account).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "account not found"})
 		return
 	}
 
-	imapClient, release, err := imap.GetConnectionPool().AcquireConnection(&account)
+	newCount, err := mail.RefreshAccount(c.Request.Context(), db, &account, mail.MaxLatestEmails)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	healthy := true
-	defer func() {
-		release(healthy)
-	}()
-
-	emails, err := imapClient.FetchEmails("INBOX", account.LastSyncTime, 50)
-	if err != nil {
-		healthy = false
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 批量查询已存在的 message_id，避免 N+1 查询
-	var existingMessageIDs []string
-	messageIDs := make([]string, 0, len(emails))
-	for _, e := range emails {
-		messageIDs = append(messageIDs, e.MessageID)
-	}
-
-	if len(messageIDs) > 0 {
-		database.GetDB().Model(&models.Email{}).
-			Where("account_id = ? AND message_id IN ?", account.ID, messageIDs).
-			Pluck("message_id", &existingMessageIDs)
-	}
-
-	// 创建已存在 message_id 的集合，用于快速查找
-	existingSet := make(map[string]bool, len(existingMessageIDs))
-	for _, id := range existingMessageIDs {
-		existingSet[id] = true
-	}
-
-	var newEmails []models.Email
-	for _, e := range emails {
-		// 使用内存查找替代数据库查询
-		if existingSet[e.MessageID] {
-			continue
-		}
-
-		email := models.Email{
-			AccountID:     account.ID,
-			MessageID:     e.MessageID,
-			From:          e.From,
-			FromName:      e.FromName,
-			To:            e.To,
-			Subject:       e.Subject,
-			Date:          e.Date,
-			BodyText:      e.BodyText,
-			BodyHTML:      e.BodyHTML,
-			HasAttachment: e.HasAttachment,
-			IsRead:        false,
-			Folder:        "INBOX",
-			UID:           uint(e.UID),
-		}
-		newEmails = append(newEmails, email)
-	}
-
-	if len(newEmails) > 0 {
-		database.GetDB().Create(&newEmails)
-	}
-
-	database.GetDB().Model(&account).Update("last_sync_time", time.Now())
-
-	c.JSON(http.StatusOK, gin.H{"message": "synced", "count": len(newEmails)})
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "refreshed",
+		"new_count": newCount,
+	})
 }

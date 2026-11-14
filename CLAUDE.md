@@ -49,12 +49,12 @@ backend/
 ├── config.yaml             # 配置文件
 ├── database/database.go    # GORM 连接
 └── internal/
-    ├── handlers/           # HTTP 处理器 (auth, account, email, sync, telegram)
+    ├── handlers/           # HTTP 处理器 (auth, account, email, telegram)
     ├── middleware/         # JWT 认证、CORS 中间件
     ├── models/models.go    # GORM 模型 (User, EmailAccount, Email)
     ├── services/
     │   ├── imap/          # IMAP 客户端封装 + 连接池
-    │   ├── sync/          # 邮件同步服务 (scheduler, worker, cache)
+    │   ├── mail/          # 按需拉取最近 50 封邮件服务
     │   └── telegram/      # Telegram 通知集成
     └── utils/              # JWT 工具
 ```
@@ -62,16 +62,14 @@ backend/
 **架构分层**:
 - `handlers/` - HTTP 请求处理，返回 JSON 响应
 - `services/imap/` - IMAP 协议操作，连接池管理
-- `services/sync/` - 后台同步调度器、工作队列、缓存优化
+- `services/mail/` - 按需从 IMAP 拉取最近 50 封邮件并维护本地缓存
 - `services/telegram/` - Telegram Bot 通知推送
 - `models/` - GORM 数据模型
 
-**同步机制**:
-- `scheduler.go` - 定时任务调度 (cron)
-- `worker.go` - 异步邮件同步工作器
-- `cache.go` - 邮件缓存，避免重复拉取
+**邮件拉取机制**:
+- 无后台定时任务，仅在手动刷新或添加账户时按需拉取
+- 每个邮箱账户仅保留并展示最近 50 封邮件
 - `pool.go` - IMAP 连接池，复用连接
-
 ### Frontend (React)
 ```
 frontend/src/
@@ -101,9 +99,7 @@ frontend/src/
 - `backend/internal/handlers/` - API 路由实现
 - `backend/internal/services/imap/client.go` - IMAP 协议封装
 - `backend/internal/services/imap/pool.go` - IMAP 连接池
-- `backend/internal/services/sync/scheduler.go` - 定时同步调度
-- `backend/internal/services/sync/worker.go` - 异步同步工作器
-- `backend/internal/services/sync/cache.go` - 邮件缓存层
+- `backend/internal/services/mail/fetcher.go` - 最近 50 封邮件拉取与裁剪
 - `frontend/src/api/index.ts` - Axios 实例配置
 - `frontend/src/context/auth-context.ts` - 认证状态管理
 
@@ -112,7 +108,6 @@ frontend/src/
 - 前端使用 TailwindCSS 4，样式在 `index.css` 中配置
 - API 认证使用 JWT，token 存放在 localStorage
 - 密码字段在 JSON 序列化时使用 `json:"-"` 排除
-- 邮件同步支持手动触发 (`/api/accounts/:id/sync`) 和自动调度 (cron)
+- 邮件列表按需刷新 (`/api/emails/refresh` 或 `/api/accounts/:id/refresh`)，最多展示最近 50 封
 - IMAP 连接池复用连接，避免频繁建立连接
-- 邮件缓存使用 Bloom Filter 去重，减少数据库查询
-- 支持 Telegram Bot 推送新邮件通知
+- 支持 Telegram Bot 推送邮件通知
