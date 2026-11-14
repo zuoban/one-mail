@@ -19,7 +19,15 @@ func TestAccountIdentityUpdateClearsCacheAtomically(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("commit_failure=%t", fail), func(t *testing.T) {
 			db := setupEmailHandlerTestDB(t)
-			account := models.EmailAccount{Username: "old", UIDValidity: 9, LastSyncTime: time.Now()}
+			account := models.EmailAccount{
+				Email:        "owner@example.com",
+				Provider:     "custom",
+				Username:     "old",
+				IMAPHost:     "mail.example.com",
+				IMAPPort:     993,
+				UIDValidity:  9,
+				LastSyncTime: time.Now(),
+			}
 			if err := db.Create(&account).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +70,16 @@ func TestPasswordRotationPreservesCachedBody(t *testing.T) {
 	if err := credentials.Init(base64.StdEncoding.EncodeToString(make([]byte, 32)), ""); err != nil {
 		t.Fatal(err)
 	}
-	account := models.EmailAccount{Username: "same", UIDValidity: 9, IdentityVersion: 3, ConfigVersion: 4}
+	account := models.EmailAccount{
+		Email:           "owner@example.com",
+		Provider:        "custom",
+		Username:        "same",
+		IMAPHost:        "mail.example.com",
+		IMAPPort:        993,
+		UIDValidity:     9,
+		IdentityVersion: 3,
+		ConfigVersion:   4,
+	}
 	if err := db.Create(&account).Error; err != nil {
 		t.Fatal(err)
 	}

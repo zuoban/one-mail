@@ -186,8 +186,8 @@ export default function Accounts() {
       provider: account.provider,
       username: account.username,
       password: '',
-      imap_host: account.imap_host || '',
-      imap_port: String(account.imap_port || 993),
+      imap_host: account.imap_host,
+      imap_port: String(account.imap_port),
     })
     setError('')
     setShowModal(true)

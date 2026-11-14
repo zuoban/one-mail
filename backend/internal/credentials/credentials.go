@@ -96,7 +96,7 @@ func Encrypt(plaintext string) (string, error) {
 }
 
 // Decrypt also accepts transient plaintext used to test an unsaved mailbox.
-// Persisted accounts are encrypted and authenticated during startup migration.
+// Persisted accounts are encrypted and authenticated during startup.
 func Decrypt(value string) (string, error) {
 	if !IsEncrypted(value) {
 		return value, nil

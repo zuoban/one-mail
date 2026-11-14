@@ -31,8 +31,8 @@ func setupEmailHandlerTestDB(t *testing.T) *gorm.DB {
 	if err := database.SetupSQLite(db, true); err != nil {
 		t.Fatalf("SetupSQLite failed: %v", err)
 	}
-	if err := database.MigrateAndOptimize(db); err != nil {
-		t.Fatalf("MigrateAndOptimize failed: %v", err)
+	if err := database.InitializeSchema(db); err != nil {
+		t.Fatalf("InitializeSchema failed: %v", err)
 	}
 	sqlDB, err := db.DB()
 	if err != nil {

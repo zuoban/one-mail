@@ -98,7 +98,7 @@ export class MailStore {
     try {
       const response = await this.api.list(this.query, controller.signal)
       if (!this.active() || controller.signal.aborted || this.listRequest !== controller) return 'cancelled'
-      const emails = response.data || []
+      const emails = response.data
       // Full or combined windows can omit cached messages that still exist.
       // Only an incomplete, unsearched account window is authoritative.
       if (!this.query.search && this.query.account_id !== undefined && emails.length < (this.query.limit ?? DEFAULT_EMAIL_LIMIT)) {

@@ -14,7 +14,7 @@ import (
 	"one-mail/backend/internal/models"
 )
 
-func TestSetupSQLiteAndMigrateIndexes(t *testing.T) {
+func TestSetupSQLiteAndInitializeIndexes(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -50,18 +50,10 @@ func TestSetupSQLiteAndMigrateIndexes(t *testing.T) {
 	if stats := sqlDB.Stats(); stats.MaxOpenConnections != 1 {
 		t.Fatalf("expected MaxOpenConnections=1, got %d", stats.MaxOpenConnections)
 	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	// Simulate legacy schema with misaligned idx_account_folder_date(account_id, date, folder)
-	if err := db.AutoMigrate(&models.Email{}); err != nil {
-		t.Fatalf("initial AutoMigrate failed: %v", err)
-	}
-	_ = db.Exec("DROP INDEX IF EXISTS idx_account_folder_date").Error
-	if err := db.Exec("CREATE INDEX idx_account_folder_date ON emails(account_id, date, folder)").Error; err != nil {
-		t.Fatalf("failed to create legacy index: %v", err)
-	}
-
-	if err := MigrateAndOptimize(db); err != nil {
-		t.Fatalf("MigrateAndOptimize failed: %v", err)
+	if err := InitializeSchema(db); err != nil {
+		t.Fatalf("InitializeSchema failed: %v", err)
 	}
 
 	type indexCol struct {
@@ -71,10 +63,10 @@ func TestSetupSQLiteAndMigrateIndexes(t *testing.T) {
 	}
 	var cols []indexCol
 	if err := db.Raw("PRAGMA index_info('idx_account_folder_date')").Scan(&cols).Error; err != nil {
-		t.Fatalf("failed to inspect rebuilt index: %v", err)
+		t.Fatalf("failed to inspect index: %v", err)
 	}
 	if len(cols) < 3 || cols[0].Name != "account_id" || cols[1].Name != "folder" || cols[2].Name != "date" {
-		t.Fatalf("expected rebuilt index (account_id, folder, date, ...), got %+v", cols)
+		t.Fatalf("expected index (account_id, folder, date, ...), got %+v", cols)
 	}
 
 	var folderCols []indexCol
@@ -138,7 +130,7 @@ func TestSetupSQLiteAndMigrateIndexes(t *testing.T) {
 
 func ftsTestDatabase(t *testing.T) *gorm.DB {
 	t.Helper()
-	db := openSecurityMigrationDB(t)
+	db := openTestDatabase(t)
 	if err := db.Exec("CREATE VIRTUAL TABLE fts_probe USING fts5(value, tokenize='trigram')").Error; err != nil {
 		if strings.Contains(err.Error(), "no such module") || strings.Contains(err.Error(), "no such tokenizer") {
 			t.Skip("SQLite build does not include FTS5 trigram")
@@ -200,18 +192,8 @@ func TestFTSRepairsMissingStaleAndExtraRows(t *testing.T) {
 	}
 }
 
-func TestFTSConsistentStartupDoesNotRebuildAndUpgradesUpdateTrigger(t *testing.T) {
+func TestFTSConsistentStartupDoesNotRebuild(t *testing.T) {
 	db := ftsTestDatabase(t)
-	if err := db.Exec("DROP TRIGGER emails_fts_au").Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Exec(`CREATE TRIGGER emails_fts_au AFTER UPDATE OF subject, "from", from_name ON emails BEGIN
-		DELETE FROM emails_fts WHERE rowid = OLD.id;
-		INSERT INTO emails_fts(rowid, subject, "from", from_name)
-		VALUES (NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW."from", ''), COALESCE(NEW.from_name, ''));
-	END`).Error; err != nil {
-		t.Fatal(err)
-	}
 	if err := db.Callback().Raw().Before("gorm:raw").Register("test:reject_rebuild", func(tx *gorm.DB) {
 		if strings.HasPrefix(tx.Statement.SQL.String(), "DELETE FROM emails_fts") || strings.HasPrefix(tx.Statement.SQL.String(), "INSERT INTO emails_fts") {
 			tx.AddError(errors.New("unexpected FTS rebuild"))
@@ -261,7 +243,7 @@ func TestFTSSetupFailuresDisableAndRollBack(t *testing.T) {
 			fail := func(tx *gorm.DB) {
 				sql := tx.Statement.SQL.String()
 				if (phase == "table" && strings.HasPrefix(sql, "CREATE VIRTUAL TABLE")) ||
-					(phase == "trigger" && strings.HasPrefix(sql, "CREATE TRIGGER emails_fts_au")) ||
+					(phase == "trigger" && strings.HasPrefix(sql, "CREATE TRIGGER IF NOT EXISTS emails_fts_au")) ||
 					(phase == "validation" && strings.HasPrefix(sql, "SELECT EXISTS")) ||
 					(phase == "backfill" && strings.HasPrefix(sql, "INSERT INTO emails_fts")) {
 					injected = true

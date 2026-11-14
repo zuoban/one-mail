@@ -239,12 +239,8 @@ func (s *AccountService) Update(ctx context.Context, id uint, req UpdateAccount)
 		if req.IMAPPort != nil {
 			account.IMAPPort = *req.IMAPPort
 		}
-		// Canonicalize known providers on every edit, while permitting unrelated
-		// credential updates to legacy rows whose provider has not been assigned.
-		if account.Provider != "" || req.Provider != nil || req.IMAPHost != nil || req.IMAPPort != nil {
-			if err := configureAccount(&account); err != nil {
-				return err
-			}
+		if err := configureAccount(&account); err != nil {
+			return err
 		}
 		if sealed != "" {
 			account.Password = sealed

@@ -29,7 +29,7 @@ func setupFetcherTestDB(t *testing.T) *gorm.DB {
 	if err := database.SetupSQLite(db, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.MigrateAndOptimize(db); err != nil {
+	if err := database.InitializeSchema(db); err != nil {
 		t.Fatal(err)
 	}
 	return db

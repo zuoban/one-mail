@@ -24,7 +24,14 @@ func TestAccountUpdateEncryptsPasswordAndDeleteCleansMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	account := models.EmailAccount{Password: sealed}
+	account := models.EmailAccount{
+		Email:    "owner@example.com",
+		Provider: "custom",
+		Username: "owner",
+		Password: sealed,
+		IMAPHost: "mail.example.com",
+		IMAPPort: 993,
+	}
 	if err := db.Create(&account).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +107,14 @@ func TestBodyFetchFailureDoesNotReturnEmptySuccess(t *testing.T) {
 func TestMissingAndDeletedAccountsRemainUnavailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupEmailHandlerTestDB(t)
-	account := models.EmailAccount{Email: "deleted@example.com", Username: "remote-login", Password: "remote-password"}
+	account := models.EmailAccount{
+		Email:    "deleted@example.com",
+		Provider: "custom",
+		Username: "remote-login",
+		Password: "remote-password",
+		IMAPHost: "mail.example.com",
+		IMAPPort: 993,
+	}
 	if err := db.Create(&account).Error; err != nil {
 		t.Fatal(err)
 	}

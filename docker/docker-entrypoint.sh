@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-# Upgrade existing root-owned volumes without replacing the private encryption key.
+# Initialize the mounted data directory for the backend user.
 mkdir -p /app/data
-chown -R app:app /app/data
+chown app:app /app/data
 chmod 0700 /app/data
 
 # Supervisor keeps the nginx master as root and drops the backend to user app.

@@ -28,21 +28,21 @@ type EmailAccount struct {
 }
 
 type Email struct {
-	ID              uint      `gorm:"primaryKey" json:"id"`
+	ID              uint      `gorm:"primaryKey;index:idx_account_folder_date,priority:4,sort:desc;index:idx_folder_date,priority:3,sort:desc" json:"id"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
-	AccountID       uint      `gorm:"not null;index:idx_account_message,priority:1;index:idx_account_folder_date,priority:1" json:"account_id"`
+	AccountID       uint      `gorm:"not null;index:idx_account_message,priority:1;index:idx_account_folder_date,priority:1;index:idx_folder_date,priority:4" json:"account_id"`
 	MessageID       string    `gorm:"not null;index:idx_account_message,priority:2" json:"message_id"`
 	From            string    `gorm:"not null" json:"from"`
 	FromName        string    `json:"from_name"`
 	To              string    `gorm:"not null" json:"to"`
 	Subject         string    `json:"subject"`
-	Date            time.Time `gorm:"index:idx_account_folder_date,priority:3" json:"date"`
+	Date            time.Time `gorm:"index:idx_account_folder_date,priority:3,sort:desc;index:idx_folder_date,priority:2,sort:desc" json:"date"`
 	BodyText        string    `gorm:"type:text" json:"body_text"`
 	BodyHTML        string    `gorm:"type:text" json:"body_html"`
 	BodyFetched     bool      `gorm:"not null;default:false" json:"-"`
 	HasAttachment   bool      `gorm:"default:false" json:"has_attachment"`
-	Folder          string    `gorm:"default:'INBOX';index:idx_account_folder_date,priority:2;index" json:"folder"`
+	Folder          string    `gorm:"default:'INBOX';index:idx_account_folder_date,priority:2;index:idx_folder_date,priority:1;index" json:"folder"`
 	UID             uint      `gorm:"not null;index" json:"uid"`
 	UIDValidity     uint32    `gorm:"not null;default:0" json:"-"`
 	IdentityVersion uint64    `gorm:"not null;default:0" json:"-"`

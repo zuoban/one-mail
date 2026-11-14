@@ -3,7 +3,6 @@ package database
 import (
 	"fmt"
 	"log"
-	"strings"
 	"sync/atomic"
 
 	"gorm.io/gorm"
@@ -18,29 +17,20 @@ func IsFTS5Enabled() bool {
 func setupFTS5(db *gorm.DB) {
 	fts5Enabled.Store(false)
 	err := db.Transaction(func(tx *gorm.DB) error {
-		var existingDDL string
-		if err := tx.Raw("SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='table' AND name='emails_fts'").Scan(&existingDDL).Error; err != nil {
-			return err
-		}
-		if existingDDL != "" && (strings.Contains(existingDDL, "content='emails'") || strings.Contains(existingDDL, "sender")) {
-			if err := tx.Exec("DROP TABLE emails_fts").Error; err != nil {
-				return err
-			}
-		}
 		if err := tx.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
 			subject, "from", from_name, tokenize='trigram'
 		)`).Error; err != nil {
 			return err
 		}
 		triggers := []string{
-			`CREATE TRIGGER emails_fts_ai AFTER INSERT ON emails BEGIN
+			`CREATE TRIGGER IF NOT EXISTS emails_fts_ai AFTER INSERT ON emails BEGIN
 				INSERT INTO emails_fts(rowid, subject, "from", from_name)
 				VALUES (NEW.id, COALESCE(NEW.subject, ''), COALESCE(NEW."from", ''), COALESCE(NEW.from_name, ''));
 			END;`,
-			`CREATE TRIGGER emails_fts_ad AFTER DELETE ON emails BEGIN
+			`CREATE TRIGGER IF NOT EXISTS emails_fts_ad AFTER DELETE ON emails BEGIN
 				DELETE FROM emails_fts WHERE rowid = OLD.id;
 			END;`,
-			`CREATE TRIGGER emails_fts_au AFTER UPDATE OF subject, "from", from_name ON emails
+			`CREATE TRIGGER IF NOT EXISTS emails_fts_au AFTER UPDATE OF subject, "from", from_name ON emails
 			WHEN OLD.subject IS NOT NEW.subject OR OLD."from" IS NOT NEW."from" OR OLD.from_name IS NOT NEW.from_name
 			BEGIN
 				DELETE FROM emails_fts WHERE rowid = OLD.id;
@@ -49,22 +39,6 @@ func setupFTS5(db *gorm.DB) {
 			END;`,
 		}
 		for _, trigger := range triggers {
-			name := strings.Fields(trigger)[2]
-			var current string
-			if err := tx.Raw("SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'trigger' AND name = ?", name).Scan(&current).Error; err != nil {
-				return err
-			}
-			// SQLite omits the trailing semicolon in sqlite_master. Whitespace
-			// differences alone do not require replacing a working trigger.
-			normalize := func(sql string) string {
-				return strings.TrimSuffix(strings.Join(strings.Fields(sql), " "), ";")
-			}
-			if normalize(current) == normalize(trigger) {
-				continue
-			}
-			if err := tx.Exec("DROP TRIGGER IF EXISTS " + name).Error; err != nil {
-				return err
-			}
 			if err := tx.Exec(trigger).Error; err != nil {
 				return err
 			}

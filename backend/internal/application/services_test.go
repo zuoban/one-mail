@@ -424,14 +424,18 @@ func TestAccountChangesRemoveOutboxSnapshotsAtomically(t *testing.T) {
 	}
 }
 
-func TestPresetEditRepairsStoredEndpointAndInvalidatesIdentity(t *testing.T) {
+func TestPresetEmailEditPreservesIdentityAndCachedBody(t *testing.T) {
 	db, pool := applicationTestDB(t)
 	service := NewAccountService(db, pool, NewMailService(db, pool, false))
+	cfg := imap.ProviderConfigs["gmail"]
 	account := models.EmailAccount{
+		Email:       "owner@example.com",
 		Provider:    "gmail",
 		Username:    "owner",
-		IMAPHost:    "legacy-override.example.com",
-		IMAPPort:    1993,
+		IMAPHost:    cfg.IMAPHost,
+		IMAPPort:    cfg.IMAPPort,
+		SMTPHost:    cfg.SMTPHost,
+		SMTPPort:    cfg.SMTPPort,
 		UIDValidity: 9,
 	}
 	if err := db.Create(&account).Error; err != nil {
@@ -439,22 +443,22 @@ func TestPresetEditRepairsStoredEndpointAndInvalidatesIdentity(t *testing.T) {
 	}
 	email := models.Email{
 		AccountID:   account.ID,
-		MessageID:   "legacy",
+		MessageID:   "cached",
 		UID:         1,
 		UIDValidity: 9,
 		BodyFetched: true,
-		BodyText:    "legacy cached body",
+		BodyText:    "cached body",
 	}
 	if err := db.Create(&email).Error; err != nil {
 		t.Fatal(err)
 	}
-	updated, err := service.Update(context.Background(), account.ID, UpdateAccount{Email: ptr("owner@example.com")})
-	if err != nil || updated.IMAPHost != imap.ProviderConfigs["gmail"].IMAPHost || updated.IMAPPort != 993 || updated.IdentityVersion != 1 || updated.ConfigVersion != 1 {
-		t.Fatalf("preset endpoint was not canonicalized: %+v %v", updated, err)
+	updated, err := service.Update(context.Background(), account.ID, UpdateAccount{Email: ptr("alias@example.com")})
+	if err != nil || updated.Email != "alias@example.com" || updated.IMAPHost != cfg.IMAPHost || updated.IMAPPort != cfg.IMAPPort || updated.IdentityVersion != account.IdentityVersion || updated.ConfigVersion != account.ConfigVersion || updated.UIDValidity != account.UIDValidity {
+		t.Fatalf("email edit changed mailbox identity: %+v %v", updated, err)
 	}
-	var count int64
-	if err := db.Model(&models.Email{}).Count(&count).Error; err != nil || count != 0 {
-		t.Fatalf("canonicalized preset retained old body: count=%d err=%v", count, err)
+	var cached models.Email
+	if err := db.First(&cached, email.ID).Error; err != nil || cached.BodyText != email.BodyText || !cached.BodyFetched {
+		t.Fatalf("email edit discarded cached body: %+v err=%v", cached, err)
 	}
 }
 

@@ -52,11 +52,11 @@ func InitDatabase() (*gorm.DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
-	if err := MigrateAndOptimize(db); err != nil {
+	if err := InitializeSchema(db); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
 	}
-	log.Println("Database connected and migrated successfully!")
+	log.Println("Database initialized successfully!")
 	return db, nil
 }
 

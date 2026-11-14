@@ -82,18 +82,6 @@ export default function Dashboard() {
     if (!value) return null
     const direct = new Date(value)
     if (!Number.isNaN(direct.getTime())) return direct
-
-    const goTimeMatch = value.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?\s([+-]\d{4})/)
-    if (goTimeMatch) {
-      const [, datePart, timePart, offset] = goTimeMatch
-      const offsetWithColon = offset.replace(/([+-]\d{2})(\d{2})/, '$1:$2')
-      const parsed = new Date(`${datePart}T${timePart}${offsetWithColon}`)
-      if (!Number.isNaN(parsed.getTime())) return parsed
-    }
-
-    const localParsed = new Date(value.replace(' ', 'T'))
-    if (!Number.isNaN(localParsed.getTime())) return localParsed
-
     return null
   }, [])
 
@@ -114,7 +102,7 @@ export default function Dashboard() {
   const filteredEmails = useMemo(() => emails.slice(0, emailLimit), [emails, emailLimit])
 
 
-  // 预处理每封邮件的时间戳与相对时间字符串，避免排序和滚动渲染期间重复正则/Date 解析
+  // 预处理每封邮件的时间戳与相对时间字符串，避免排序和滚动渲染期间重复 Date 解析
   const emailDateMeta = useMemo(() => {
     const map = new Map<number, { ts: number; label: string }>()
     for (const email of filteredEmails) {
