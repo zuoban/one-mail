@@ -69,6 +69,11 @@ export function sanitizeEmailHtml(raw: string, loadImages = false): string {
 }
 
 export function emailDocument(raw: string, loadImages: boolean, light: boolean): string {
+  return prepareEmailDocument(raw, loadImages)(light)
+}
+
+export function prepareEmailDocument(raw: string, loadImages: boolean): (light: boolean) => string {
+  const sanitized = sanitizeEmailHtml(raw, loadImages)
   const images = loadImages ? 'https: http: data:' : 'data:'
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${images}; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'"><style>html{color-scheme:${light ? 'light' : 'dark'}}body{margin:0;padding:0;overflow-wrap:anywhere;font:14px/1.7 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:${light ? '#171717' : '#e5e5e5'};background:transparent}img{max-width:100%;height:auto}table{max-width:100%}a{color:${light ? '#2563eb' : '#93c5fd'}}</style></head><body>${sanitizeEmailHtml(raw, loadImages)}</body></html>`
+  return (light: boolean) => `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${images}; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'"><style>html{color-scheme:${light ? 'light' : 'dark'}}body{margin:0;padding:0;overflow-wrap:anywhere;font:14px/1.7 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:${light ? '#171717' : '#e5e5e5'};background:transparent}img{max-width:100%;height:auto}table{max-width:100%}a{color:${light ? '#2563eb' : '#93c5fd'}}</style></head><body>${sanitized}</body></html>`
 }

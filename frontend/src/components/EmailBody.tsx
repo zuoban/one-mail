@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
-import { emailDocument } from '../mail/sanitize'
+import { prepareEmailDocument } from '../mail/sanitize'
 import useReadingPreferences from '../context/useReadingPreferences'
 
 export default function EmailBody({ html, light }: { html: string; light: boolean }) {
   const { blockRemoteImages } = useReadingPreferences()
   const [allowImagesForMessage, setAllowImagesForMessage] = useState(false)
   const loadImages = !blockRemoteImages || allowImagesForMessage
-  const srcDoc = useMemo(() => emailDocument(html, loadImages, light), [html, loadImages, light])
+  const documentForTheme = useMemo(() => prepareEmailDocument(html, loadImages), [html, loadImages])
+  const srcDoc = useMemo(() => documentForTheme(light), [documentForTheme, light])
   return (
     <div className="space-y-3">
       {blockRemoteImages && (

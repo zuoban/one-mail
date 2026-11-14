@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import DOMPurify from 'dompurify'
 import EmailBody from '../src/components/EmailBody'
 import { emailDocument, sanitizeEmailHtml } from '../src/mail/sanitize'
 import { ReadingPreferencesProvider } from '../src/context/ReadingPreferencesContext'
@@ -16,6 +17,21 @@ const attack = `<script>parent.localStorage.getItem('token')</script>
   <a href="javascript:alert(1)">危险链接</a><a href="https://example.com/read" ping="https://tracker.example/ping">安全链接</a>`
 
 describe('isolated HTML mail', () => {
+  it('reuses sanitized content across theme changes and sanitizes new content', () => {
+    const sanitize = vi.spyOn(DOMPurify, 'sanitize')
+    const html = `<p>large message</p>`.repeat(2000) + attack
+    const { rerender } = render(<EmailBody html={html} light />, { wrapper: ReadingPreferencesProvider })
+    expect(sanitize).toHaveBeenCalledTimes(1)
+    rerender(<EmailBody html={html} light={false} />)
+    expect(sanitize).toHaveBeenCalledTimes(1)
+    const document = parsed(screen.getByTitle<HTMLIFrameElement>('邮件正文').srcdoc)
+    expect(document.querySelector('style')?.textContent).toContain('color-scheme:dark')
+    expect(document.body.querySelector('script,iframe,form')).toBeNull()
+    expect(document.body.querySelectorAll('p')).toHaveLength(2000)
+    rerender(<EmailBody html="<p>new message</p>" light={false} />)
+    expect(sanitize).toHaveBeenCalledTimes(2)
+    sanitize.mockRestore()
+  })
   it('removes active content, dangerous URLs and every automatic remote resource', () => {
     const doc = parsed(sanitizeEmailHtml(attack))
     expect(doc.querySelector('script,iframe,form,input,object,embed,svg,style,link,meta')).toBeNull()
