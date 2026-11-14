@@ -1,11 +1,10 @@
 import { useEffect, useRef, type Dispatch, type FormEvent, type RefObject, type SetStateAction } from 'react'
 import { X } from 'lucide-react'
-import type { EmailAccount } from '../api'
+import type { EmailAccount, EmailProvider } from '../api'
 import { useAccounts } from './account-context'
 
 export interface AccountFormState {
   email: string
-  provider: string
   username: string
   password: string
   imap_host: string
@@ -19,6 +18,7 @@ interface Props {
   loading: boolean
   form: AccountFormState
   setForm: Dispatch<SetStateAction<AccountFormState>>
+  provider: EmailProvider | undefined
   usernameEdited: boolean
   setUsernameEdited: Dispatch<SetStateAction<boolean>>
   error: string
@@ -26,9 +26,9 @@ interface Props {
   handleSubmit: (event: FormEvent) => Promise<void>
 }
 
-export default function AccountDrawer({ drawerRef, editingAccount, loading, form, setForm, usernameEdited, setUsernameEdited, error, closeModal, handleSubmit }: Props) {
-  const { providers, loadingProviders, providersError, accountStore } = useAccounts()
-  const isICloud = form.provider === 'icloud'
+export default function AccountDrawer({ drawerRef, editingAccount, loading, form, setForm, provider, usernameEdited, setUsernameEdited, error, closeModal, handleSubmit }: Props) {
+  const { loadingProviders, providersError, accountStore } = useAccounts()
+  const isICloud = provider?.id === 'icloud'
   const passwordHelpIds = [editingAccount && 'account-password-help', isICloud && 'account-icloud-password-help'].filter(Boolean).join(' ') || undefined
   const errorRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -55,7 +55,7 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                   {editingAccount ? '编辑邮箱账户' : '添加邮箱账户'}
                 </h2>
                 <p id="account-drawer-description" className="text-xs text-[var(--text-tertiary)] truncate">
-                  {editingAccount ? editingAccount.email : '配置 IMAP 邮箱接入信息'}
+                  {editingAccount ? editingAccount.email : '输入邮箱地址，自动匹配邮箱配置'}
                 </p>
               </div>
               <button
@@ -72,15 +72,39 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
             <form onSubmit={handleSubmit} aria-busy={loading} className="flex-1 overflow-auto flex flex-col">
               <fieldset disabled={loading} className="min-w-0 flex-1 overflow-auto p-6 space-y-6 thin-scrollbar">
                 <div>
-                  <label htmlFor="account-provider" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">邮箱服务商</label>
-                  {loadingProviders && <p role="status" className="mb-2 text-sm text-[var(--text-secondary)]">正在加载邮箱服务商…</p>}
-                  {providersError && <div role="alert" className="mb-2 text-sm text-[var(--error-700)]">{providersError}<button type="button" disabled={loadingProviders} onClick={() => void accountStore.retryProviders()} className="btn btn-secondary btn-sm ml-2">重试读取服务商</button></div>}
-                  <select id="account-provider" value={form.provider} required disabled={loadingProviders || providers.length === 0} onChange={event => setForm({ ...form, provider: event.target.value })}>
-                    <option value="" disabled>请选择邮箱服务商</option>
-                    {providers.map(provider => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
-                  </select>
+                  <label htmlFor="account-email" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+                    邮箱地址
+                  </label>
+                  <input
+                    id="account-email"
+                    type="email"
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    aria-describedby="account-provider-status"
+                    value={form.email}
+                    onChange={e => {
+                      const email = e.target.value
+                      setForm(prev => ({
+                        ...prev,
+                        email,
+                        username: !editingAccount && !usernameEdited ? email.trim() : prev.username,
+                      }))
+                    }}
+                    placeholder="name@example.com"
+                    required
+                  />
+                  <p id="account-provider-status" role="status" aria-live="polite" aria-atomic="true" className="mt-2 text-sm text-[var(--text-secondary)]">
+                    {loadingProviders ? '正在读取邮箱配置…'
+                      : providersError ? '邮箱配置暂不可用，请重试。'
+                      : provider?.custom ? '此邮箱需手动填写 IMAP 服务器信息，使用 TLS 加密连接。'
+                      : provider ? `已匹配 ${provider.label}，将自动配置收信服务器。`
+                      : '填写完整邮箱地址后，自动识别服务商。'}
+                  </p>
+                  {providersError && <div role="alert" className="mt-2 text-sm text-[var(--error-700)]">{providersError}<button type="button" disabled={loadingProviders} onClick={() => void accountStore.retryProviders()} className="btn btn-secondary btn-sm ml-2">重试读取服务商</button></div>}
                 </div>
-                {providers.find(provider => provider.id === form.provider)?.custom && (
+
+                {provider?.custom && (
                   <div className="grid grid-cols-1 sm:grid-cols-[1fr_112px] gap-4">
                     <div className="min-w-0">
                       <label htmlFor="account-imap-host" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">IMAP 主机</label>
@@ -94,27 +118,6 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                 )}
 
                 <div>
-                  <label htmlFor="account-email" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                    邮箱地址
-                  </label>
-                  <input
-                    id="account-email"
-                    type="email"
-                    value={form.email}
-                    onChange={e => {
-                      const email = e.target.value
-                      setForm(prev => ({
-                        ...prev,
-                        email,
-                        username: !editingAccount && !usernameEdited ? email : prev.username,
-                      }))
-                    }}
-                    placeholder={isICloud ? 'name@icloud.com' : 'name@example.com'}
-                    required
-                  />
-                </div>
-
-                <div>
                   <label htmlFor="account-username" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                     登录用户名
                   </label>
@@ -122,6 +125,9 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                     id="account-username"
                     aria-describedby={isICloud ? 'account-icloud-username-help' : undefined}
                     type="text"
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     value={form.username}
                     onChange={e => {
                       setUsernameEdited(true)
@@ -181,7 +187,7 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                 </button>
                 <button
                   type="submit"
-                  disabled={loading || loadingProviders || !providers.some(provider => provider.id === form.provider)}
+                  disabled={loading || loadingProviders || Boolean(providersError) || !provider}
                   className="btn btn-primary w-full sm:w-auto"
                 >
                   {loading ? '处理中' : editingAccount ? '保存修改' : '添加账户'}

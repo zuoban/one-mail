@@ -8,6 +8,14 @@ import { Plus, Trash2, Mail, Plug, Pencil, Loader2 } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 
+const providerDomains: Record<string, readonly string[]> = {
+  gmail: ['gmail.com', 'googlemail.com'],
+  icloud: ['icloud.com', 'me.com', 'mac.com'],
+  qq: ['qq.com', 'foxmail.com'],
+  outlook: ['outlook.com', 'hotmail.com', 'live.com', 'msn.com'],
+  '163': ['163.com'],
+}
+
 export default function Accounts() {
   const { accounts, providers, loadingAccounts, accountsError, loadAccounts, accountStore } = useAccounts()
   const [loading, setLoading] = useState(false)
@@ -20,7 +28,6 @@ export default function Accounts() {
   const [confirmDelete, setConfirmDelete] = useState<EmailAccount | null>(null)
   const [form, setForm] = useState<AccountFormState>({
     email: '',
-    provider: '',
     username: '',
     password: '',
     imap_host: '',
@@ -36,6 +43,13 @@ export default function Accounts() {
   const lifecycle = useRef(0)
   const toastTimer = useRef<number | undefined>(undefined)
   const drawerRef = useRef<HTMLDivElement>(null)
+  const email = form.email.trim()
+  const emailDomain = /^[^\s@]+@[^\s@]+$/.test(email) ? email.slice(email.lastIndexOf('@') + 1).toLowerCase() : ''
+  const provider = editingAccount && email === editingAccount.email
+    ? providers.find(item => item.id === editingAccount.provider)
+    : emailDomain
+      ? providers.find(item => providerDomains[item.id]?.includes(emailDomain)) ?? providers.find(item => item.custom)
+      : undefined
 
   const invalidateLifecycle = useCallback(() => {
     mounted.current = false
@@ -62,7 +76,7 @@ export default function Accounts() {
 
     const drawer = drawerRef.current
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    drawer?.focus()
+    drawer?.querySelector<HTMLInputElement>('#account-email')?.focus()
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -114,9 +128,8 @@ export default function Accounts() {
     setError('')
     setLoading(true)
     try {
-      const provider = providers.find(provider => provider.id === form.provider)
-      if (!provider) { setError('请先读取并选择邮箱服务商'); return }
-      const input: AccountInput = { email: form.email, provider: form.provider, username: form.username, password: form.password }
+      if (!provider) { setError('暂时无法匹配邮箱配置，请检查邮箱地址或重试读取服务商'); return }
+      const input: AccountInput = { email, provider: provider.id, username: form.username.trim(), password: form.password }
       if (provider.custom) {
         const port = Number(form.imap_port)
         if (!form.imap_host.trim() || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -129,9 +142,9 @@ export default function Accounts() {
       let mutation: { response: { data: EmailAccount; refresh_error?: string }; updated: Promise<boolean> }
       if (editingAccount) {
         const updateData: Partial<AccountInput> = {}
-        if (form.email !== editingAccount.email) updateData.email = form.email
-        if (form.provider !== editingAccount.provider) updateData.provider = form.provider
-        if (form.username !== editingAccount.username) updateData.username = form.username
+        if (input.email !== editingAccount.email) updateData.email = input.email
+        if (input.provider !== editingAccount.provider) updateData.provider = input.provider
+        if (input.username !== editingAccount.username) updateData.username = input.username
         if (form.password) updateData.password = form.password
         if (provider.custom) {
           updateData.imap_host = input.imap_host
@@ -145,7 +158,7 @@ export default function Accounts() {
       submission.current = null
       setLoading(false)
       closeModal()
-      setForm({ email: '', provider: providers[0]?.id || '', username: '', password: '', imap_host: '', imap_port: '993' })
+      setForm({ email: '', username: '', password: '', imap_host: '', imap_port: '993' })
       const updated = await mutation.updated
       if (mounted.current && formInstance.current === instance + 1) {
         const initialSyncFailed = !editingAccount && Boolean(mutation.response.refresh_error)
@@ -171,7 +184,7 @@ export default function Accounts() {
     formInstance.current++
     setEditingAccount(null)
     setUsernameEdited(false)
-    setForm({ email: '', provider: providers[0]?.id || '', username: '', password: '', imap_host: '', imap_port: '993' })
+    setForm({ email: '', username: '', password: '', imap_host: '', imap_port: '993' })
     setError('')
     setShowModal(true)
   }
@@ -183,7 +196,6 @@ export default function Accounts() {
     setUsernameEdited(true)
     setForm({
       email: account.email,
-      provider: account.provider,
       username: account.username,
       password: '',
       imap_host: account.imap_host,
@@ -391,7 +403,7 @@ export default function Accounts() {
 
       {/* Add / Edit Account Drawer */}
       {showModal && (
-        <AccountDrawer drawerRef={drawerRef} editingAccount={editingAccount} loading={loading} form={form} setForm={setForm}
+        <AccountDrawer drawerRef={drawerRef} editingAccount={editingAccount} loading={loading} form={form} setForm={setForm} provider={provider}
           usernameEdited={usernameEdited} setUsernameEdited={setUsernameEdited} error={error} closeModal={closeModal} handleSubmit={handleSubmit} />
       )}
 

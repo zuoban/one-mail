@@ -30,7 +30,7 @@ function renderAccounts(strict = false) {
 function openForm() {
   fireEvent.click(screen.getByRole('button', { name: '添加账户' }))
   const dialog = screen.getByRole('dialog', { name: '添加邮箱账户' })
-  fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: 'new@example.com' } })
+  fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: 'new@gmail.com' } })
   fireEvent.change(within(dialog).getByLabelText('密码 / 授权码'), { target: { value: 'secret' } })
   return dialog
 }
@@ -195,7 +195,7 @@ describe('account request lifecycle', () => {
     expect(screen.getByRole('dialog')).toBe(dialog)
     await act(async () => pending.reject(new Error('offline')))
     expect(within(dialog).getByRole('alert').textContent).toContain('添加失败')
-    expect((within(dialog).getByLabelText('邮箱地址') as HTMLInputElement).value).toBe('new@example.com')
+    expect((within(dialog).getByLabelText('邮箱地址') as HTMLInputElement).value).toBe('new@gmail.com')
     expect(within(dialog).getByLabelText('邮箱地址').matches(':disabled')).toBe(false)
   })
 
@@ -249,7 +249,7 @@ describe('account request lifecycle', () => {
     renderAccounts()
     await screen.findByText(account.email)
     const dialog = openForm()
-    fireEvent.change(within(dialog).getByLabelText('邮箱服务商'), { target: { value: 'custom' } })
+    fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: 'new@company.example' } })
     fireEvent.change(within(dialog).getByLabelText('IMAP 主机'), { target: { value: 'mail.private.example' } })
     fireEvent.change(within(dialog).getByLabelText('IMAP 端口'), { target: { value: '1993' } })
     fireEvent.click(within(dialog).getByRole('button', { name: '添加账户' }))
@@ -272,10 +272,10 @@ describe('account request lifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: '添加账户' }))
     const dialog = screen.getByRole('dialog', { name: '添加邮箱账户' })
     expect(await within(dialog).findByText('邮箱服务商加载失败，请重试')).toBeTruthy()
-    expect(within(dialog).queryByRole('option', { name: 'Gmail' })).toBeNull()
+    fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: 'new@gmail.com' } })
     expect((within(dialog).getByRole('button', { name: '添加账户' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(within(dialog).getByRole('button', { name: '重试读取服务商' }))
-    expect(await within(dialog).findByRole('option', { name: '自定义' })).toBeTruthy()
+    await waitFor(() => expect((within(dialog).getByRole('button', { name: '添加账户' }) as HTMLButtonElement).disabled).toBe(false))
     expect(providerApi.list).toHaveBeenCalledTimes(2)
     expect(within(dialog).queryByText('邮箱服务商加载失败，请重试')).toBeNull()
   })
@@ -291,6 +291,84 @@ describe('account request lifecycle', () => {
     expect(add).toHaveBeenCalledTimes(1)
     expect(add.mock.calls[0][0]).not.toHaveProperty('imap_host')
     expect(add.mock.calls[0][0]).not.toHaveProperty('imap_port')
+  })
+
+  it.each([
+    ['reader@gmail.com', 'gmail'],
+    ['reader@googlemail.com', 'gmail'],
+    ['reader@ICLOUD.COM', 'icloud'],
+    ['reader@me.com', 'icloud'],
+    ['reader@mac.com', 'icloud'],
+    ['reader@qq.com', 'qq'],
+    ['reader@foxmail.com', 'qq'],
+    ['reader@outlook.com', 'outlook'],
+    ['reader@hotmail.com', 'outlook'],
+    ['reader@live.com', 'outlook'],
+    ['reader@msn.com', 'outlook'],
+    ['reader@163.com', '163'],
+  ])('automatically configures %s as %s', async (email, provider) => {
+    const add = vi.spyOn(accountApi, 'add').mockResolvedValue({ data: account })
+    vi.mocked(providerApi.list).mockResolvedValue({ data: [
+      ...['gmail', 'icloud', 'qq', 'outlook', '163'].map(id => ({ id, label: id, custom: false, imap_host: `imap.${id}.example`, imap_port: 993 })),
+      { id: 'custom', label: '自定义', custom: true, imap_host: '', imap_port: 993 },
+    ] })
+    renderAccounts()
+    await screen.findByText(account.email)
+    const dialog = openForm()
+    fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: email } })
+    expect(within(dialog).queryByRole('combobox')).toBeNull()
+    expect(within(dialog).queryByLabelText('IMAP 主机')).toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name: '添加账户' }))
+    await waitFor(() => expect(add).toHaveBeenCalledExactlyOnceWith({ email, provider, username: email, password: 'secret' }))
+  })
+
+  it('updates matching and custom fields without overwriting a manually entered username', async () => {
+    const add = vi.spyOn(accountApi, 'add').mockResolvedValue({ data: account })
+    renderAccounts()
+    await screen.findByText(account.email)
+    const dialog = openForm()
+    fireEvent.change(within(dialog).getByLabelText('登录用户名'), { target: { value: 'login-name' } })
+    fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: 'reader@gmail.com.example' } })
+    const host = within(dialog).getByLabelText('IMAP 主机') as HTMLInputElement
+    expect(host.value).toBe('')
+    fireEvent.change(host, { target: { value: 'imap.private.example' } })
+    fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: ' reader@GOOGLEMAIL.COM ' } })
+    expect(within(dialog).queryByLabelText('IMAP 主机')).toBeNull()
+    expect((within(dialog).getByLabelText('登录用户名') as HTMLInputElement).value).toBe('login-name')
+    fireEvent.click(within(dialog).getByRole('button', { name: '添加账户' }))
+    await waitFor(() => expect(add).toHaveBeenCalledExactlyOnceWith({ email: 'reader@GOOGLEMAIL.COM', provider: 'gmail', username: 'login-name', password: 'secret' }))
+  })
+
+  it('automatically shows iCloud password guidance and removes it after changing the email domain', async () => {
+    vi.mocked(providerApi.list).mockResolvedValue({ data: [
+      { id: 'icloud', label: 'iCloud', custom: false, imap_host: 'imap.mail.me.com', imap_port: 993 },
+      { id: 'custom', label: '自定义', custom: true, imap_host: '', imap_port: 993 },
+    ] })
+    renderAccounts()
+    await screen.findByText(account.email)
+    fireEvent.click(screen.getByRole('button', { name: '添加账户' }))
+    const dialog = screen.getByRole('dialog', { name: '添加邮箱账户' })
+    expect(within(dialog).queryByLabelText('IMAP 主机')).toBeNull()
+    fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: 'reader@me.com' } })
+    expect(within(dialog).getByLabelText('App 专用密码')).toBeTruthy()
+    expect(within(dialog).getByRole('link', { name: 'Apple 账户（新窗口）' }).getAttribute('href')).toBe('https://account.apple.com/')
+    fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: 'reader@company.example' } })
+    expect(within(dialog).getByLabelText('密码 / 授权码')).toBeTruthy()
+    expect(within(dialog).queryByRole('link', { name: 'Apple 账户（新窗口）' })).toBeNull()
+    expect(within(dialog).getByLabelText('IMAP 主机')).toBeTruthy()
+  })
+
+  it('preserves a saved custom server for a recognized email domain when editing', async () => {
+    const customAccount = { ...account, email: 'reader@gmail.com' }
+    vi.mocked(accountApi.list).mockResolvedValue({ data: [customAccount] })
+    const update = vi.spyOn(accountApi, 'update').mockResolvedValue({ data: customAccount })
+    renderAccounts()
+    fireEvent.click(await screen.findByRole('button', { name: '编辑账户' }))
+    const dialog = screen.getByRole('dialog', { name: '编辑邮箱账户' })
+    expect((within(dialog).getByLabelText('IMAP 主机') as HTMLInputElement).value).toBe(account.imap_host)
+    fireEvent.change(within(dialog).getByLabelText('登录用户名'), { target: { value: 'custom-login' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(update).toHaveBeenCalledExactlyOnceWith(account.id, { username: 'custom-login', imap_host: account.imap_host, imap_port: account.imap_port }))
   })
 
 })
