@@ -356,6 +356,10 @@ func computeLatestSeqRange(total uint32, limit int) (uint32, uint32, bool) {
 }
 
 func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int) ([]*EmailSummary, uint32, error) {
+	return c.FetchLatestEmailsCached(ctx, folder, limit, 0, nil)
+}
+
+func (c *Client) FetchLatestEmailsCached(ctx context.Context, folder string, limit int, cachedEpoch uint32, cached map[uint]EmailSummary) ([]*EmailSummary, uint32, error) {
 	limit, err := mailwindow.Resolve(limit)
 	if err != nil {
 		return nil, 0, err
@@ -370,8 +374,11 @@ func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int
 	}
 
 	var messages []*imapclient.FetchMessageBuffer
+	var reused []EmailSummary
+	var requested map[imap.UID]bool
 	var uidValidity uint32
 	err = retryTemporary(ctx, func() error {
+		messages, reused, requested = nil, nil, nil
 		selectedMbox, err := c.client.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
 		if err != nil {
 			return fmt.Errorf("failed to select mailbox: %w", err)
@@ -396,7 +403,33 @@ func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int
 			BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
 		}
 
-		messages, err = c.client.Fetch(seqSet, fetchOptions).Collect()
+		if uidValidity == cachedEpoch && len(cached) > 0 {
+			window, err := c.client.Fetch(seqSet, &imap.FetchOptions{UID: true}).Collect()
+			if err != nil {
+				return fmt.Errorf("failed to fetch message UIDs: %w", err)
+			}
+			var missing imap.UIDSet
+			requested = make(map[imap.UID]bool)
+			seen := make(map[imap.UID]bool, len(window))
+			for _, message := range window {
+				if message == nil || message.UID == 0 || seen[message.UID] {
+					return errors.New("invalid message UID window")
+				}
+				seen[message.UID] = true
+				if summary, exists := cached[uint(message.UID)]; exists {
+					summary.UID = uint(message.UID)
+					reused = append(reused, summary)
+				} else {
+					missing.AddNum(message.UID)
+					requested[message.UID] = true
+				}
+			}
+			if len(missing) > 0 {
+				messages, err = c.client.Fetch(missing, fetchOptions).Collect()
+			}
+		} else {
+			messages, err = c.client.Fetch(seqSet, fetchOptions).Collect()
+		}
 		if err != nil {
 			return fmt.Errorf("failed to fetch messages: %w", err)
 		}
@@ -409,8 +442,22 @@ func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int
 		return nil, 0, err
 	}
 
-	results := make([]*EmailSummary, 0, len(messages))
+	results := make([]*EmailSummary, 0, len(messages)+len(reused))
+	for _, summary := range reused {
+		results = append(results, &summary)
+	}
+	received := make(map[imap.UID]bool, len(messages))
 	for _, msg := range messages {
+		if msg == nil || msg.UID == 0 {
+			return nil, 0, errors.New("message has no UID")
+		}
+		if requested != nil && !requested[msg.UID] {
+			return nil, 0, errors.New("message UID is outside the requested window")
+		}
+		if received[msg.UID] {
+			return nil, 0, errors.New("duplicate message UID")
+		}
+		received[msg.UID] = true
 		email := &EmailSummary{
 			UID:           uint(msg.UID),
 			HasAttachment: hasAttachment(msg.BodyStructure),
@@ -447,6 +494,9 @@ func (c *Client) FetchLatestEmails(ctx context.Context, folder string, limit int
 		}
 
 		results = append(results, email)
+	}
+	if requested != nil && len(received) != len(requested) {
+		return nil, 0, errors.New("message metadata changed during refresh; retry required")
 	}
 
 	slices.SortFunc(results, func(a, b *EmailSummary) int {

@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"one-mail/backend/internal/inflight"
 	"one-mail/backend/internal/mailwindow"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
@@ -21,6 +22,19 @@ type MailService struct {
 	ftsEnabled     bool
 	fetchBody      func(context.Context, *models.EmailAccount, *models.Email) (string, string, error)
 	refreshAccount func(context.Context, *gorm.DB, *imap.ConnectionPool, *models.EmailAccount, int) (int, error)
+	bodyRequests   inflight.Group[bodyKey, models.Email]
+}
+
+type bodyKey struct {
+	ID              uint
+	ConfigVersion   uint64
+	IdentityVersion uint64
+	UIDValidity     uint32
+	UID             uint
+}
+
+func emailBodyKey(email *models.Email, account *models.EmailAccount) bodyKey {
+	return bodyKey{email.ID, account.ConfigVersion, email.IdentityVersion, email.UIDValidity, email.UID}
 }
 
 func NewMailService(db *gorm.DB, pool *imap.ConnectionPool, ftsEnabled bool) *MailService {
@@ -126,8 +140,30 @@ func (s *MailService) Get(ctx context.Context, id uint) (*models.Email, error) {
 	if email.BodyFetched {
 		return email, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	key := emailBodyKey(email, account)
+	result, err := s.bodyRequests.Do(ctx, key, 10*time.Second, func(workCtx context.Context) (models.Email, error) {
+		current, currentAccount, err := s.Snapshot(workCtx, id)
+		if err != nil {
+			return models.Email{}, err
+		}
+		if emailBodyKey(current, currentAccount) != key {
+			return models.Email{}, failure(Conflict, "mailbox identity changed; refresh the email list before retrying", mail.ErrAccountChanged)
+		}
+		if !current.BodyFetched {
+			current, err = s.loadBody(workCtx, currentAccount, current)
+		}
+		if err != nil {
+			return models.Email{}, err
+		}
+		return *current, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (s *MailService) loadBody(ctx context.Context, account *models.EmailAccount, email *models.Email) (*models.Email, error) {
 	text, html, err := s.fetchBody(ctx, account, email)
 	if err != nil {
 		if errors.Is(err, mail.ErrAccountChanged) || errors.Is(err, imap.ErrUIDValidityChanged) || errors.Is(err, imap.ErrConnectionInvalidated) {

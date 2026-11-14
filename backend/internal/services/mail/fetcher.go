@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"one-mail/backend/internal/inflight"
 	"one-mail/backend/internal/mailwindow"
 	"one-mail/backend/internal/models"
 	"one-mail/backend/internal/services/imap"
@@ -43,6 +45,27 @@ var accountGates = struct {
 }{items: make(map[uint]*accountGate)}
 
 var refreshSlots = make(chan struct{}, maxRefreshWorkers)
+
+type refreshKey struct {
+	database        *sql.DB
+	pool            *imap.ConnectionPool
+	id              uint
+	configVersion   uint64
+	identityVersion uint64
+	epoch           uint32
+	limit           int
+}
+
+type refreshResult struct {
+	count   int
+	account models.EmailAccount
+}
+
+var refreshRequests inflight.Group[refreshKey, refreshResult]
+
+func RefreshStats() (int, uint64) {
+	return refreshRequests.Stats()
+}
 
 // Serialize refreshes for an account. Waiters are cancellable;
 // unused gates are removed instead of retaining one worker per account forever.
@@ -85,6 +108,23 @@ func RefreshAccount(ctx context.Context, db *gorm.DB, pool *imap.ConnectionPool,
 	if account == nil {
 		return 0, errors.New("account is nil")
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return 0, err
+	}
+	snapshot := *account
+	key := refreshKey{sqlDB, pool, snapshot.ID, snapshot.ConfigVersion, snapshot.IdentityVersion, snapshot.UIDValidity, limit}
+	result, err := refreshRequests.Do(ctx, key, refreshTimeout, func(workCtx context.Context) (refreshResult, error) {
+		count, err := refreshAccount(workCtx, db, pool, &snapshot, limit)
+		return refreshResult{count: count, account: snapshot}, err
+	})
+	if err == nil {
+		*account = result.account
+	}
+	return result.count, err
+}
+
+func refreshAccount(ctx context.Context, db *gorm.DB, pool *imap.ConnectionPool, account *models.EmailAccount, limit int) (newCount int, resultErr error) {
 	started := time.Now()
 	defer func() {
 		log.Printf("mail_refresh account_id=%d duration_ms=%d new_count=%d success=%t", account.ID, time.Since(started).Milliseconds(), newCount, resultErr == nil)
@@ -116,12 +156,36 @@ func RefreshAccount(ctx context.Context, db *gorm.DB, pool *imap.ConnectionPool,
 	}
 	healthy := false
 	defer func() { release(healthy) }()
-	emails, epoch, err := client.FetchLatestEmails(reqCtx, DefaultFolder, limit)
+	cached, err := cachedSummaries(db.WithContext(reqCtx), account)
+	if err != nil {
+		return 0, err
+	}
+	emails, epoch, err := client.FetchLatestEmailsCached(reqCtx, DefaultFolder, limit, account.UIDValidity, cached)
 	if err != nil {
 		return 0, err
 	}
 	healthy = true
 	return ReconcileLatestEmails(db.WithContext(reqCtx), account, DefaultFolder, epoch, emails, limit)
+}
+
+func cachedSummaries(db *gorm.DB, account *models.EmailAccount) (map[uint]imap.EmailSummary, error) {
+	var rows []models.Email
+	if err := db.Select("uid, message_id, `from`, from_name, `to`, subject, date, has_attachment").
+		Where("account_id = ? AND folder = ? AND uid_validity = ? AND identity_version = ?", account.ID, DefaultFolder, account.UIDValidity, account.IdentityVersion).
+		Order("id DESC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	cached := make(map[uint]imap.EmailSummary, len(rows))
+	for _, row := range rows {
+		if _, exists := cached[row.UID]; row.UID == 0 || exists {
+			continue
+		}
+		cached[row.UID] = imap.EmailSummary{
+			UID: row.UID, MessageID: row.MessageID, From: row.From, FromName: row.FromName,
+			To: row.To, Subject: row.Subject, Date: row.Date, HasAttachment: row.HasAttachment,
+		}
+	}
+	return cached, nil
 }
 
 // ReconcileLatestEmails keys remote identity by (folder, UIDVALIDITY, UID).
