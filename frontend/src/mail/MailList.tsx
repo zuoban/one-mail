@@ -7,6 +7,7 @@ interface Props {
   emails: EmailSummary[]
   selectedId?: number
   accountById: Map<number, EmailAccount>
+  showAccountEmail: boolean
   dateLabels: Map<number, { label: string }>
   loading: boolean
   refreshing: boolean
@@ -19,7 +20,7 @@ interface Props {
   onSelect: (email: EmailSummary) => Promise<void>
 }
 
-export default function MailList({ emails, selectedId, accountById, dateLabels, loading, refreshing, error, search, scrollRef, retry, clearSearch, registerRef, onSelect }: Props) {
+export default function MailList({ emails, selectedId, accountById, showAccountEmail, dateLabels, loading, refreshing, error, search, scrollRef, retry, clearSearch, registerRef, onSelect }: Props) {
   return (
         <div ref={scrollRef} className="flex-1 overflow-auto thin-scrollbar">
           {error && <div role="alert" className="p-4 text-sm text-[var(--error-700)]">{error}<button type="button" disabled={loading} onClick={() => void retry()} className="btn btn-secondary btn-sm ml-2">重试</button></div>}
@@ -58,7 +59,7 @@ export default function MailList({ emails, selectedId, accountById, dateLabels, 
                 <EmailListRow
                   key={email.id}
                   email={email}
-                  accountColor={accountById.get(email.account_id)?.color || '#2563EB'}
+                  accountEmail={showAccountEmail ? accountById.get(email.account_id)?.email : undefined}
                   dateLabel={dateLabels.get(email.id)?.label ?? '未知'}
                   isSelected={selectedId === email.id}
                   registerRef={registerRef}

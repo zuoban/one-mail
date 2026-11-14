@@ -18,7 +18,7 @@ export function useInboxKeyboard({ searchInputRef, sortedFilteredEmails, selecte
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
         if (event.key === 'Escape' && target === searchInputRef.current) {
           searchInputRef.current?.blur()
         }

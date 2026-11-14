@@ -9,7 +9,7 @@ import MailProvider from '../src/mail/MailProvider'
 import { useAccounts } from '../src/accounts/account-context'
 import Accounts from '../src/pages/Accounts'
 
-const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader@example.com', status: 'active', last_sync_time: '', color: '#2563eb', imap_host: 'imap.example.com', imap_port: 993 }
+const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader@example.com', status: 'active', last_sync_time: '', imap_host: 'imap.example.com', imap_port: 993 }
 
 function AccountInbox() {
   const { accounts, loadingAccounts, accountsError, loadAccounts } = useAccounts()

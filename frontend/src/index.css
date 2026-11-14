@@ -907,7 +907,6 @@ textarea:disabled {
 
 @media (pointer: coarse), (max-width: 767px) {
   .btn,
-  .account-filters button,
   .mail-list-controls button:not(.segmented-item),
   .workspace-page button[aria-pressed] {
     min-height: 44px;

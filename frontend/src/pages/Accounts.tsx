@@ -23,7 +23,6 @@ export default function Accounts() {
     provider: '',
     username: '',
     password: '',
-    color: '',
     imap_host: '',
     imap_port: '993',
   })
@@ -117,7 +116,7 @@ export default function Accounts() {
     try {
       const provider = providers.find(provider => provider.id === form.provider)
       if (!provider) { setError('请先读取并选择邮箱服务商'); return }
-      const input: AccountInput = { email: form.email, provider: form.provider, username: form.username, password: form.password, color: form.color }
+      const input: AccountInput = { email: form.email, provider: form.provider, username: form.username, password: form.password }
       if (provider.custom) {
         const port = Number(form.imap_port)
         if (!form.imap_host.trim() || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -134,7 +133,6 @@ export default function Accounts() {
         if (form.provider !== editingAccount.provider) updateData.provider = form.provider
         if (form.username !== editingAccount.username) updateData.username = form.username
         if (form.password) updateData.password = form.password
-        if (form.color !== editingAccount.color) updateData.color = form.color
         if (provider.custom) {
           updateData.imap_host = input.imap_host
           updateData.imap_port = input.imap_port
@@ -147,7 +145,7 @@ export default function Accounts() {
       submission.current = null
       setLoading(false)
       closeModal()
-      setForm({ email: '', provider: providers[0]?.id || '', username: '', password: '', color: '', imap_host: '', imap_port: '993' })
+      setForm({ email: '', provider: providers[0]?.id || '', username: '', password: '', imap_host: '', imap_port: '993' })
       const updated = await mutation.updated
       if (mounted.current && formInstance.current === instance + 1) {
         const initialSyncFailed = !editingAccount && Boolean(mutation.response.refresh_error)
@@ -173,7 +171,7 @@ export default function Accounts() {
     formInstance.current++
     setEditingAccount(null)
     setUsernameEdited(false)
-    setForm({ email: '', provider: providers[0]?.id || '', username: '', password: '', color: '', imap_host: '', imap_port: '993' })
+    setForm({ email: '', provider: providers[0]?.id || '', username: '', password: '', imap_host: '', imap_port: '993' })
     setError('')
     setShowModal(true)
   }
@@ -188,7 +186,6 @@ export default function Accounts() {
       provider: account.provider,
       username: account.username,
       password: '',
-      color: account.color || '',
       imap_host: account.imap_host || '',
       imap_port: String(account.imap_port || 993),
     })
@@ -319,14 +316,10 @@ export default function Accounts() {
             >
               <div className="flex items-center gap-4 min-w-0">
                 <div
-                  className="relative w-10 h-10 rounded-lg border border-[var(--border-light)] bg-[var(--bg-secondary)] flex items-center justify-center text-sm font-medium text-[var(--text-secondary)] flex-shrink-0"
+                  className="w-10 h-10 rounded-lg border border-[var(--border-light)] bg-[var(--bg-secondary)] flex items-center justify-center text-sm font-medium text-[var(--text-secondary)] flex-shrink-0"
                   aria-hidden="true"
                 >
                   {account.email[0].toUpperCase()}
-                  <span
-                    className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[var(--bg-primary)]"
-                    style={{ backgroundColor: account.color || '#2563EB' }}
-                  />
                 </div>
 
                 <div className="min-w-0">

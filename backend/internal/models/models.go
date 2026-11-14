@@ -24,7 +24,6 @@ type EmailAccount struct {
 	IdentityVersion uint64         `gorm:"not null;default:0" json:"-"`
 	ConfigVersion   uint64         `gorm:"not null;default:0" json:"-"`
 	Status          string         `gorm:"default:'active'" json:"status"`
-	Color           string         `gorm:"default:'#6366f1'" json:"color"`
 	Emails          []Email        `gorm:"foreignKey:AccountID" json:"emails,omitempty"`
 }
 

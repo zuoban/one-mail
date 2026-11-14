@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AxiosAdapter } from 'axios'
 import { useState, type ReactNode } from 'react'
@@ -10,7 +10,7 @@ import { MailContext } from '../src/mail/mail-context'
 import { MailStore } from '../src/mail/MailStore'
 import Dashboard from '../src/pages/Dashboard'
 
-const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader@example.com', status: 'active', last_sync_time: '2026-11-14T08:00:00Z', color: '#2563eb', imap_host: 'imap.example.com', imap_port: 993 }
+const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader@example.com', status: 'active', last_sync_time: '2026-11-14T08:00:00Z', imap_host: 'imap.example.com', imap_port: 993 }
 const email: EmailSummary = { id: 1, account_id: 1, created_at: '2026-11-14', date: '2026-11-14', from: 'sender@example.com', from_name: 'Sender', to: account.email, subject: '会议安排', has_attachment: false, folder: 'INBOX' }
 const stores: MailStore[] = []
 
@@ -224,5 +224,76 @@ describe('read-only inbox', () => {
     await screen.findByText('已是最新邮件')
     expect(api.list.mock.calls.at(-1)?.[0]?.search).toBe('会议')
     expect(screen.getAllByRole('group')).toHaveLength(2)
+  })
+})
+
+describe('multi-account inbox', () => {
+  const secondAccount: EmailAccount = { ...account, id: 2, email: 'reader@work.example' }
+  const secondEmail: EmailSummary = { ...email, id: 2, account_id: secondAccount.id, subject: '会议后续', to: 'team@example.net', date: '2026-11-13' }
+
+  it('distinguishes identical mailbox names and attributes messages to their account rather than recipient aliases', async () => {
+    vi.mocked(accountApi.list).mockResolvedValue({ data: [account, secondAccount] })
+    const aliasedEmail = { ...email, to: 'delivery-alias@example.net' }
+    const { api } = renderInbox([aliasedEmail, secondEmail])
+    api.get.mockResolvedValue({ data: { ...secondEmail, body_text: '第二个邮箱的正文', body_html: '' } })
+    const selector = await screen.findByRole('combobox', { name: '按邮箱筛选' })
+    expect(within(selector).getByRole('option', { name: account.email })).toBeTruthy()
+    expect(within(selector).getByRole('option', { name: secondAccount.email })).toBeTruthy()
+    const firstRow = await screen.findByRole('group', { name: 'Sender，会议安排' })
+    const secondRow = screen.getByRole('group', { name: 'Sender，会议后续' })
+    expect(within(firstRow).getByText(account.email)).toBeTruthy()
+    expect(within(secondRow).getByText(secondAccount.email)).toBeTruthy()
+    expect(within(firstRow).queryByText(aliasedEmail.to)).toBeNull()
+    fireEvent.click(secondRow)
+    await screen.findByText('第二个邮箱的正文')
+    const reader = screen.getByRole('region', { name: '邮件阅读区' })
+    expect(within(reader).getByText(secondAccount.email)).toBeTruthy()
+    expect(within(reader).getByText(secondEmail.to)).toBeTruthy()
+  })
+
+  it('preserves search while switching and refreshing mailboxes, clears detail, and hides redundant source labels', async () => {
+    vi.mocked(accountApi.list).mockResolvedValue({ data: [account, secondAccount] })
+    const messages = [email, secondEmail]
+    const { api, pending } = renderInbox(messages)
+    api.list.mockImplementation(async filters => {
+      const matching = messages.filter(message => (!filters?.account_id || message.account_id === filters.account_id) && (!filters?.search || message.subject.includes(filters.search)))
+      return { data: matching, total: matching.length }
+    })
+    const selector = await screen.findByRole('combobox', { name: '按邮箱筛选' })
+    const search = screen.getByRole('textbox', { name: '搜索发件人或主题' })
+    fireEvent.change(search, { target: { value: '会议' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    await waitFor(() => expect(api.list.mock.calls.at(-1)?.[0]?.search).toBe('会议'))
+    fireEvent.click(await screen.findByRole('group', { name: 'Sender，会议安排' }))
+    await screen.findByText('已加载的邮件正文')
+    fireEvent.change(selector, { target: { value: String(secondAccount.id) } })
+    const row = await screen.findByRole('group', { name: 'Sender，会议后续' })
+    expect(screen.queryByRole('group', { name: 'Sender，会议安排' })).toBeNull()
+    expect(screen.getByText('选择一封邮件阅读')).toBeTruthy()
+    expect(within(row).queryByText(secondAccount.email)).toBeNull()
+    expect(api.list.mock.calls.at(-1)?.[0]).toMatchObject({ account_id: secondAccount.id, search: '会议' })
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    expect(api.refresh).toHaveBeenCalledExactlyOnceWith(secondAccount.id)
+    await act(async () => pending.resolve({ message: 'ok', new_count: 0 }))
+    await screen.findByText('已是最新邮件')
+    expect(api.list.mock.calls.at(-1)?.[0]).toMatchObject({ account_id: secondAccount.id, search: '会议' })
+    fireEvent.change(selector, { target: { value: '' } })
+    const firstRow = await screen.findByRole('group', { name: 'Sender，会议安排' })
+    expect(within(firstRow).getByText(account.email)).toBeTruthy()
+    expect(within(screen.getByRole('group', { name: 'Sender，会议后续' })).getByText(secondAccount.email)).toBeTruthy()
+    expect(api.list.mock.calls.at(-1)?.[0]?.account_id).toBeUndefined()
+    expect(api.list.mock.calls.at(-1)?.[0]?.search).toBe('会议')
+  })
+
+  it('keeps native mailbox selection keys from invoking inbox shortcuts', async () => {
+    vi.mocked(accountApi.list).mockResolvedValue({ data: [account, secondAccount] })
+    const { api } = renderInbox([email, secondEmail])
+    const selector = await screen.findByRole('combobox', { name: '按邮箱筛选' })
+    await screen.findByRole('group', { name: 'Sender，会议安排' })
+    selector.focus()
+    for (const key of ['r', 'j', '/']) fireEvent.keyDown(selector, { key })
+    expect(api.refresh).not.toHaveBeenCalled()
+    expect(api.get).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(selector)
   })
 })

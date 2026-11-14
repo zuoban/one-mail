@@ -3,7 +3,7 @@ import { AxiosHeaders } from 'axios'
 import { accountApi, providerApi, type AccountInput, type EmailAccount } from '../src/api'
 import { AccountStore } from '../src/accounts/AccountStore'
 
-const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader', status: 'active', last_sync_time: '', color: '#2563eb', imap_host: 'imap.example.com', imap_port: 993 }
+const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader', status: 'active', last_sync_time: '', imap_host: 'imap.example.com', imap_port: 993 }
 
 beforeEach(() => {
   vi.spyOn(accountApi, 'list').mockResolvedValue({ data: [account] })
@@ -25,11 +25,11 @@ it.each<Partial<AccountInput>>([
   store.dispose()
 })
 
-it('retains mail for password, color and unchanged IMAP settings, and invalidates it after deletion', async () => {
+it('retains mail for password and unchanged IMAP settings, and invalidates it after deletion', async () => {
   const invalidateMail = vi.fn()
   const store = new AccountStore(() => true, invalidateMail)
   await store.reload()
-  await store.update(account.id, { password: 'new-password', color: '#059669', imap_host: account.imap_host, imap_port: account.imap_port })
+  await store.update(account.id, { password: 'new-password', imap_host: account.imap_host, imap_port: account.imap_port })
   expect(invalidateMail).not.toHaveBeenCalled()
   vi.spyOn(accountApi, 'delete').mockResolvedValue({ data: {}, status: 200, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() } })
   await store.remove(account.id)

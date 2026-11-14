@@ -186,6 +186,8 @@ func isSQLIdentifierByte(char byte) bool {
 // Only the two tables containing user_id are rebuilt. The email account foreign
 // key and current body cache remain in place; the cache migration removes legacy
 // mutation state afterward. Encrypted account passwords keep their SQL values.
+// The retired color column remains in this legacy rebuild to preserve stored
+// values; current account models neither read nor write it.
 func migratePersonalSchema(tx *gorm.DB) error {
 	if tx.Migrator().HasColumn("email_accounts", "user_id") {
 		if err := rebuildPersonalTable(tx, "email_accounts", `CREATE TABLE email_accounts_personal (

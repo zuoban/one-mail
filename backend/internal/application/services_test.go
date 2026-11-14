@@ -445,7 +445,7 @@ func TestPresetEditRepairsStoredEndpointAndInvalidatesIdentity(t *testing.T) {
 	if err := db.Create(&email).Error; err != nil {
 		t.Fatal(err)
 	}
-	updated, err := service.Update(context.Background(), account.ID, UpdateAccount{Color: ptr("#112233")})
+	updated, err := service.Update(context.Background(), account.ID, UpdateAccount{Email: ptr("owner@example.com")})
 	if err != nil || updated.IMAPHost != imap.ProviderConfigs["gmail"].IMAPHost || updated.IMAPPort != 993 || updated.IdentityVersion != 1 || updated.ConfigVersion != 1 {
 		t.Fatalf("preset endpoint was not canonicalized: %+v %v", updated, err)
 	}

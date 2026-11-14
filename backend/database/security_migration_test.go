@@ -287,6 +287,13 @@ func TestLegacyPersonalSchemaPreservesAccountsEmailsAndTriggers(t *testing.T) {
 		if !reflect.DeepEqual(accountsBefore, accountsAfter) || !reflect.DeepEqual(emailsBefore, emailsAfter) {
 			t.Fatalf("pass %d changed account/email data: accounts %+v, emails %+v", pass, accountsAfter, emailsAfter)
 		}
+		var legacyColors []string
+		if err := db.Table("email_accounts").Order("id").Pluck("color", &legacyColors).Error; err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(legacyColors, []string{"#123456", "#123456"}) {
+			t.Fatalf("pass %d changed retired account data: %v", pass, legacyColors)
+		}
 		var config models.TelegramConfig
 		if err := db.First(&config).Error; err != nil {
 			t.Fatal(err)
@@ -336,7 +343,7 @@ func TestLegacyEmailColumnsAreAddedWithoutReplacingTriggers(t *testing.T) {
 		"ALTER TABLE email_accounts ADD COLUMN config_version integer NOT NULL DEFAULT 0",
 		"UPDATE email_accounts SET identity_version = 4, config_version = 9 WHERE id = 7",
 		"CREATE TABLE migration_account_changes(account_id integer)",
-		"CREATE TRIGGER preserve_account_changes AFTER UPDATE OF color ON email_accounts BEGIN INSERT INTO migration_account_changes VALUES (NEW.id); END",
+		"CREATE TRIGGER preserve_account_changes AFTER UPDATE OF status ON email_accounts BEGIN INSERT INTO migration_account_changes VALUES (NEW.id); END",
 	} {
 		if err := db.Exec(ddl).Error; err != nil {
 			t.Fatal(err)
@@ -379,7 +386,7 @@ func TestLegacyEmailColumnsAreAddedWithoutReplacingTriggers(t *testing.T) {
 	if err := db.Table("migration_email_changes").Count(&changes).Error; err != nil || changes != 1 {
 		t.Fatalf("additive migration lost the email trigger: %d changes, %v", changes, err)
 	}
-	if err := db.Exec("UPDATE email_accounts SET color = '#abcdef' WHERE id = 7").Error; err != nil {
+	if err := db.Exec("UPDATE email_accounts SET status = 'inactive' WHERE id = 7").Error; err != nil {
 		t.Fatal(err)
 	}
 	var accountChanges int64

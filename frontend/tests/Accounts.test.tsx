@@ -7,7 +7,7 @@ import Accounts from '../src/pages/Accounts'
 import { AccountStore } from '../src/accounts/AccountStore'
 import { AccountContext } from '../src/accounts/account-context'
 
-const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader@example.com', status: 'active', last_sync_time: '', color: '#2563eb', imap_host: 'imap.example.com', imap_port: 993 }
+const account: EmailAccount = { id: 1, email: 'reader@example.com', provider: 'custom', username: 'reader@example.com', status: 'active', last_sync_time: '', imap_host: 'imap.example.com', imap_port: 993 }
 const second: EmailAccount = { ...account, id: 2, email: 'second@example.com' }
 
 beforeEach(() => {

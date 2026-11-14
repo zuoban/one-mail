@@ -13,10 +13,11 @@ import {
   RefreshCw,
   X,
   Keyboard,
+  Inbox,
 } from 'lucide-react'
 
 export default function Dashboard() {
-  const { accounts, providers, loadingAccounts, accountsError, loadAccounts, providersError, loadingProviders, accountStore } = useAccounts()
+  const { accounts, loadingAccounts, accountsError, loadAccounts, providersError, loadingProviders, accountStore } = useAccounts()
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -37,19 +38,6 @@ export default function Dashboard() {
     return () => window.clearInterval(timer)
   }, [])
 
-  const formatSyncTime = (value?: string) => {
-    if (!value) return '未刷新'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime()) || date.getFullYear() < 1970) return '未刷新'
-    const diffMinutes = Math.floor((now - date.getTime()) / 60000)
-    if (diffMinutes < 1) return '刚刚刷新'
-    if (diffMinutes < 60) return `${diffMinutes} 分钟前刷新`
-    const diffHours = Math.floor(diffMinutes / 60)
-    if (diffHours < 24) return `${diffHours} 小时前刷新`
-    const diffDays = Math.floor(diffHours / 24)
-    if (diffDays < 7) return `${diffDays} 天前刷新`
-    return date.toLocaleDateString('zh-CN')
-  }
 
   const formatRelativeTime = useCallback((date: Date | null) => {
     if (!date) return '未知'
@@ -279,6 +267,23 @@ export default function Dashboard() {
 
         {/* Search & Filter Controls */}
         <div className="mail-list-controls px-4 py-4 border-b border-[var(--border-light)] space-y-3 flex-shrink-0">
+          {accounts.length > 0 && (
+            <div className="relative flex items-center">
+              <Inbox aria-hidden="true" className="absolute left-3 w-4 h-4 text-[var(--text-secondary)] pointer-events-none" strokeWidth={1.5} />
+              <label htmlFor="inbox-account-filter" className="sr-only">按邮箱筛选</label>
+              <select
+                id="inbox-account-filter"
+                value={selectedAccountId ?? ''}
+                onChange={event => setSelectedAccountId(event.target.value === '' ? null : Number(event.target.value))}
+                className="min-w-0 text-ellipsis"
+                style={{ paddingLeft: '36px' }}
+              >
+                <option value="">所有邮箱 · {accounts.length} 个账户</option>
+                {accounts.map(account => <option key={account.id} value={account.id}>{account.email}</option>)}
+              </select>
+            </div>
+          )}
+
           {/* Search */}
           <div className="relative flex items-center">
             <Search className="absolute left-3 w-4 h-4 text-[var(--text-tertiary)] pointer-events-none" strokeWidth={1.5} />
@@ -313,58 +318,12 @@ export default function Dashboard() {
           {loadingAccounts && <p role="status" className="text-xs text-[var(--text-secondary)]">正在加载账户列表…</p>}
           {accountsError && <div role="alert" className="text-sm text-[var(--error-700)]">{accountsError}<button type="button" disabled={loadingAccounts} onClick={() => void loadAccounts()} className="btn btn-secondary btn-sm ml-2">重试读取账户</button></div>}
           {providersError && <div role="alert" className="text-sm text-[var(--error-700)]">{providersError}<button type="button" disabled={loadingProviders} onClick={() => void accountStore.retryProviders()} className="btn btn-secondary btn-sm ml-2">重试读取服务商</button></div>}
-          {/* Account Chips */}
-          {accounts.length > 0 && (
-            <div className="account-filters flex items-center gap-2 overflow-x-auto pb-1 thin-scrollbar" aria-label="按邮箱筛选">
-              <button
-                type="button"
-                onClick={() => setSelectedAccountId(null)}
-                aria-pressed={selectedAccountId === null}
-                className={`inline-flex h-8 items-center gap-2 px-3 rounded-[8px] border text-xs whitespace-nowrap transition-colors cursor-pointer ${
-                  selectedAccountId === null
-                    ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-medium border-[var(--border-default)]'
-                    : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-light)] hover:border-[var(--border-hover)]'
-                }`}
-              >
-                <span>所有邮箱</span>
-              </button>
-              {accounts.map(account => {
-                const providerText = providers.find(p => p.id === account.provider)?.label || account.provider
-                const statusText = account.status === 'active' ? '已连接' : '未连接'
-                const syncInfo = formatSyncTime(account.last_sync_time)
-                const tip = `${account.email} · ${providerText} · ${statusText} · ${syncInfo}`
-                const isSelected = selectedAccountId === account.id
-                const accountColor = account.color || '#2563EB'
-                const shortName = account.email.split('@')[0]
-
-                return (
-                  <Tooltip key={account.id} content={tip}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedAccountId(account.id)}
-                      aria-pressed={isSelected}
-                      className={`inline-flex h-8 items-center gap-2 px-3 rounded-[8px] border text-xs whitespace-nowrap transition-colors cursor-pointer ${
-                        isSelected
-                          ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-medium border-[var(--border-default)]'
-                          : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-light)] hover:border-[var(--border-hover)]'
-                      }`}
-                    >
-                      <span
-                        className="w-2 h-2 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: accountColor }}
-                      />
-                      <span className="max-w-[144px] truncate">{shortName}</span>
-                    </button>
-                  </Tooltip>
-                )
-              })}
-            </div>
-          )}
 
         </div>
 
         {/* Email List */}
         <MailList emails={sortedFilteredEmails} selectedId={selectedEmail?.id} accountById={accountById} dateLabels={emailDateMeta}
+          showAccountEmail={selectedAccountId === null && accounts.length > 1}
           loading={loadingList} refreshing={refreshing} error={listError} search={search} scrollRef={listScrollRef}
           retry={loadEmails} clearSearch={() => setSearch('')} registerRef={registerEmailRef} onSelect={handleRead} />
 

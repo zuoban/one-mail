@@ -8,21 +8,10 @@ export interface AccountFormState {
   provider: string
   username: string
   password: string
-  color: string
   imap_host: string
   imap_port: string
 }
 
-const accountColors = [
-  '#2563eb',
-  '#059669',
-  '#d97706',
-  '#dc2626',
-  '#0891b2',
-  '#4f46e5',
-  '#db2777',
-  '#65a30d',
-]
 
 interface Props {
   drawerRef: RefObject<HTMLDivElement | null>
@@ -157,43 +146,6 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                     required={!editingAccount}
                   />
                 </div>
-
-                <fieldset className="min-w-0">
-                  <legend className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                    账户标识色
-                  </legend>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {accountColors.map(color => (
-                      <button
-                        key={color}
-                        type="button"
-                        onClick={() => setForm({ ...form, color })}
-                        className={`btn btn-ghost w-9 h-9 p-0 rounded-lg border transition-colors cursor-pointer ${
-                          form.color === color
-                            ? 'bg-[var(--bg-secondary)] border-[var(--text-secondary)]'
-                            : 'border-transparent hover:border-[var(--border-hover)]'
-                        }`}
-                        aria-label={`选择颜色 ${color}`}
-                        aria-pressed={form.color === color}
-                      >
-                        <span aria-hidden="true" className="h-4 w-4 rounded-full" style={{ backgroundColor: color }} />
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setForm({ ...form, color: '' })}
-                      aria-pressed={form.color === ''}
-                      className={`btn h-9 px-3 rounded-[8px] text-sm border transition-colors cursor-pointer ${
-                        form.color === ''
-                          ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-medium border-[var(--border-default)]'
-                          : 'bg-transparent text-[var(--text-tertiary)] border-[var(--border-light)] hover:border-[var(--border-hover)]'
-                      }`}
-                    >
-                      自动
-                    </button>
-                  </div>
-                </fieldset>
-
 
                 {error && (
                   <div ref={errorRef} role="alert" className="alert alert-error flex items-center gap-2">

@@ -43,7 +43,6 @@ export interface EmailAccount {
   username: string
   status: string
   last_sync_time: string
-  color: string
   imap_host: string
   imap_port: number
 }
@@ -61,7 +60,6 @@ export interface AccountInput {
   provider: string
   username: string
   password: string
-  color?: string
   imap_host?: string
   imap_port?: number
 }

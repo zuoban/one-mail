@@ -19,7 +19,6 @@ type migration struct {
 var migrations = []migration{
 	{1, "personal_recent_mail_cache", migratePersonalDatabase},
 	{2, "encrypted_credentials", migrateCredentials},
-	{3, "account_colors", seedAccountColors},
 	{4, "notification_outbox", func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&models.NotificationTask{})
 	}},

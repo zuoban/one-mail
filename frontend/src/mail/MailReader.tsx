@@ -72,15 +72,6 @@ export default function MailReader({ selectedEmail, selectedDetail, selectedEmai
                   )}
                 </div>
 
-                {selectedEmailAccount && (
-                  <div className="hidden 2xl:flex items-center gap-2 text-xs text-[var(--text-secondary)] min-w-0">
-                    <span
-                      className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: selectedEmailAccount.color || '#2563EB' }}
-                    />
-                    <span className="truncate font-mono">{selectedEmailAccount.email}</span>
-                  </div>
-                )}
                 {selectedEmail.folder && (
                   <span className="hidden xl:inline-flex px-2 py-0.5 rounded-[4px] bg-[var(--bg-tertiary)] border border-[var(--border-light)] font-mono text-xs text-[var(--text-tertiary)]">
                     {selectedEmail.folder}
@@ -131,6 +122,13 @@ export default function MailReader({ selectedEmail, selectedDetail, selectedEmai
                   <h1 className="text-xl xl:text-2xl font-medium text-[var(--text-primary)] break-words leading-snug">
                     {selectedEmail.subject || '(无主题)'}
                   </h1>
+                  {selectedEmailAccount && (
+                    <div className="mt-3 flex items-start gap-2 text-xs text-[var(--text-secondary)]">
+                      <Mail aria-hidden="true" className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" strokeWidth={1.5} />
+                      <span className="flex-shrink-0">收件账户</span>
+                      <span className="break-all">{selectedEmailAccount.email}</span>
+                    </div>
+                  )}
 
                   <div className="mt-6 flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
                     <div className="flex items-start gap-3 min-w-0">

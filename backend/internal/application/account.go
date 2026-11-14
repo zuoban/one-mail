@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"errors"
-	"math/rand/v2"
 	"net"
 	"sort"
 	"strings"
@@ -15,11 +14,6 @@ import (
 
 	"gorm.io/gorm"
 )
-
-var accountColors = []string{
-	"#6366f1", "#8b5cf6", "#ec4899", "#f43f5e", "#f97316",
-	"#eab308", "#22c55e", "#14b8a6", "#06b6d4", "#3b82f6",
-}
 
 type Provider struct {
 	ID       string `json:"id"`
@@ -70,7 +64,6 @@ type CreateAccount struct {
 	IMAPPort int    `json:"imap_port"`
 	SMTPHost string `json:"smtp_host"`
 	SMTPPort int    `json:"smtp_port"`
-	Color    string `json:"color"`
 }
 
 type UpdateAccount struct {
@@ -80,7 +73,6 @@ type UpdateAccount struct {
 	Password *string `json:"password"`
 	IMAPHost *string `json:"imap_host"`
 	IMAPPort *int    `json:"imap_port"`
-	Color    *string `json:"color"`
 }
 
 type AccountService struct {
@@ -161,14 +153,10 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccount) (*models
 		IMAPPort: req.IMAPPort,
 		SMTPHost: req.SMTPHost,
 		SMTPPort: req.SMTPPort,
-		Color:    req.Color,
 		Status:   "active",
 	}
 	if err := configureAccount(&account); err != nil {
 		return nil, nil, err
-	}
-	if account.Color == "" {
-		account.Color = accountColors[rand.IntN(len(accountColors))]
 	}
 	if err := s.testConnection(ctx, &account); err != nil {
 		return nil, nil, failure(Invalid, "failed to connect to mailbox; check account settings", err)
@@ -260,9 +248,6 @@ func (s *AccountService) Update(ctx context.Context, id uint, req UpdateAccount)
 		if sealed != "" {
 			account.Password = sealed
 		}
-		if req.Color != nil {
-			account.Color = *req.Color
-		}
 		identityChanged := account.Provider != old.Provider || account.Username != old.Username || account.IMAPHost != old.IMAPHost || account.IMAPPort != old.IMAPPort
 		changed = identityChanged || sealed != ""
 		if changed {
@@ -281,7 +266,7 @@ func (s *AccountService) Update(ctx context.Context, id uint, req UpdateAccount)
 		}
 		return tx.Model(&account).Select(
 			"Email", "Provider", "Username", "Password", "IMAPHost", "IMAPPort",
-			"SMTPHost", "SMTPPort", "Color", "ConfigVersion", "IdentityVersion", "UIDValidity", "LastSyncTime",
+			"SMTPHost", "SMTPPort", "ConfigVersion", "IdentityVersion", "UIDValidity", "LastSyncTime",
 		).Updates(&account).Error
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
