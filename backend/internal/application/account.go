@@ -27,6 +27,7 @@ type Provider struct {
 func Providers() []Provider {
 	labels := map[string]string{
 		"gmail":   "Gmail",
+		"icloud":  "iCloud",
 		"qq":      "QQ 邮箱",
 		"outlook": "Outlook",
 		"qq-work": "腾讯企业邮箱",

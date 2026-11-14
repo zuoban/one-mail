@@ -89,6 +89,7 @@ export default defineConfig([
 - Connection tests immediately show per-account progress text and a continuously rotating loading icon (slowed under reduced motion), prevent duplicate tests for that account, and restore the button after success or failure. Other accounts remain available; results received after leaving the page are ignored.
 - `MailProvider` owns both `MailStore` and `AccountStore` for one authenticated session. Routes reuse loaded accounts/providers; mutations invalidate shared state, cancelled reads restart on the next subscriber, and session changes dispose pending work.
 - Provider options come from `/api/providers`. Custom accounts expose labelled IMAP host and port fields for both creation and editing. Endpoint changes invalidate old message bodies; initial-sync failures remain distinct from a successfully saved account.
+- Selecting iCloud shows the App-specific password requirement, two-factor authentication instructions, and a link to the Apple Account page in both creation and editing. New accounts copy the full email address into the login username; users can enter just the local part if iCloud rejects the full address.
 - The configured list, up to 200 rows, renders ordinary rows. `MailList`, `MailReader`, inbox actions, and keyboard handling are separate from the page composition.
 - The body cache uses recent-access eviction, a 100-message ceiling, and a 16 MiB budget for UTF-16 body strings. A body larger than 2 MiB remains available only as the current reader detail; these limits are not a total browser heap measurement.
 

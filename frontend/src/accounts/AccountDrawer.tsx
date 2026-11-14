@@ -28,6 +28,8 @@ interface Props {
 
 export default function AccountDrawer({ drawerRef, editingAccount, loading, form, setForm, usernameEdited, setUsernameEdited, error, closeModal, handleSubmit }: Props) {
   const { providers, loadingProviders, providersError, accountStore } = useAccounts()
+  const isICloud = form.provider === 'icloud'
+  const passwordHelpIds = [editingAccount && 'account-password-help', isICloud && 'account-icloud-password-help'].filter(Boolean).join(' ') || undefined
   const errorRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (error) errorRef.current?.scrollIntoView({ block: 'nearest' })
@@ -107,7 +109,7 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                         username: !editingAccount && !usernameEdited ? email : prev.username,
                       }))
                     }}
-                    placeholder="name@example.com"
+                    placeholder={isICloud ? 'name@icloud.com' : 'name@example.com'}
                     required
                   />
                 </div>
@@ -118,6 +120,7 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                   </label>
                   <input
                     id="account-username"
+                    aria-describedby={isICloud ? 'account-icloud-username-help' : undefined}
                     type="text"
                     value={form.username}
                     onChange={e => {
@@ -127,24 +130,36 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                     placeholder="通常与邮箱地址一致"
                     required
                   />
+                  {isICloud && (
+                    <p id="account-icloud-username-help" className="mt-2 text-sm text-[var(--text-secondary)]">
+                      填写完整的 iCloud 邮箱地址；如连接失败，可尝试仅填写 @ 前的部分。
+                    </p>
+                  )}
                 </div>
 
                 <div>
                   <label htmlFor="account-password" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                    密码 / 授权码
+                    {isICloud ? 'App 专用密码' : '密码 / 授权码'}
                     {editingAccount && (
                       <span id="account-password-help" className="text-xs text-[var(--text-tertiary)] font-normal ml-2">留空则保持不变</span>
                     )}
                   </label>
                   <input
                     id="account-password"
-                    aria-describedby={editingAccount ? 'account-password-help' : undefined}
+                    aria-describedby={passwordHelpIds}
                     type="password"
                     value={form.password}
                     onChange={e => setForm({ ...form, password: e.target.value })}
-                    placeholder={editingAccount ? '留空保持原密码' : '输入应用专用密码或授权码'}
+                    placeholder={editingAccount ? '留空保持原密码' : isICloud ? '输入 Apple 生成的 App 专用密码' : '输入应用专用密码或授权码'}
                     required={!editingAccount}
                   />
+                  {isICloud && (
+                    <p id="account-icloud-password-help" className="mt-2 text-sm text-[var(--text-secondary)]">
+                      先开启 Apple 账户双重认证，再前往{' '}
+                      <a href="https://account.apple.com/" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">Apple 账户（新窗口）</a>
+                      {' '}的「登录与安全」生成 App 专用密码，并在此填写。
+                    </p>
+                  )}
                 </div>
 
                 {error && (

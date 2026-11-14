@@ -63,28 +63,35 @@ func TestCreateCustomAndPresetAccounts(t *testing.T) {
 		tested = *account
 		return nil
 	}
-	for _, provider := range []string{"custom", "gmail"} {
+	for _, test := range []struct {
+		provider string
+		imapHost string
+		imapPort int
+		smtpHost string
+		smtpPort int
+	}{
+		{"custom", "mail.example.com", 1993, "legacy-smtp", 1587},
+		{"gmail", "imap.gmail.com", 993, "smtp.gmail.com", 587},
+		{"icloud", "imap.mail.me.com", 993, "smtp.mail.me.com", 587},
+	} {
 		account, warning, err := service.Create(context.Background(), CreateAccount{
-			Email:    "owner@example.com",
-			Provider: provider,
-			Username: "owner",
-			Password: "private-password",
+			Email:    "owner@icloud.com",
+			Provider: test.provider,
+			Username: "owner@icloud.com",
+			Password: "abcd-efgh-ijkl-mnop",
 			IMAPHost: "mail.example.com",
 			IMAPPort: 1993,
 			SMTPHost: "legacy-smtp",
-			SMTPPort: 587,
+			SMTPPort: 1587,
 		})
 		if err != nil || account == nil || !errors.Is(warning, refreshErr) {
 			t.Fatalf("create result: account=%+v warning=%v err=%v", account, warning, err)
 		}
-		if provider == "custom" && (account.IMAPHost != "mail.example.com" || account.IMAPPort != 1993 || account.SMTPHost != "legacy-smtp") {
-			t.Fatalf("custom configuration lost: %+v", account)
+		if account.IMAPHost != test.imapHost || account.IMAPPort != test.imapPort || account.SMTPHost != test.smtpHost || account.SMTPPort != test.smtpPort {
+			t.Fatalf("%s account used incorrect endpoints: %+v", test.provider, account)
 		}
-		if provider == "gmail" && (account.IMAPHost != imap.ProviderConfigs[provider].IMAPHost || account.IMAPPort != 993) {
-			t.Fatalf("preset accepted client override: %+v", account)
-		}
-		if tested.Password != "private-password" || tested.IMAPHost != account.IMAPHost {
-			t.Fatal("connection tested wrong settings")
+		if tested.Username != "owner@icloud.com" || tested.Password != "abcd-efgh-ijkl-mnop" || tested.IMAPHost != test.imapHost || tested.IMAPPort != test.imapPort {
+			t.Fatalf("%s connection tested wrong settings", test.provider)
 		}
 		var saved models.EmailAccount
 		if err := db.First(&saved, account.ID).Error; err != nil {
@@ -92,6 +99,10 @@ func TestCreateCustomAndPresetAccounts(t *testing.T) {
 		}
 		if !credentials.IsEncrypted(saved.Password) {
 			t.Fatal("created password stored in plaintext")
+		}
+		password, err := credentials.Decrypt(saved.Password)
+		if err != nil || password != "abcd-efgh-ijkl-mnop" || saved.Username != "owner@icloud.com" || saved.IMAPHost != test.imapHost || saved.IMAPPort != test.imapPort || saved.SMTPHost != test.smtpHost || saved.SMTPPort != test.smtpPort {
+			t.Fatalf("%s account settings did not survive storage", test.provider)
 		}
 	}
 }
@@ -383,6 +394,15 @@ func TestProviderSwitchRequiresCustomEndpointAndCanonicalizesPresets(t *testing.
 	})
 	if err != nil || preset.IMAPHost != imap.ProviderConfigs["outlook"].IMAPHost || preset.IMAPPort != 993 || preset.IdentityVersion != 2 || preset.ConfigVersion != 2 {
 		t.Fatalf("preset switch accepted override: %+v %v", preset, err)
+	}
+	icloud, err := service.Update(context.Background(), account.ID, UpdateAccount{
+		Provider: ptr("icloud"),
+		Username: ptr("owner@icloud.com"),
+		IMAPHost: ptr("untrusted.example.com"),
+		IMAPPort: ptr(1993),
+	})
+	if err != nil || icloud.IMAPHost != "imap.mail.me.com" || icloud.IMAPPort != 993 || icloud.SMTPHost != "smtp.mail.me.com" || icloud.SMTPPort != 587 || icloud.Username != "owner@icloud.com" || icloud.IdentityVersion != 3 || icloud.ConfigVersion != 3 {
+		t.Fatalf("iCloud switch used incorrect account settings: %+v %v", icloud, err)
 	}
 }
 

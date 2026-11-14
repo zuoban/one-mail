@@ -265,6 +265,10 @@ mail.example.com {
 
 QQ 邮箱选择「QQ 邮箱」服务商，登录用户名填写完整邮箱地址，IMAP 使用 `imap.qq.com:993`（TLS）。需先在 QQ 邮箱设置中开启 IMAP 服务，并使用授权码作为密码。客户端会等待服务器欢迎消息后再发送登录命令，避免 QQ 忽略提前发送的登录请求而超时。
 
+iCloud 邮箱选择「iCloud」服务商，自动使用 `imap.mail.me.com:993`（TLS）收信。登录用户名优先填写完整的 iCloud 邮箱地址；如无法连接，可尝试仅填写 `@` 前的部分。
+
+密码须使用 **App 专用密码**：先开启 Apple 账户双重认证，再登录 [Apple 账户](https://account.apple.com/)，在「登录与安全」→「App 专用密码」中生成。修改或重置 Apple 账户主密码后，需重新生成并更新此密码。详见 [Apple 的服务器设置](https://support.apple.com/en-us/102525)及 [App 专用密码说明](https://support.apple.com/en-us/102654)。SMTP 预设为 `smtp.mail.me.com:587`；当前应用提供收信与阅读功能。
+
 ### 邮件
 - `GET /api/emails` - 获取最近邮件，支持 `limit`、发件人或主题搜索及邮箱筛选，默认 50 封
 - `GET /api/emails/:id` - 获取正文，本地未缓存时通过 IMAP 按需下载并落库

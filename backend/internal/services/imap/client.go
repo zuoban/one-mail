@@ -48,6 +48,12 @@ var ProviderConfigs = map[string]struct {
 		SMTPHost: "smtp.gmail.com",
 		SMTPPort: 587,
 	},
+	"icloud": {
+		IMAPHost: "imap.mail.me.com",
+		IMAPPort: 993,
+		SMTPHost: "smtp.mail.me.com",
+		SMTPPort: 587,
+	},
 	"qq": {
 		IMAPHost: "imap.qq.com",
 		IMAPPort: 993,
