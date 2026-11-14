@@ -31,6 +31,7 @@ it('reads backend provider metadata with cancellation and sends custom IMAP fiel
     expect(adapter.mock.calls[0][0].signal).toBe(controller.signal)
     const input = { email: 'reader@example.com', username: 'reader', provider: 'private', password: 'password', imap_host: 'imap.private.example', imap_port: 1993 }
     expect((await accountApi.add(input)).refresh_error).toBe('同步未完成')
+    expect(adapter.mock.calls[1][0].timeout).toBe(35000)
     await accountApi.update(1, { imap_host: 'moved.private.example', imap_port: 2993 })
     expect(JSON.parse(adapter.mock.calls[1][0].data)).toEqual(input)
     expect(JSON.parse(adapter.mock.calls[2][0].data)).toEqual({ imap_host: 'moved.private.example', imap_port: 2993 })

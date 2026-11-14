@@ -113,7 +113,7 @@ export const authApi = {
 export const accountApi = {
   list: (signal?: AbortSignal) => api.get<{ data: EmailAccount[] }>('/accounts', { signal }).then(r => r.data),
   add: (data: AccountInput) =>
-    api.post<{ data: EmailAccount; refresh_error?: string }>('/accounts', data).then(r => r.data),
+    api.post<{ data: EmailAccount; refresh_error?: string }>('/accounts', data, { timeout: 35000 }).then(r => r.data),
   update: (id: number, data: Partial<AccountInput>) =>
     api.put<{ data: EmailAccount }>(`/accounts/${id}`, data).then(r => r.data),
   delete: (id: number) => api.delete(`/accounts/${id}`),

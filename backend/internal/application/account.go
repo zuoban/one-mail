@@ -82,6 +82,7 @@ type AccountService struct {
 	pool           *imap.ConnectionPool
 	mail           *MailService
 	testConnection func(context.Context, *models.EmailAccount) error
+	writes         chan struct{}
 }
 
 func NewAccountService(db *gorm.DB, pool *imap.ConnectionPool, mail *MailService) *AccountService {
@@ -90,6 +91,7 @@ func NewAccountService(db *gorm.DB, pool *imap.ConnectionPool, mail *MailService
 		pool:           pool,
 		mail:           mail,
 		testConnection: pool.TestConnectionContext,
+		writes:         make(chan struct{}, 1),
 	}
 }
 
@@ -137,19 +139,49 @@ func configureAccount(account *models.EmailAccount) error {
 		account.IMAPHost, account.IMAPPort = cfg.IMAPHost, cfg.IMAPPort
 		account.SMTPHost, account.SMTPPort = cfg.SMTPHost, cfg.SMTPPort
 	}
+	account.IMAPHost = strings.ToLower(account.IMAPHost)
+	return nil
+}
+
+func (s *AccountService) lockWrite(ctx context.Context) (func(), error) {
+	select {
+	case s.writes <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-s.writes
+			return nil, err
+		}
+		return func() { <-s.writes }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func ensureUniqueMailbox(db *gorm.DB, account *models.EmailAccount) error {
+	var count int64
+	if err := db.Model(&models.EmailAccount{}).
+		Where("LOWER(imap_host) = ? AND imap_port = ? AND username = ? AND id <> ?",
+			strings.ToLower(account.IMAPHost), account.IMAPPort, account.Username, account.ID).
+		Count(&count).Error; err != nil {
+		return failure(Internal, "failed to check existing mailboxes", err)
+	}
+	if count > 0 {
+		return failure(Conflict, "该邮箱账户已存在，请刷新账户列表或编辑已有账户", nil)
+	}
 	return nil
 }
 
 // Create returns a committed account even when the initial refresh fails. The
 // separate refresh error lets the transport report that partial success safely.
 func (s *AccountService) Create(ctx context.Context, req CreateAccount) (*models.EmailAccount, error, error) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	if strings.TrimSpace(req.Email) == "" || strings.TrimSpace(req.Username) == "" || req.Password == "" {
 		return nil, nil, failure(Invalid, "email, username and password are required", nil)
 	}
 	account := models.EmailAccount{
-		Email:    req.Email,
+		Email:    strings.TrimSpace(req.Email),
 		Provider: req.Provider,
-		Username: req.Username,
+		Username: strings.TrimSpace(req.Username),
 		Password: req.Password,
 		IMAPHost: req.IMAPHost,
 		IMAPPort: req.IMAPPort,
@@ -160,6 +192,9 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccount) (*models
 	if err := configureAccount(&account); err != nil {
 		return nil, nil, err
 	}
+	if err := ensureUniqueMailbox(s.db.WithContext(ctx), &account); err != nil {
+		return nil, nil, err
+	}
 	if err := s.testConnection(ctx, &account); err != nil {
 		return nil, nil, failure(Invalid, "failed to connect to mailbox; check account settings", err)
 	}
@@ -168,7 +203,22 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccount) (*models
 		return nil, nil, failure(Internal, "failed to protect account credentials", err)
 	}
 	account.Password = sealed
-	if err := s.db.WithContext(ctx).Create(&account).Error; err != nil {
+	unlock, err := s.lockWrite(ctx)
+	if err != nil {
+		return nil, nil, failure(Internal, "account creation cancelled; reload accounts before retrying", err)
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := ensureUniqueMailbox(tx, &account); err != nil {
+			return err
+		}
+		return tx.Create(&account).Error
+	})
+	unlock()
+	if err != nil {
+		var appErr *Error
+		if errors.As(err, &appErr) {
+			return nil, nil, err
+		}
 		return nil, nil, failure(Internal, "failed to create account", err)
 	}
 	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -217,19 +267,24 @@ func (s *AccountService) Update(ctx context.Context, id uint, req UpdateAccount)
 	}
 	var account models.EmailAccount
 	var changed bool
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	unlock, err := s.lockWrite(ctx)
+	if err != nil {
+		return nil, failure(Internal, "account update cancelled", err)
+	}
+	defer unlock()
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&account, id).Error; err != nil {
 			return err
 		}
 		old := account
 		if req.Email != nil {
-			account.Email = *req.Email
+			account.Email = strings.TrimSpace(*req.Email)
 		}
 		if req.Provider != nil {
 			account.Provider = *req.Provider
 		}
 		if req.Username != nil {
-			account.Username = *req.Username
+			account.Username = strings.TrimSpace(*req.Username)
 		}
 		if req.Provider != nil && *req.Provider == "custom" && old.Provider != "custom" && (req.IMAPHost == nil || req.IMAPPort == nil) {
 			return failure(Invalid, "imap_host and imap_port are required for custom accounts", nil)
@@ -247,6 +302,11 @@ func (s *AccountService) Update(ctx context.Context, id uint, req UpdateAccount)
 			account.Password = sealed
 		}
 		identityChanged := account.Provider != old.Provider || account.Username != old.Username || account.IMAPHost != old.IMAPHost || account.IMAPPort != old.IMAPPort
+		if identityChanged {
+			if err := ensureUniqueMailbox(tx, &account); err != nil {
+				return err
+			}
+		}
 		changed = identityChanged || sealed != ""
 		if changed {
 			account.ConfigVersion++
