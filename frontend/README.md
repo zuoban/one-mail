@@ -71,3 +71,13 @@ export default defineConfig([
   },
 ])
 ```
+
+## Frontend interaction and styling
+
+- The workspace keeps the existing graphite palette, cobalt accent, fonts, and light/dark themes. Shared tokens and responsive workspace styles live in `src/index.css`.
+- At 1280px and above, navigation uses the full sidebar. Between 768px and 1279px, an icon rail leaves more room for mail. Below 1024px, opening a message switches from the list to the reader; use **返回** or **Esc** to return.
+- Search supports `/`; `j` and `k` move between messages; `?` opens the shortcut reference. Mail-row actions appear on hover and keyboard focus. Tab focus is visible across navigation and controls.
+- Desktop inputs and primary controls are 36px high. Touch and phone layouts provide 44px action targets. Mobile navigation has three equal columns and respects device safe areas.
+- Account form labels target their inputs; provider and color selectors expose their selected state. The account drawer contains keyboard focus and restores it when closed.
+
+The refinement follows [unslop](https://heydamir.design/unslop) by Damir Sokolovsky ([@heydamir](https://x.com/heydamir)), licensed under CC BY 4.0.

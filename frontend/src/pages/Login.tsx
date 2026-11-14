@@ -76,7 +76,7 @@ export default function Login() {
           )}
 
           <div>
-            <label htmlFor="admin-password" className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+            <label htmlFor="admin-password" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
               管理员密码
             </label>
             <div className="relative flex items-center">
@@ -100,7 +100,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={submitting}
-            className="btn btn-primary w-full h-10 mt-2"
+            className="btn btn-primary w-full h-9"
           >
             {submitting ? (
               <span>登录中</span>

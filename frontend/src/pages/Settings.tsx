@@ -80,11 +80,11 @@ export default function Settings() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-4 md:p-8">
+    <div className="workspace-page settings-page">
       {toast && (
         <div className="fixed left-4 right-4 top-4 z-50 md:left-auto md:right-4">
           <div role="status"
-            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-[8px] text-sm border shadow-[var(--shadow-md)] ${
+            className={`flex items-center gap-3 px-4 py-3 rounded-[8px] text-sm border shadow-[var(--shadow-md)] ${
               toast.type === 'success'
                 ? 'bg-[var(--bg-primary)] text-[var(--text-primary)] border-[var(--border-default)]'
                 : 'bg-[var(--error-50)] text-[var(--error-700)] border-[var(--error-100)]'
@@ -97,17 +97,17 @@ export default function Settings() {
       )}
 
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-medium tracking-[-0.015em] text-[var(--text-primary)]">设置</h1>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">
+      <div className="page-heading">
+        <h1>设置</h1>
+        <p>
           管理 Telegram 邮件推送
         </p>
       </div>
 
-        <section className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-5 md:p-6 shadow-[var(--shadow-sm)]">
-          <div className="pb-4 mb-5 border-b border-[var(--border-light)]">
+        <section className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-4 md:p-6 shadow-[var(--shadow-sm)]">
+          <div className="pb-4 mb-6 border-b border-[var(--border-light)]">
             <h2 className="text-base font-medium text-[var(--text-primary)]">Telegram 通知</h2>
-            <p className="mt-0.5 text-sm text-[var(--text-secondary)]">连接 Bot 后可将新邮件推送到指定会话</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">连接 Bot 后可将新邮件推送到指定会话</p>
           </div>
 
           {telegramError && (
@@ -118,12 +118,12 @@ export default function Settings() {
             <button type="button" className="btn btn-secondary mb-4" onClick={() => { setConfigLoading(true); setTelegramError(''); setLoadAttempt(attempt => attempt + 1) }}>重新加载</button>
           )}
 
-          <form onSubmit={handleTelegramSubmit} className="space-y-4">
-            <fieldset disabled={configLoading || !configLoaded || telegramLoading || telegramTesting} className="space-y-4">
-            <div className="flex items-center justify-between gap-4 p-4 rounded-[10px] bg-[var(--bg-secondary)] border border-[var(--border-light)]">
+          <form onSubmit={handleTelegramSubmit} className="max-w-2xl space-y-6">
+            <fieldset disabled={configLoading || !configLoaded || telegramLoading || telegramTesting} className="min-w-0 space-y-6">
+            <div className="flex items-center justify-between gap-4 p-4 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-light)]">
               <div>
                 <span className="block text-sm font-medium text-[var(--text-primary)]">启用自动推送</span>
-                <span className="block text-xs text-[var(--text-tertiary)] mt-0.5">
+                <span id="telegram-enabled-help" className="block text-xs text-[var(--text-tertiary)] mt-1">
                   收到新邮件时自动转发摘要到 Telegram
                 </span>
               </div>
@@ -131,48 +131,56 @@ export default function Settings() {
                 type="button"
                 role="switch"
                 aria-label="启用自动推送"
+                aria-describedby="telegram-enabled-help"
                 aria-checked={telegramConfig.enabled}
                 onClick={() => setTelegramConfig({ ...telegramConfig, enabled: !telegramConfig.enabled })}
-                className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer ${
-                  telegramConfig.enabled ? 'bg-[var(--primary-500)]' : 'bg-[var(--bg-tertiary)] shadow-[inset_0_0_0_1px_var(--border-default)]'
-                }`}
+                className="btn btn-ghost relative h-9 w-11 flex-shrink-0 p-0 rounded-lg"
               >
                 <span
-                  className={`toggle-thumb absolute left-0.5 top-0.5 h-5 w-5 rounded-full transition-transform ${
-                    telegramConfig.enabled ? 'translate-x-5' : 'translate-x-0'
+                  aria-hidden="true"
+                  className={`absolute inset-x-0 top-1/2 -translate-y-1/2 h-6 rounded-full transition-colors ${
+                    telegramConfig.enabled ? 'bg-[var(--primary-500)]' : 'bg-[var(--bg-tertiary)] shadow-[inset_0_0_0_1px_var(--border-default)]'
                   }`}
-                />
+                >
+                  <span
+                    className={`toggle-thumb absolute left-0.5 top-0.5 h-5 w-5 rounded-full transition-transform ${
+                      telegramConfig.enabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </span>
               </button>
             </div>
 
             <div>
-              <label htmlFor="telegram-bot-token" className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+              <label htmlFor="telegram-bot-token" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                 Bot Token
               </label>
               <input
                 id="telegram-bot-token"
                 type="text"
+                aria-describedby="telegram-bot-token-help"
                 value={telegramConfig.bot_token}
                 onChange={(e) => setTelegramConfig({ ...telegramConfig, bot_token: e.target.value })}
                 className="font-mono text-sm"
                 placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
               />
-              <p className="mt-1.5 text-xs text-[var(--text-tertiary)]">从 @BotFather 创建机器人后获取</p>
+              <p id="telegram-bot-token-help" className="mt-2 text-xs text-[var(--text-tertiary)]">从 @BotFather 创建机器人后获取</p>
             </div>
 
             <div>
-              <label htmlFor="telegram-chat-id" className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+              <label htmlFor="telegram-chat-id" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                 Chat ID
               </label>
               <input
                 id="telegram-chat-id"
                 type="text"
+                aria-describedby="telegram-chat-id-help"
                 value={telegramConfig.chat_id}
                 onChange={(e) => setTelegramConfig({ ...telegramConfig, chat_id: e.target.value })}
                 className="font-mono text-sm"
                 placeholder="-1001234567890"
               />
-              <p className="mt-1.5 text-xs text-[var(--text-tertiary)]">支持个人用户 ID、群组 ID 或频道 ID</p>
+              <p id="telegram-chat-id-help" className="mt-2 text-xs text-[var(--text-tertiary)]">支持个人用户 ID、群组 ID 或频道 ID</p>
             </div>
 
             <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-between">

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import { accountApi } from '../api'
 import type { EmailAccount } from '../api'
@@ -43,21 +43,47 @@ export default function Accounts() {
   const [error, setError] = useState('')
   const [usernameEdited, setUsernameEdited] = useState(false)
   const [refreshingAccountId, setRefreshingAccountId] = useState<number | null>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     loadAccounts()
   }, [])
 
   useEffect(() => {
-    const handleEsc = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      if (showModal) {
+    if (!showModal) return
+
+    const drawer = drawerRef.current
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    drawer?.focus()
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
         setShowModal(false)
         setEditingAccount(null)
+        return
+      }
+      if (event.key !== 'Tab' || !drawer) return
+
+      const controls = drawer.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])')
+      const first = controls[0]
+      const last = controls[controls.length - 1]
+      if (!first || !last) {
+        event.preventDefault()
+        return
+      }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === drawer)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
       }
     }
-    window.addEventListener('keydown', handleEsc)
-    return () => window.removeEventListener('keydown', handleEsc)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      previousFocus?.focus()
+    }
   }, [showModal])
 
   const loadAccounts = async () => {
@@ -172,7 +198,7 @@ export default function Accounts() {
     })
   }
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-8">
+    <div className="workspace-page">
       <ConfirmDialog
         open={Boolean(confirmDelete)}
         title="删除账户"
@@ -187,7 +213,8 @@ export default function Accounts() {
       {toast && (
         <div className="fixed left-4 right-4 top-4 z-50 md:left-auto md:right-4">
           <div
-            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-[8px] text-sm border shadow-[var(--shadow-md)] ${
+            role="status"
+            className={`flex items-center gap-3 px-4 py-3 rounded-[8px] text-sm border shadow-[var(--shadow-md)] ${
               toast.type === 'success'
                 ? 'bg-[var(--bg-primary)] text-[var(--text-primary)] border-[var(--border-default)]'
                 : 'bg-[var(--error-50)] text-[var(--error-700)] border-[var(--error-100)]'
@@ -200,10 +227,10 @@ export default function Accounts() {
       )}
 
       {/* Header */}
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="page-heading flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-medium tracking-[-0.015em] text-[var(--text-primary)]">邮箱账户</h1>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+          <h1>邮箱账户</h1>
+          <p>
             管理已接入的 IMAP 邮箱，按需刷新拉取最近 50 封邮件
           </p>
         </div>
@@ -220,7 +247,7 @@ export default function Accounts() {
       {/* Account List */}
       {accounts.length === 0 ? (
         <div className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] shadow-[var(--shadow-sm)] empty-state">
-          <Mail className="empty-state-icon" />
+          <Mail className="empty-state-icon" strokeWidth={1.5} />
           <p className="text-base font-medium text-[var(--text-primary)]">暂无邮箱账户</p>
           <p className="text-sm mt-1 text-[var(--text-tertiary)]">点击右上角添加你的第一个邮箱账户</p>
         </div>
@@ -229,14 +256,18 @@ export default function Accounts() {
           {accounts.map(account => (
             <div
               key={account.id}
-              className="p-4 md:p-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between hover:bg-[var(--bg-nav-hover)] transition-colors"
+              className="p-4 md:p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between hover:bg-[var(--bg-nav-hover)] transition-colors"
             >
               <div className="flex items-center gap-4 min-w-0">
                 <div
-                  className="w-10 h-10 rounded-[10px] flex items-center justify-center text-sm font-medium text-white flex-shrink-0"
-                  style={{ backgroundColor: account.color || '#2563EB' }}
+                  className="relative w-10 h-10 rounded-lg border border-[var(--border-light)] bg-[var(--bg-secondary)] flex items-center justify-center text-sm font-medium text-[var(--text-secondary)] flex-shrink-0"
+                  aria-hidden="true"
                 >
                   {account.email[0].toUpperCase()}
+                  <span
+                    className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[var(--bg-primary)]"
+                    style={{ backgroundColor: account.color || '#2563EB' }}
+                  />
                 </div>
 
                 <div className="min-w-0">
@@ -248,7 +279,7 @@ export default function Accounts() {
 
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-tertiary)]">
                     <span>{providers.find(p => p.value === account.provider)?.label || account.provider}</span>
-                    <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-flex items-center gap-2">
                       <span className={`status-dot ${account.status === 'active' ? 'status-dot-success' : 'status-dot-warning'}`} />
                       <span className={account.status === 'active' ? 'text-[var(--text-secondary)]' : ''}>
                         {account.status === 'active' ? '已连接' : '未连接'}
@@ -261,23 +292,23 @@ export default function Accounts() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-1.5 flex-shrink-0">
+              <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
                 <button
                   type="button"
                   onClick={() => handleRefresh(account.id)}
                   disabled={refreshingAccountId === account.id}
                   className="btn btn-secondary btn-sm"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${refreshingAccountId === account.id ? 'animate-spin' : ''}`} strokeWidth={1.5} />
+                  <RefreshCw className={`w-4 h-4 ${refreshingAccountId === account.id ? 'animate-spin' : ''}`} strokeWidth={1.5} />
                   <span>刷新</span>
                 </button>
 
-                <div className="flex items-center gap-0.5 ml-1 pl-2 border-l border-[var(--border-light)]">
+                <div className="flex items-center gap-1 ml-1 pl-2 border-l border-[var(--border-light)]">
                   <Tooltip content="测试连接">
                     <button
                       type="button"
                       onClick={() => handleTest(account.id)}
-                      className="btn btn-ghost w-8 h-8 p-0"
+                      className="btn btn-ghost w-9 h-9 p-0"
                       aria-label="测试连接"
                     >
                       <Plug className="w-4 h-4 text-[var(--text-tertiary)]" strokeWidth={1.5} />
@@ -287,7 +318,7 @@ export default function Accounts() {
                     <button
                       type="button"
                       onClick={() => openEditModal(account)}
-                      className="btn btn-ghost w-8 h-8 p-0"
+                      className="btn btn-ghost w-9 h-9 p-0"
                       aria-label="编辑账户"
                     >
                       <Pencil className="w-4 h-4 text-[var(--text-tertiary)]" strokeWidth={1.5} />
@@ -297,7 +328,7 @@ export default function Accounts() {
                     <button
                       type="button"
                       onClick={() => setConfirmDelete(account)}
-                      className="btn btn-ghost w-8 h-8 p-0 hover:text-[var(--error-600)] hover:bg-[var(--error-50)]"
+                      className="btn btn-ghost w-9 h-9 p-0 hover:text-[var(--error-600)] hover:bg-[var(--error-50)]"
                       aria-label="删除账户"
                     >
                       <Trash2 className="w-4 h-4" strokeWidth={1.5} />
@@ -321,13 +352,21 @@ export default function Accounts() {
               setEditingAccount(null)
             }}
           />
-          <div className="fixed inset-y-0 right-0 w-full sm:w-[480px] bg-[var(--bg-primary)] border-l border-[var(--border-default)] shadow-[var(--shadow-xl)] z-50 flex flex-col">
+          <div
+            ref={drawerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-drawer-title"
+            aria-describedby="account-drawer-description"
+            tabIndex={-1}
+            className="fixed inset-y-0 right-0 w-full sm:w-[480px] bg-[var(--bg-primary)] border-l border-[var(--border-default)] shadow-[var(--shadow-xl)] z-50 flex flex-col"
+          >
             <div className="h-16 px-6 border-b border-[var(--border-light)] flex items-center justify-between">
               <div className="min-w-0">
-                <h3 className="text-base font-medium text-[var(--text-primary)]">
+                <h2 id="account-drawer-title" className="text-base font-medium text-[var(--text-primary)]">
                   {editingAccount ? '编辑邮箱账户' : '添加邮箱账户'}
-                </h3>
-                <p className="text-xs text-[var(--text-tertiary)] truncate">
+                </h2>
+                <p id="account-drawer-description" className="text-xs text-[var(--text-tertiary)] truncate">
                   {editingAccount ? editingAccount.email : '配置 IMAP 邮箱接入信息'}
                 </p>
               </div>
@@ -337,7 +376,7 @@ export default function Accounts() {
                   setShowModal(false)
                   setEditingAccount(null)
                 }}
-                className="btn btn-ghost w-8 h-8 p-0"
+                className="btn btn-ghost w-9 h-9 p-0"
                 aria-label="关闭"
               >
                 <X className="w-4 h-4" strokeWidth={1.5} />
@@ -345,18 +384,19 @@ export default function Accounts() {
             </div>
 
             <form onSubmit={handleSubmit} className="flex-1 overflow-auto flex flex-col">
-              <div className="flex-1 overflow-auto p-6 space-y-5 thin-scrollbar">
-                <div>
-                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+              <div className="flex-1 overflow-auto p-6 space-y-6 thin-scrollbar">
+                <fieldset className="min-w-0">
+                  <legend className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                     邮箱服务商
-                  </label>
+                  </legend>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {providers.map(p => (
                       <button
                         key={p.value}
                         type="button"
                         onClick={() => setForm({ ...form, provider: p.value })}
-                        className={`h-9 px-3 rounded-[8px] text-sm border transition-colors cursor-pointer ${
+                        aria-pressed={form.provider === p.value}
+                        className={`btn h-9 px-3 rounded-[8px] text-sm border transition-colors cursor-pointer ${
                           form.provider === p.value
                             ? 'bg-[var(--bg-accent-soft)] text-[var(--text-primary)] font-medium border-[var(--primary-200)]'
                             : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-light)] hover:border-[var(--border-hover)]'
@@ -366,13 +406,14 @@ export default function Accounts() {
                       </button>
                     ))}
                   </div>
-                </div>
+                </fieldset>
 
                 <div>
-                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                  <label htmlFor="account-email" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                     邮箱地址
                   </label>
                   <input
+                    id="account-email"
                     type="email"
                     value={form.email}
                     onChange={e => {
@@ -389,10 +430,11 @@ export default function Accounts() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                  <label htmlFor="account-username" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                     登录用户名
                   </label>
                   <input
+                    id="account-username"
                     type="text"
                     value={form.username}
                     onChange={e => {
@@ -405,13 +447,15 @@ export default function Accounts() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                  <label htmlFor="account-password" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                     密码 / 授权码
                     {editingAccount && (
-                      <span className="text-xs text-[var(--text-tertiary)] font-normal ml-1.5">留空则保持不变</span>
+                      <span id="account-password-help" className="text-xs text-[var(--text-tertiary)] font-normal ml-2">留空则保持不变</span>
                     )}
                   </label>
                   <input
+                    id="account-password"
+                    aria-describedby={editingAccount ? 'account-password-help' : undefined}
                     type="password"
                     value={form.password}
                     onChange={e => setForm({ ...form, password: e.target.value })}
@@ -420,29 +464,32 @@ export default function Accounts() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+                <fieldset className="min-w-0">
+                  <legend className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                     账户标识色
-                  </label>
+                  </legend>
                   <div className="flex flex-wrap items-center gap-2">
                     {accountColors.map(color => (
                       <button
                         key={color}
                         type="button"
                         onClick={() => setForm({ ...form, color })}
-                        className={`w-6 h-6 rounded-full shadow-[inset_0_0_0_1px_rgba(255,255,255,0.14)] transition-shadow cursor-pointer ${
+                        className={`btn btn-ghost w-9 h-9 p-0 rounded-lg border transition-colors cursor-pointer ${
                           form.color === color
-                            ? 'ring-2 ring-[var(--text-primary)] ring-offset-2 ring-offset-[var(--bg-primary)]'
-                            : ''
+                            ? 'bg-[var(--bg-secondary)] border-[var(--text-secondary)]'
+                            : 'border-transparent hover:border-[var(--border-hover)]'
                         }`}
-                        style={{ backgroundColor: color }}
                         aria-label={`选择颜色 ${color}`}
-                      />
+                        aria-pressed={form.color === color}
+                      >
+                        <span aria-hidden="true" className="h-4 w-4 rounded-full" style={{ backgroundColor: color }} />
+                      </button>
                     ))}
                     <button
                       type="button"
                       onClick={() => setForm({ ...form, color: '' })}
-                      className={`h-6 px-2.5 rounded-[6px] text-xs border transition-colors cursor-pointer ${
+                      aria-pressed={form.color === ''}
+                      className={`btn h-9 px-3 rounded-[8px] text-sm border transition-colors cursor-pointer ${
                         form.color === ''
                           ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-medium border-[var(--border-default)]'
                           : 'bg-transparent text-[var(--text-tertiary)] border-[var(--border-light)] hover:border-[var(--border-hover)]'
@@ -451,11 +498,11 @@ export default function Accounts() {
                       自动
                     </button>
                   </div>
-                </div>
+                </fieldset>
 
 
                 {error && (
-                  <div className="alert alert-error flex items-center gap-2">
+                  <div role="alert" className="alert alert-error flex items-center gap-2">
                     <X className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
                     <span>{error}</span>
                   </div>

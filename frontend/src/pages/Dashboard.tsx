@@ -37,7 +37,9 @@ const providers = [
   { value: 'custom', label: '自定义' },
 ]
 
-const EMAIL_ROW_STRIDE = 66
+const EMAIL_ROW_HEIGHT = 72
+const EMAIL_ROW_GAP = 4
+const EMAIL_ROW_STRIDE = EMAIL_ROW_HEIGHT + EMAIL_ROW_GAP
 const VIRTUAL_OVERSCAN = 8
 
 interface EmailListRowProps {
@@ -75,6 +77,7 @@ const EmailListRow = memo(function EmailListRow({
       role="group"
       tabIndex={0}
       aria-label={`${email.is_read ? '已读' : '未读'}，${email.from_name || email.from}，${email.subject || '无主题'}`}
+      aria-current={isSelected ? 'true' : undefined}
       onKeyDown={event => {
         if (event.target !== event.currentTarget) return
         if (event.key === 'Enter' || event.key === ' ') {
@@ -92,14 +95,14 @@ const EmailListRow = memo(function EmailListRow({
         const y = Math.min(event.clientY, window.innerHeight - menuHeight - padding)
         onContextMenu(email, Math.max(padding, x), Math.max(padding, y))
       }}
-      style={isSelected ? { boxShadow: 'var(--active-highlight)', height: '64px', marginBottom: '2px' } : { height: '64px', marginBottom: '2px' }}
-      className={`group px-3 py-2.5 rounded-[8px] border cursor-pointer transition-colors ${
+      style={{ height: EMAIL_ROW_HEIGHT, marginBottom: EMAIL_ROW_GAP }}
+      className={`mail-row group px-3 py-3 rounded-[8px] border cursor-pointer transition-colors ${
         isSelected
-          ? 'bg-[var(--bg-tertiary)] border-[var(--border-default)]'
+          ? 'bg-[var(--bg-accent-soft)] border-[var(--primary-200)]'
           : 'border-transparent hover:bg-[var(--bg-nav-hover)]'
       }`}
     >
-      <div className="flex items-start gap-2.5">
+      <div className="flex items-start gap-2">
         {batchMode ? (
           <input
             type="checkbox"
@@ -113,7 +116,7 @@ const EmailListRow = memo(function EmailListRow({
             className="mt-0.5 w-4 h-4 rounded border-[var(--border-default)] accent-[var(--primary-500)] cursor-pointer"
           />
         ) : (
-          <span className="flex w-2.5 pt-2 justify-center flex-shrink-0">
+          <span className="flex w-2 pt-2 justify-center flex-shrink-0">
             {!email.is_read && (
               <span
                 className="w-1.5 h-1.5 rounded-full bg-[var(--primary-500)]"
@@ -125,13 +128,13 @@ const EmailListRow = memo(function EmailListRow({
 
         <div className="flex-1 min-w-0">
           <div className="flex h-5 items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
               <span
-                className="w-[3px] h-3 rounded-full flex-shrink-0"
+                className="w-1 h-3 rounded-full flex-shrink-0"
                 style={{ backgroundColor: accountColor }}
               />
               <span
-                className={`text-sm truncate ${
+                className={`text-[13px] truncate ${
                   !email.is_read
                     ? 'font-medium text-[var(--text-primary)]'
                     : 'font-normal text-[var(--text-secondary)]'
@@ -141,21 +144,22 @@ const EmailListRow = memo(function EmailListRow({
               </span>
             </div>
 
-            <div className="flex items-center flex-shrink-0">
-              <div className="hidden md:group-hover:flex items-center gap-0.5">
+            <div className="relative flex items-center justify-end flex-shrink-0 min-w-12">
+              <div className="mail-row-actions hidden absolute right-0 items-center gap-1 bg-[var(--bg-primary)] rounded-[6px]">
                 <button
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation()
                     onToggleRead(email)
                   }}
-                  className="p-0.5 rounded-[4px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] cursor-pointer"
+                  className="flex w-7 h-7 items-center justify-center rounded-[4px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] cursor-pointer"
                   title={email.is_read ? '标为未读' : '标为已读'}
+                  aria-label={email.is_read ? '标为未读' : '标为已读'}
                 >
                   {email.is_read ? (
-                    <EyeOff className="w-3.5 h-3.5" strokeWidth={1.5} />
+                    <EyeOff className="w-4 h-4" strokeWidth={1.5} />
                   ) : (
-                    <MailOpen className="w-3.5 h-3.5" strokeWidth={1.5} />
+                    <MailOpen className="w-4 h-4" strokeWidth={1.5} />
                   )}
                 </button>
                 <button
@@ -164,30 +168,31 @@ const EmailListRow = memo(function EmailListRow({
                     event.stopPropagation()
                     onRequestDelete(email)
                   }}
-                  className="p-0.5 rounded-[4px] text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] cursor-pointer"
+                  className="flex w-7 h-7 items-center justify-center rounded-[4px] text-[var(--text-tertiary)] hover:text-[var(--error-600)] hover:bg-[var(--error-50)] cursor-pointer"
                   title="删除"
+                  aria-label="删除"
                 >
-                  <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  <Trash2 className="w-4 h-4" strokeWidth={1.5} />
                 </button>
               </div>
-              <span className="font-mono tabular-nums text-xs text-[var(--text-tertiary)] whitespace-nowrap md:group-hover:hidden">
+              <span className="mail-row-date font-mono tabular-nums text-xs text-[var(--text-tertiary)] whitespace-nowrap">
                 {dateLabel}
               </span>
             </div>
           </div>
 
-          <div className="mt-0.5 flex items-center gap-1.5">
+          <div className="mt-1 flex items-center gap-2">
             <p
               className={`text-sm truncate flex-1 ${
                 !email.is_read
                   ? 'text-[var(--text-primary)] font-medium'
-                  : 'text-[var(--text-secondary)]'
+                  : 'text-[var(--text-primary)]'
               }`}
             >
               {email.subject || '(无主题)'}
             </p>
             {email.has_attachment && (
-              <Paperclip className="w-3.5 h-3.5 text-[var(--text-tertiary)] flex-shrink-0" strokeWidth={1.5} />
+              <Paperclip className="w-4 h-4 text-[var(--text-tertiary)] flex-shrink-0" strokeWidth={1.5} />
             )}
           </div>
         </div>
@@ -699,7 +704,7 @@ export default function Dashboard() {
   const useLightPaper = Boolean(selectedDetail?.body_html) && (resolvedTheme === 'light' || paperLight)
 
   return (
-    <div className="h-full flex flex-col md:flex-row bg-[var(--bg-secondary)] overflow-hidden">
+    <div className={`mail-workspace h-full flex bg-[var(--bg-secondary)] overflow-hidden ${selectedEmail ? 'is-reading' : ''}`}>
       {/* Toast */}
       {toast && (
         <div className="fixed left-4 right-4 top-4 z-50 md:left-auto md:right-4 animate-in fade-in slide-in-from-top-2 duration-200">
@@ -829,11 +834,11 @@ export default function Dashboard() {
       )}
 
       {/* Left Column - Mail List */}
-      <div className={`${selectedEmail ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] lg:w-[400px] flex-shrink-0 border-r border-[var(--border-light)] bg-[var(--bg-primary)] flex-col min-h-0`}>
-        {/* Top Header Bar (aligns with 56px sidebar & detail toolbar) */}
-        <div className="h-11 md:h-14 px-4 border-b border-[var(--border-light)] flex items-center justify-between gap-2 flex-shrink-0">
-          <div className="flex items-baseline gap-2">
-            <h2 className="hidden md:block text-base font-medium text-[var(--text-primary)]">收件箱</h2>
+      <section aria-label="邮件列表" className="mail-list-pane min-w-0 border-r border-[var(--border-light)] bg-[var(--bg-primary)] flex-col min-h-0">
+        {/* Inbox header */}
+        <div className="mail-list-header h-16 px-4 border-b border-[var(--border-light)] flex items-center justify-between gap-2 flex-shrink-0">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <h2 className="text-lg font-medium text-[var(--text-primary)]">收件箱</h2>
             <span className="font-mono tabular-nums text-xs text-[var(--text-tertiary)]">
               {filteredEmails.length} 封{unreadCount > 0 ? ` · ${unreadCount} 未读` : ''}
             </span>
@@ -843,16 +848,16 @@ export default function Dashboard() {
               type="button"
               onClick={handleRefresh}
               disabled={refreshing || accounts.length === 0}
-              className="btn btn-ghost btn-sm px-2 text-xs text-[var(--text-secondary)]"
+              className="btn btn-ghost btn-sm px-3 text-[var(--text-secondary)]"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} strokeWidth={1.5} />
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} strokeWidth={1.5} />
               <span>{refreshing ? '刷新中' : '刷新'}</span>
             </button>
           </Tooltip>
         </div>
 
         {/* Search & Filter Controls */}
-        <div className="px-4 py-3 border-b border-[var(--border-light)] space-y-2.5 flex-shrink-0">
+        <div className="mail-list-controls px-4 py-4 border-b border-[var(--border-light)] space-y-3 flex-shrink-0">
           {/* Search */}
           <div className="relative flex items-center">
             <Search className="absolute left-3 w-4 h-4 text-[var(--text-tertiary)] pointer-events-none" strokeWidth={1.5} />
@@ -874,23 +879,24 @@ export default function Dashboard() {
               <button
                 type="button"
                 onClick={() => setSearch('')}
-                className="absolute right-2.5 p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
+                className="absolute right-2 p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
                 aria-label="清空搜索"
               >
                 <X className="w-3.5 h-3.5" strokeWidth={1.5} />
               </button>
             ) : (
-              <kbd className="kbd hidden md:inline-flex absolute right-2.5 pointer-events-none">/</kbd>
+              <kbd className="kbd hidden md:inline-flex absolute right-2 pointer-events-none">/</kbd>
             )}
           </div>
 
           {/* Account Chips */}
           {accounts.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 thin-scrollbar">
+            <div className="account-filters flex items-center gap-2 overflow-x-auto pb-1 thin-scrollbar" aria-label="按邮箱筛选">
               <button
                 type="button"
                 onClick={() => setSelectedAccountId(null)}
-                className={`inline-flex h-7 items-center gap-1.5 px-2.5 rounded-[6px] border text-xs whitespace-nowrap transition-colors cursor-pointer ${
+                aria-pressed={selectedAccountId === null}
+                className={`inline-flex h-8 items-center gap-2 px-3 rounded-[8px] border text-xs whitespace-nowrap transition-colors cursor-pointer ${
                   selectedAccountId === null
                     ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-medium border-[var(--border-default)]'
                     : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-light)] hover:border-[var(--border-hover)]'
@@ -912,7 +918,8 @@ export default function Dashboard() {
                     <button
                       type="button"
                       onClick={() => setSelectedAccountId(account.id)}
-                      className={`inline-flex h-7 items-center gap-1.5 px-2.5 rounded-[6px] border text-xs whitespace-nowrap transition-colors cursor-pointer ${
+                      aria-pressed={isSelected}
+                      className={`inline-flex h-8 items-center gap-2 px-3 rounded-[8px] border text-xs whitespace-nowrap transition-colors cursor-pointer ${
                         isSelected
                           ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-medium border-[var(--border-default)]'
                           : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-light)] hover:border-[var(--border-hover)]'
@@ -922,7 +929,7 @@ export default function Dashboard() {
                         className="w-2 h-2 rounded-full flex-shrink-0"
                         style={{ backgroundColor: accountColor }}
                       />
-                      <span className="max-w-[110px] truncate">{shortName}</span>
+                      <span className="max-w-[144px] truncate">{shortName}</span>
                     </button>
                   </Tooltip>
                 )
@@ -932,13 +939,14 @@ export default function Dashboard() {
 
           {/* Filter & Batch Row */}
           <div className="flex items-center justify-between gap-2">
-            <div className="segmented">
+            <div className="segmented" role="group" aria-label="邮件阅读状态">
               {(['all', 'unread'] as const).map((f) => (
                 <button
                   key={f}
                   type="button"
                   onClick={() => setFilter(f)}
-                  className={`segmented-item text-xs h-7 ${filter === f ? 'segmented-item-active' : ''}`}
+                  aria-pressed={filter === f}
+                  className={`segmented-item ${filter === f ? 'segmented-item-active' : ''}`}
                 >
                   {f === 'all' ? '全部' : '未读'}
                 </button>
@@ -952,13 +960,14 @@ export default function Dashboard() {
                 setBatchMode(!batchMode)
                 setSelectedIds(new Set())
               }}
-              className={`h-7 px-2.5 rounded-[6px] text-xs border transition-colors cursor-pointer ${
+              aria-pressed={batchMode}
+              className={`h-9 px-3 rounded-[8px] text-[13px] border transition-colors cursor-pointer ${
                 batchMode
                   ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-medium border-[var(--border-default)]'
                   : 'text-[var(--text-secondary)] border-[var(--border-light)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]'
               }`}
             >
-              {batchMode ? '完成批量' : '批量'}
+              {batchMode ? '完成批量' : '批量选择'}
             </button>
           </div>
 
@@ -1083,35 +1092,35 @@ export default function Dashboard() {
         <button
           type="button"
           onClick={() => setShowShortcuts(true)}
-          className="hidden md:flex h-12 w-full px-4 border-t border-[var(--border-light)] bg-[var(--bg-sidebar)] items-center justify-between text-xs text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors flex-shrink-0 cursor-pointer"
+          className="mail-keyboard-hints hidden lg:flex h-14 w-full px-4 border-t border-[var(--border-light)] bg-[var(--bg-primary)] items-center justify-between gap-2 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors flex-shrink-0 cursor-pointer"
           title="查看全部快捷键 (?)"
         >
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1"><kbd className="kbd">j</kbd><kbd className="kbd">k</kbd> 移动</span>
             <span className="inline-flex items-center gap-1"><kbd className="kbd">u</kbd> 未读</span>
             <span className="inline-flex items-center gap-1"><kbd className="kbd">/</kbd> 搜索</span>
           </div>
           <span className="inline-flex items-center gap-1"><kbd className="kbd">?</kbd> 快捷键</span>
         </button>
-      </div>
+      </section>
 
       {/* Right Column - Reading Canvas */}
-      <div className={`${selectedEmail ? 'flex' : 'hidden md:flex'} flex-1 bg-[var(--bg-secondary)] min-h-0 flex-col`}>
+      <section aria-label="邮件阅读区" className="mail-reader flex-1 min-w-0 bg-[var(--bg-secondary)] min-h-0 flex-col">
         {selectedEmail ? (
           <div className="h-full flex flex-col">
             {/* Action Toolbar */}
-            <div className="h-14 px-4 md:px-6 border-b border-[var(--border-light)] bg-[var(--bg-primary)] flex items-center justify-between gap-3 flex-shrink-0">
+            <div className="reading-toolbar h-16 px-4 xl:px-6 border-b border-[var(--border-light)] bg-[var(--bg-primary)] flex items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-2 min-w-0">
                 <button
                   type="button"
                   onClick={store.closeDetail}
-                  className="md:hidden btn btn-ghost btn-sm px-2"
+                  className="lg:hidden btn btn-ghost btn-sm px-2"
                 >
                   <ArrowLeft className="w-4 h-4" strokeWidth={1.5} />
                   <span>返回</span>
                 </button>
 
-                <div className="hidden sm:flex items-center gap-1 pr-2 border-r border-[var(--border-light)]">
+                <div className="hidden lg:flex items-center gap-1 pr-2 border-r border-[var(--border-light)]">
                   <Tooltip content="上一封 (k)">
                     <button
                       type="button"
@@ -1142,7 +1151,7 @@ export default function Dashboard() {
                 </div>
 
                 {selectedEmailAccount && (
-                  <div className="hidden lg:flex items-center gap-2 text-xs text-[var(--text-secondary)] min-w-0">
+                  <div className="hidden 2xl:flex items-center gap-2 text-xs text-[var(--text-secondary)] min-w-0">
                     <span
                       className="w-2 h-2 rounded-full flex-shrink-0"
                       style={{ backgroundColor: selectedEmailAccount.color || '#2563EB' }}
@@ -1163,7 +1172,8 @@ export default function Dashboard() {
                     <button
                       type="button"
                       onClick={() => setPaperLight(prev => !prev)}
-                      className="btn btn-secondary btn-sm px-2.5"
+                      className="btn btn-secondary btn-sm px-2"
+                      aria-label={paperLight ? '切换为深色阅读背景' : '切换为白底信笺模式'}
                     >
                       {paperLight ? (
                         <Moon className="w-3.5 h-3.5" strokeWidth={1.5} />
@@ -1183,8 +1193,8 @@ export default function Dashboard() {
                   aria-label="标为未读"
                 >
                   <EyeOff className="w-4 h-4" strokeWidth={1.5} />
-                  <span className="hidden sm:inline">标为未读</span>
-                  <kbd className="kbd hidden lg:inline-flex">u</kbd>
+                  <span className="hidden xl:inline">标为未读</span>
+                  <kbd className="kbd hidden 2xl:inline-flex">u</kbd>
                 </button>
                 <button
                   type="button"
@@ -1199,7 +1209,7 @@ export default function Dashboard() {
                   ) : (
                     <Send className="w-4 h-4" strokeWidth={1.5} />
                   )}
-                  <span className="hidden sm:inline">转发 TG</span>
+                  <span className="hidden xl:inline">转发 Telegram</span>
                 </button>
                 <button
                   type="button"
@@ -1209,26 +1219,26 @@ export default function Dashboard() {
                   aria-label="删除邮件"
                 >
                   <Trash2 className="w-4 h-4" strokeWidth={1.5} />
-                  <span className="hidden sm:inline">删除</span>
+                  <span className="hidden xl:inline">删除</span>
                 </button>
               </div>
             </div>
 
             {/* Mail Body Canvas */}
-            <div ref={detailScrollRef} className="flex-1 overflow-auto thin-scrollbar p-4 md:p-8">
-              <article className="max-w-3xl mx-auto rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] shadow-[var(--shadow-sm)] overflow-hidden">
-                <header className="p-5 md:p-8 pb-6 border-b border-[var(--border-light)]">
-                  <h1 className="text-xl md:text-2xl font-medium tracking-[-0.015em] text-[var(--text-primary)] break-words leading-snug">
+            <div ref={detailScrollRef} className="reading-canvas flex-1 overflow-auto thin-scrollbar p-4 xl:p-8">
+              <article className="mail-letter max-w-3xl mx-auto rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] shadow-[var(--shadow-sm)] overflow-hidden">
+                <header className="p-6 xl:p-8 border-b border-[var(--border-light)]">
+                  <h1 className="text-xl xl:text-2xl font-medium text-[var(--text-primary)] break-words leading-snug">
                     {selectedEmail.subject || '(无主题)'}
                   </h1>
 
-                  <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-3 min-w-0">
+                  <div className="mt-6 flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
+                    <div className="flex items-start gap-3 min-w-0">
                       <div className="avatar">
                         {(selectedEmail.from_name || selectedEmail.from)?.[0]?.toUpperCase() || '?'}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex flex-col items-start gap-1">
                           <span className="text-sm font-medium text-[var(--text-primary)]">
                             {selectedEmail.from_name || selectedEmail.from}
                           </span>
@@ -1239,15 +1249,15 @@ export default function Dashboard() {
                                 showToast('已复制发件人地址', 'success')
                               }).catch(() => {})
                             }}
-                            className="inline-flex items-center gap-1.5 px-1.5 py-0.5 -mx-1.5 rounded-[4px] font-mono text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer"
+                            className="sender-address inline-flex max-w-full items-center gap-2 px-1 py-1 -mx-1 rounded-[4px] font-mono text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer"
                             title="点击复制发件人邮箱"
                           >
                             <span className="truncate">{selectedEmail.from}</span>
-                            <Copy className="w-3 h-3 opacity-60" strokeWidth={1.5} />
+                            <Copy className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
                           </button>
                         </div>
                         {selectedEmail.to && (
-                          <div className="text-xs text-[var(--text-tertiary)] truncate mt-0.5">
+                          <div className="text-xs text-[var(--text-tertiary)] break-all mt-1">
                             收件人：<span className="font-mono">{selectedEmail.to}</span>
                           </div>
                         )}
@@ -1271,8 +1281,8 @@ export default function Dashboard() {
                 <div
                   className={
                     useLightPaper && resolvedTheme === 'dark'
-                      ? 'email-paper m-4 md:m-6 rounded-[8px] border border-[var(--border-default)] bg-[#FAFAFA] p-5 md:p-6'
-                      : 'p-5 md:p-8'
+                      ? 'email-paper m-4 xl:m-6 rounded-[8px] border border-[var(--border-default)] bg-[#FAFAFA] p-6'
+                      : 'p-6 xl:p-8'
                   }
                 >
                   {loadingDetail ? (
@@ -1301,15 +1311,15 @@ export default function Dashboard() {
         ) : (
           <div className="h-full flex items-center justify-center p-8 text-[var(--text-tertiary)]">
             <div className="text-center max-w-xs">
-              <Mail className="w-10 h-10 mx-auto mb-3 opacity-35" strokeWidth={1.5} />
+              <Mail className="w-10 h-10 mx-auto mb-4 opacity-35" strokeWidth={1.5} />
               <p className="text-sm font-medium text-[var(--text-secondary)]">选择一封邮件阅读</p>
-              <p className="mt-1 text-xs text-[var(--text-tertiary)]">
+              <p className="mt-2 text-xs text-[var(--text-tertiary)] leading-relaxed">
                 使用 <kbd className="kbd">j</kbd> <kbd className="kbd">k</kbd> 移动，或按 <kbd className="kbd">?</kbd> 查看快捷键
               </p>
             </div>
           </div>
         )}
-      </div>
+      </section>
     </div>
   )
 }
