@@ -3,7 +3,7 @@
 ## Project Overview
 
 One-Mail is a full-stack email client application with:
-- **Backend**: Go 1.25+ with Gin web framework, GORM ORM, SQLite database
+- **Backend**: Go 1.27.4 with Gin, GORM, SQLite WAL and optional FTS5
 - **Frontend**: React 19 + TypeScript + Vite + TailwindCSS 4
 
 ## Build Commands
@@ -12,16 +12,16 @@ One-Mail is a full-stack email client application with:
 
 ```bash
 # Run backend server
-cd backend && go run ./cmd/server/main.go
+cd backend && CGO_ENABLED=1 go run -tags fts5 ./cmd/server/main.go
 
 # Build backend binary
-cd backend && go build -o server ./cmd/server/main.go
+cd backend && CGO_ENABLED=1 go build -tags fts5 -o server ./cmd/server/main.go
 
 # Run all tests
-go test ./...
+go test -race -tags fts5 ./...
 
 # Run tests with verbose output
-go test -v ./...
+go test -v -tags fts5 ./...
 
 # Run single test by name
 go test -v ./internal/handlers -run TestAuthHandler
@@ -40,7 +40,7 @@ golangci-lint run
 
 ```bash
 # Install dependencies
-cd frontend && npm install
+cd frontend && npm ci
 
 # Run development server
 cd frontend && npm run dev
@@ -56,13 +56,22 @@ cd frontend && npm run lint
 
 # Type check
 cd frontend && npx tsc -b
+
+# Frontend regression tests (Vitest + Testing Library, jsdom)
+cd frontend && npm test
 ```
 
 ### Full Stack (Makefile)
 
 ```bash
-# Run both backend and frontend (requires backend binary built)
+# Run both services and stop their process groups together (macOS/Linux/WSL)
 make run
+
+# Test the development supervisor with isolated fixture processes
+make test-dev
+
+# Repeatable synthetic benchmarks; see docs/performance.md
+make bench
 
 # Build everything
 make build
@@ -169,7 +178,10 @@ one-mail/
 │   │   ├── middleware/         # Auth, CORS middleware
 │   │   ├── models/             # GORM models
 │   │   ├── services/           # Business logic (IMAP)
-│   │   └── utils/              # JWT, password utilities
+│   │   ├── application/        # Account, mail, notification orchestration
+│   │   ├── access/             # Optional instance password access
+│   │   ├── credentials/        # AES-GCM credential storage
+│   │   └── inflight/           # Shared work with independent cancellation
 │   └── go.mod
 ├── frontend/
 │   ├── src/
@@ -190,14 +202,17 @@ one-mail/
 ## Testing
 
 - Tests should be placed in `*_test.go` files in the same package
-- No frontend test framework configured yet
-- Run single Go test: `go test -v ./path -run TestName`
+- Frontend tests live in `frontend/tests`, using Vitest and Testing Library in jsdom
+- Run single Go test: `go test -v -tags fts5 ./path -run TestName`
+- Use Go 1.27.4 and Node.js 24.22.3/npm 11.19.1 (`mise.toml`, `frontend/.node-version`)
+- Use temporary databases and fake transports in tests; never use real mailbox or Telegram credentials
+- Preserve read-only mail, single-instance operation, single-connection SQLite, identity/version validation and encrypted credential storage
 
 ## Database
 
 - Uses SQLite by default (configured in `backend/config.yaml`)
 - Database file stored in `backend/data/one-mail.db`
-- GORM for ORM with auto-migration
+- GORM creates missing current tables and indexes; no legacy schema/data migration
 - Models defined in `backend/internal/models/models.go`
 
 ## Configuration
@@ -205,4 +220,4 @@ one-mail/
 - Backend config: `backend/config.yaml`
 - Server runs on port 8080 by default
 - Frontend dev server: http://localhost:5173
-- API base URL: http://localhost:8080/api
+- Frontend API base: same-origin `/api`, proxied to `http://127.0.0.1:8080` in development

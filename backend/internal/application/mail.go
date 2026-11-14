@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -164,7 +165,11 @@ func (s *MailService) Get(ctx context.Context, id uint) (*models.Email, error) {
 	return &result, nil
 }
 
-func (s *MailService) loadBody(ctx context.Context, account *models.EmailAccount, email *models.Email) (*models.Email, error) {
+func (s *MailService) loadBody(ctx context.Context, account *models.EmailAccount, email *models.Email) (result *models.Email, resultErr error) {
+	started := time.Now()
+	defer func() {
+		log.Printf("event=mail_body_fetch email_id=%d account_id=%d duration_ms=%d success=%t", email.ID, account.ID, time.Since(started).Milliseconds(), resultErr == nil)
+	}()
 	text, html, err := s.fetchBody(ctx, account, email)
 	if err != nil {
 		if errors.Is(err, mail.ErrAccountChanged) || errors.Is(err, imap.ErrUIDValidityChanged) || errors.Is(err, imap.ErrConnectionInvalidated) {

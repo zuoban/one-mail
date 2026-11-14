@@ -17,7 +17,7 @@
 ## 📦 技术栈
 
 ### 后端
-- Go 1.25+
+- Go 1.27.4（与开发、CI 和 Docker 对齐）
 - Gin Web Framework
 - GORM ORM
 - SQLite 数据库
@@ -62,9 +62,9 @@ one-mail/
 
 ### 前置要求
 
-- Go 1.25+
-- Node.js 22+
-- npm 或 yarn
+- Go 1.27.4
+- Node.js 24.22.3、npm 11.19.1
+- 可选 mise，仓库 `mise.toml` 固定工具链；首次使用执行 `mise trust` 和 `mise install`
 
 ### 本地开发
 
@@ -72,7 +72,7 @@ one-mail/
 
 ```bash
 # 安装前端依赖
-cd frontend && npm install
+cd frontend && npm ci
 
 # 后端依赖 (在 go.mod 中)
 cd backend && go mod download
@@ -348,6 +348,16 @@ npm test
 npm run lint
 npm run build
 ```
+
+依赖检查与合成性能基准：
+
+```bash
+cd backend && go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags fts5 ./...
+cd ../frontend && npm audit --audit-level=moderate
+cd .. && make bench
+```
+
+基准覆盖列表、缓存正文、模拟首次正文、并发刷新事务及 8 MiB Gzip 响应。数据、命令、测量范围和解释限制见 [性能验证](docs/performance.md)；当前实现记录见 [优化记录](docs/optimization-summary.md)。
 
 ## 📄 许可证
 

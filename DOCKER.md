@@ -40,7 +40,7 @@ docker compose logs -f
 
 ## 本地构建和启动
 
-构建使用 Go `1.25.8`、Node.js `22` 和 BuildKit 缓存，需要支持 BuildKit 的 Docker：
+构建使用 Go `1.27.4`、Node.js `24.22.3` 和 BuildKit 缓存，需要支持 BuildKit 的 Docker：
 
 ```bash
 ./docker-build.sh
@@ -104,7 +104,7 @@ docker compose down
 
 容器默认设置 `GIN_MODE=release`，可用同名环境变量覆盖。后端以普通用户 `app`（UID/GID `10001`）运行；入口脚本初始化 `/app/data` 目录的所有权和权限，不递归修改其中的文件。宿主机绑定目录必须允许容器入口调整目录权限；恢复备份时确保数据文件归该用户所有，密钥文件权限为 `0600`。
 
-Supervisor、Nginx 和后端日志写入标准输出或标准错误，使用 `docker logs` 或平台日志采集。日志包含接口及账户刷新耗时、连接池（含临时测试连接）等待次数和累计时间、数据库等待指标、待发通知数及通知投递结果，不记录请求体或邮件主题。release 模式仍保留参数隐藏的慢 SQL 日志。
+Supervisor、Nginx 和后端日志写入标准输出或标准错误，使用 `docker logs` 或平台日志采集。日志包含接口、账户刷新及首次正文获取耗时、连接池（含临时测试连接）等待次数和累计时间、数据库等待指标、共享刷新在途数和累计合并数、待发及失败通知数和投递结果，不记录请求体或邮件主题。release 模式仍保留参数隐藏的慢 SQL 日志。
 
 HTTP 服务设置 1 MiB 请求体限制、5 秒请求头预算、15 秒读取和 60 秒写入/空闲预算；全部账户刷新受整体 35 秒限制，每账户最多 20 秒，前端等待 45 秒。未完成账户以错误项返回，已成功账户保留提交结果。
 
@@ -126,8 +126,8 @@ HTTP 服务设置 1 MiB 请求体限制、5 秒请求头预算、15 秒读取和
 
 ## 构建与持续集成
 
-- 前端使用 Node.js 22，在构建机原生平台生成通用静态资源；npm 下载缓存与源码分层，依次执行 `npm ci` 和构建。
-- 后端直接使用 `golang:1.25.8-alpine`，启用 CGO 和 `fts5`，以只读模块模式构建，不在镜像构建中运行 `go mod tidy` 或下载额外 Go wrapper。Go 模块保存在独立镜像层，供 Actions 远程缓存复用；编译缓存挂载用于同一 BuildKit builder 的后续构建，不依赖它跨临时 runner 持久化。
+- 前端使用 Node.js 24.22.3，在构建机原生平台生成通用静态资源；npm 下载缓存与源码分层，依次执行 `npm ci` 和构建。
+- 后端直接使用 `golang:1.27.4-alpine`，启用 CGO 和 `fts5`，以只读模块模式构建，不在镜像构建中运行 `go mod tidy` 或下载额外 Go wrapper。Go 模块保存在独立镜像层，供 Actions 远程缓存复用；编译缓存挂载用于同一 BuildKit builder 的后续构建，不依赖它跨临时 runner 持久化。
 - 最终运行镜像固定为受支持的 `alpine:3.23`，由 Nginx 监听 80 端口并代理内部 8080 端口上的后端。
 - GitHub Actions 先运行 `go test -tags fts5 ./...` 和前端 `npm ci`、`npm run lint`、`npm run test`、`npm run build`。镜像任务通过显式 `needs` 依赖两个检查任务；任一失败都不会构建或发布镜像。
 - 检查通过后，`linux/amd64` 和 `linux/arm64` 分别在 `ubuntu-latest`、`ubuntu-24.04-arm` 原生 runner 上并行构建，避免 QEMU 模拟编译；两种架构使用独立的 GitHub Actions 缓存 scope。PR 只构建，主分支或版本标签推送时先按 digest 发布各架构镜像，再合并清单并写入原有镜像标签。最终输出的 digest 来自合并后的多架构清单。

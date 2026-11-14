@@ -1,10 +1,16 @@
-.PHONY: run build frontend backend test-dev clean docker-build docker-run docker-start docker-stop docker-logs
+.PHONY: run build frontend backend test-dev bench clean docker-build docker-run docker-start docker-stop docker-logs
+
+BENCHTIME ?= 200ms
+BENCHCOUNT ?= 3
 
 run:
 	node scripts/dev.mjs
 
 test-dev:
 	node --test scripts/dev.test.mjs
+
+bench:
+	cd backend && CGO_ENABLED=1 go test -tags fts5 ./internal/application ./internal/middleware -run '^$$' -bench . -benchmem -count=$(BENCHCOUNT) -benchtime=$(BENCHTIME)
 
 backend:
 	cd backend && CGO_ENABLED=1 go run -tags fts5 ./cmd/server/main.go
