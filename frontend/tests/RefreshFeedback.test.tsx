@@ -140,6 +140,21 @@ describe('refresh feedback', () => {
     await act(async () => initial.resolve({ data: [account] }))
     expect(screen.queryByText('所有邮箱')).toBeNull()
   })
+
+  it.each([
+    { key: 'r', metaKey: true },
+    { key: 'r', ctrlKey: true },
+    { key: 'R', metaKey: true, shiftKey: true },
+    { key: 'R', ctrlKey: true, shiftKey: true },
+    { key: 'r', altKey: true },
+  ])('leaves browser refresh shortcuts untouched: %j', async modifiers => {
+    const { api } = renderInbox()
+    await screen.findByRole('group', { name: 'Sender，会议安排' })
+    const event = new KeyboardEvent('keydown', { ...modifiers, bubbles: true, cancelable: true })
+    fireEvent(window, event)
+    expect(event.defaultPrevented).toBe(false)
+    expect(api.refresh).not.toHaveBeenCalled()
+  })
 })
 
 describe('read-only inbox', () => {
@@ -299,6 +314,43 @@ describe('multi-account inbox', () => {
     expect(within(screen.getByRole('group', { name: 'Sender，会议后续' })).getByText(secondAccount.email)).toBeTruthy()
     expect(api.list.mock.calls.at(-1)?.[0]?.account_id).toBeUndefined()
     expect(api.list.mock.calls.at(-1)?.[0]?.search).toBe('会议')
+  })
+
+  it('restores the selected mailbox and the all-mailboxes choice after remounting', async () => {
+    vi.mocked(accountApi.list).mockResolvedValue({ data: [account, secondAccount] })
+    const first = renderInbox([email, secondEmail])
+    const selector = await screen.findByRole('combobox', { name: '按邮箱筛选' })
+    fireEvent.change(selector, { target: { value: String(secondAccount.id) } })
+    await waitFor(() => expect(first.api.list.mock.calls.at(-1)?.[0]?.account_id).toBe(secondAccount.id))
+    first.view.unmount()
+
+    const second = renderInbox([secondEmail])
+    const restored = await screen.findByRole('combobox', { name: '按邮箱筛选' }) as HTMLSelectElement
+    expect(restored.value).toBe(String(secondAccount.id))
+    expect(second.api.list.mock.calls[0][0]?.account_id).toBe(secondAccount.id)
+    fireEvent.change(restored, { target: { value: '' } })
+    await waitFor(() => expect(second.api.list.mock.calls.at(-1)?.[0]?.account_id).toBeUndefined())
+    second.view.unmount()
+
+    const third = renderInbox([email, secondEmail])
+    expect((await screen.findByRole('combobox', { name: '按邮箱筛选' }) as HTMLSelectElement).value).toBe('')
+    expect(third.api.list.mock.calls[0][0]?.account_id).toBeUndefined()
+  })
+
+  it('retains a saved mailbox through account loading and failure, then clears it when confirmed missing', async () => {
+    localStorage.setItem('selectedAccountId', String(secondAccount.id))
+    const initial = Promise.withResolvers<{ data: EmailAccount[] }>()
+    vi.mocked(accountApi.list).mockReturnValueOnce(initial.promise).mockResolvedValue({ data: [account] })
+    const { api } = renderInbox([email])
+    expect(api.list.mock.calls[0][0]?.account_id).toBe(secondAccount.id)
+    expect(localStorage.getItem('selectedAccountId')).toBe(String(secondAccount.id))
+    await act(async () => initial.reject(new Error('offline')))
+    expect(localStorage.getItem('selectedAccountId')).toBe(String(secondAccount.id))
+    fireEvent.click(screen.getByRole('button', { name: '重试读取账户' }))
+    const selector = await screen.findByRole('combobox', { name: '按邮箱筛选' }) as HTMLSelectElement
+    expect(selector.value).toBe('')
+    await waitFor(() => expect(api.list.mock.calls.at(-1)?.[0]?.account_id).toBeUndefined())
+    expect(localStorage.getItem('selectedAccountId')).toBeNull()
   })
 
   it('keeps native mailbox selection keys from invoking inbox shortcuts', async () => {

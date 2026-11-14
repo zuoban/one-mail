@@ -20,7 +20,17 @@ import {
 export default function Dashboard() {
   const { accounts, loadingAccounts, accountsError, loadAccounts, providersError, loadingProviders, accountStore } = useAccounts()
   const { emailLimit } = useReadingPreferences()
-  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
+  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(() => {
+    const saved = Number(localStorage.getItem('selectedAccountId'))
+    return Number.isSafeInteger(saved) && saved > 0 ? saved : null
+  })
+  if (selectedAccountId !== null && !loadingAccounts && !accountsError && !accounts.some(account => account.id === selectedAccountId)) {
+    setSelectedAccountId(null)
+  }
+  useEffect(() => {
+    if (selectedAccountId === null) localStorage.removeItem('selectedAccountId')
+    else localStorage.setItem('selectedAccountId', String(selectedAccountId))
+  }, [selectedAccountId])
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const { emails, selectedEmail, selectedDetail, loadingList, listError, loadingDetail, detailError, notice: toast, store } = useMail({

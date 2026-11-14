@@ -17,6 +17,7 @@ interface Options {
 export function useInboxKeyboard({ searchInputRef, sortedFilteredEmails, selectedEmail, showShortcuts, setShowShortcuts, sendingTelegram, handleRead, handleSendToTelegram, handleRefresh, closeDetail }: Options) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
         if (event.key === 'Escape' && target === searchInputRef.current) {
