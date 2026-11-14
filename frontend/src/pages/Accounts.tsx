@@ -28,13 +28,11 @@ export default function Accounts() {
   const [confirmDelete, setConfirmDelete] = useState<EmailAccount | null>(null)
   const [form, setForm] = useState<AccountFormState>({
     email: '',
-    username: '',
     password: '',
     imap_host: '',
     imap_port: '993',
   })
   const [error, setError] = useState('')
-  const [usernameEdited, setUsernameEdited] = useState(false)
   const deletePending = useRef(false)
   const testPending = useRef(new Set<number>())
   const submission = useRef<number | null>(null)
@@ -129,7 +127,7 @@ export default function Accounts() {
     setLoading(true)
     try {
       if (!provider) { setError('暂时无法匹配邮箱配置，请检查邮箱地址或重试读取服务商'); return }
-      const input: AccountInput = { email, provider: provider.id, username: form.username.trim(), password: form.password }
+      const input: AccountInput = { email, provider: provider.id, username: email, password: form.password }
       if (provider.custom) {
         const port = Number(form.imap_port)
         if (!form.imap_host.trim() || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -142,9 +140,11 @@ export default function Accounts() {
       let mutation: { response: { data: EmailAccount; refresh_error?: string }; updated: Promise<boolean> }
       if (editingAccount) {
         const updateData: Partial<AccountInput> = {}
-        if (input.email !== editingAccount.email) updateData.email = input.email
+        if (input.email !== editingAccount.email) {
+          updateData.email = input.email
+          updateData.username = input.username
+        }
         if (input.provider !== editingAccount.provider) updateData.provider = input.provider
-        if (input.username !== editingAccount.username) updateData.username = input.username
         if (form.password) updateData.password = form.password
         if (provider.custom) {
           updateData.imap_host = input.imap_host
@@ -158,7 +158,7 @@ export default function Accounts() {
       submission.current = null
       setLoading(false)
       closeModal()
-      setForm({ email: '', username: '', password: '', imap_host: '', imap_port: '993' })
+      setForm({ email: '', password: '', imap_host: '', imap_port: '993' })
       const updated = await mutation.updated
       if (mounted.current && formInstance.current === instance + 1) {
         const initialSyncFailed = !editingAccount && Boolean(mutation.response.refresh_error)
@@ -183,8 +183,7 @@ export default function Accounts() {
     if (submission.current !== null) return
     formInstance.current++
     setEditingAccount(null)
-    setUsernameEdited(false)
-    setForm({ email: '', username: '', password: '', imap_host: '', imap_port: '993' })
+    setForm({ email: '', password: '', imap_host: '', imap_port: '993' })
     setError('')
     setShowModal(true)
   }
@@ -193,10 +192,8 @@ export default function Accounts() {
     if (submission.current !== null) return
     formInstance.current++
     setEditingAccount(account)
-    setUsernameEdited(true)
     setForm({
       email: account.email,
-      username: account.username,
       password: '',
       imap_host: account.imap_host,
       imap_port: String(account.imap_port),
@@ -404,7 +401,7 @@ export default function Accounts() {
       {/* Add / Edit Account Drawer */}
       {showModal && (
         <AccountDrawer drawerRef={drawerRef} editingAccount={editingAccount} loading={loading} form={form} setForm={setForm} provider={provider}
-          usernameEdited={usernameEdited} setUsernameEdited={setUsernameEdited} error={error} closeModal={closeModal} handleSubmit={handleSubmit} />
+          error={error} closeModal={closeModal} handleSubmit={handleSubmit} />
       )}
 
     </div>

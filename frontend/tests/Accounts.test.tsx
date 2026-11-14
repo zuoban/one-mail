@@ -317,26 +317,25 @@ describe('account request lifecycle', () => {
     const dialog = openForm()
     fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: email } })
     expect(within(dialog).queryByRole('combobox')).toBeNull()
+    expect(within(dialog).queryByLabelText('登录用户名')).toBeNull()
     expect(within(dialog).queryByLabelText('IMAP 主机')).toBeNull()
     fireEvent.click(within(dialog).getByRole('button', { name: '添加账户' }))
     await waitFor(() => expect(add).toHaveBeenCalledExactlyOnceWith({ email, provider, username: email, password: 'secret' }))
   })
 
-  it('updates matching and custom fields without overwriting a manually entered username', async () => {
+  it('uses the current email for login after switching between custom and preset servers', async () => {
     const add = vi.spyOn(accountApi, 'add').mockResolvedValue({ data: account })
     renderAccounts()
     await screen.findByText(account.email)
     const dialog = openForm()
-    fireEvent.change(within(dialog).getByLabelText('登录用户名'), { target: { value: 'login-name' } })
     fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: 'reader@gmail.com.example' } })
     const host = within(dialog).getByLabelText('IMAP 主机') as HTMLInputElement
     expect(host.value).toBe('')
     fireEvent.change(host, { target: { value: 'imap.private.example' } })
     fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: ' reader@GOOGLEMAIL.COM ' } })
     expect(within(dialog).queryByLabelText('IMAP 主机')).toBeNull()
-    expect((within(dialog).getByLabelText('登录用户名') as HTMLInputElement).value).toBe('login-name')
     fireEvent.click(within(dialog).getByRole('button', { name: '添加账户' }))
-    await waitFor(() => expect(add).toHaveBeenCalledExactlyOnceWith({ email: 'reader@GOOGLEMAIL.COM', provider: 'gmail', username: 'login-name', password: 'secret' }))
+    await waitFor(() => expect(add).toHaveBeenCalledExactlyOnceWith({ email: 'reader@GOOGLEMAIL.COM', provider: 'gmail', username: 'reader@GOOGLEMAIL.COM', password: 'secret' }))
   })
 
   it('automatically shows iCloud password guidance and removes it after changing the email domain', async () => {
@@ -358,17 +357,27 @@ describe('account request lifecycle', () => {
     expect(within(dialog).getByLabelText('IMAP 主机')).toBeTruthy()
   })
 
-  it('preserves a saved custom server for a recognized email domain when editing', async () => {
-    const customAccount = { ...account, email: 'reader@gmail.com' }
+  it('preserves saved custom server and login credentials when the email is unchanged', async () => {
+    const customAccount = { ...account, email: 'reader@gmail.com', username: 'custom-login' }
     vi.mocked(accountApi.list).mockResolvedValue({ data: [customAccount] })
     const update = vi.spyOn(accountApi, 'update').mockResolvedValue({ data: customAccount })
     renderAccounts()
     fireEvent.click(await screen.findByRole('button', { name: '编辑账户' }))
     const dialog = screen.getByRole('dialog', { name: '编辑邮箱账户' })
     expect((within(dialog).getByLabelText('IMAP 主机') as HTMLInputElement).value).toBe(account.imap_host)
-    fireEvent.change(within(dialog).getByLabelText('登录用户名'), { target: { value: 'custom-login' } })
+    fireEvent.change(within(dialog).getByLabelText(/密码 \/ 授权码/), { target: { value: 'new-secret' } })
     fireEvent.click(within(dialog).getByRole('button', { name: '保存修改' }))
-    await waitFor(() => expect(update).toHaveBeenCalledExactlyOnceWith(account.id, { username: 'custom-login', imap_host: account.imap_host, imap_port: account.imap_port }))
+    await waitFor(() => expect(update).toHaveBeenCalledExactlyOnceWith(account.id, { password: 'new-secret', imap_host: account.imap_host, imap_port: account.imap_port }))
+  })
+
+  it('updates the login username with the email address when editing an account', async () => {
+    const update = vi.spyOn(accountApi, 'update').mockResolvedValue({ data: account })
+    renderAccounts()
+    fireEvent.click(await screen.findByRole('button', { name: '编辑账户' }))
+    const dialog = screen.getByRole('dialog', { name: '编辑邮箱账户' })
+    fireEvent.change(within(dialog).getByLabelText('邮箱地址'), { target: { value: 'changed@gmail.com' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(update).toHaveBeenCalledExactlyOnceWith(account.id, { email: 'changed@gmail.com', provider: 'gmail', username: 'changed@gmail.com' }))
   })
 
 })

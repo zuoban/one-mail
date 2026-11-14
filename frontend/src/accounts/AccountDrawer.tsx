@@ -5,7 +5,6 @@ import { useAccounts } from './account-context'
 
 export interface AccountFormState {
   email: string
-  username: string
   password: string
   imap_host: string
   imap_port: string
@@ -19,14 +18,12 @@ interface Props {
   form: AccountFormState
   setForm: Dispatch<SetStateAction<AccountFormState>>
   provider: EmailProvider | undefined
-  usernameEdited: boolean
-  setUsernameEdited: Dispatch<SetStateAction<boolean>>
   error: string
   closeModal: () => void
   handleSubmit: (event: FormEvent) => Promise<void>
 }
 
-export default function AccountDrawer({ drawerRef, editingAccount, loading, form, setForm, provider, usernameEdited, setUsernameEdited, error, closeModal, handleSubmit }: Props) {
+export default function AccountDrawer({ drawerRef, editingAccount, loading, form, setForm, provider, error, closeModal, handleSubmit }: Props) {
   const { loadingProviders, providersError, accountStore } = useAccounts()
   const isICloud = provider?.id === 'icloud'
   const passwordHelpIds = [editingAccount && 'account-password-help', isICloud && 'account-icloud-password-help'].filter(Boolean).join(' ') || undefined
@@ -83,14 +80,7 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                     spellCheck={false}
                     aria-describedby="account-provider-status"
                     value={form.email}
-                    onChange={e => {
-                      const email = e.target.value
-                      setForm(prev => ({
-                        ...prev,
-                        email,
-                        username: !editingAccount && !usernameEdited ? email.trim() : prev.username,
-                      }))
-                    }}
+                    onChange={event => setForm({ ...form, email: event.target.value })}
                     placeholder="name@example.com"
                     required
                   />
@@ -116,32 +106,6 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                     </div>
                   </div>
                 )}
-
-                <div>
-                  <label htmlFor="account-username" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                    登录用户名
-                  </label>
-                  <input
-                    id="account-username"
-                    aria-describedby={isICloud ? 'account-icloud-username-help' : undefined}
-                    type="text"
-                    autoComplete="username"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    value={form.username}
-                    onChange={e => {
-                      setUsernameEdited(true)
-                      setForm({ ...form, username: e.target.value })
-                    }}
-                    placeholder="通常与邮箱地址一致"
-                    required
-                  />
-                  {isICloud && (
-                    <p id="account-icloud-username-help" className="mt-2 text-sm text-[var(--text-secondary)]">
-                      填写完整的 iCloud 邮箱地址；如连接失败，可尝试仅填写 @ 前的部分。
-                    </p>
-                  )}
-                </div>
 
                 <div>
                   <label htmlFor="account-password" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
