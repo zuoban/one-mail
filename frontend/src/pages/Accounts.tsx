@@ -4,7 +4,7 @@ import { accountApi, type AccountInput } from '../api'
 import { useAccounts } from '../accounts/account-context'
 import AccountDrawer, { type AccountFormState } from '../accounts/AccountDrawer'
 import type { EmailAccount } from '../api'
-import { Plus, Trash2, Mail, Plug, Pencil } from 'lucide-react'
+import { Plus, Trash2, Mail, Plug, Pencil, Loader2 } from 'lucide-react'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Tooltip from '../components/Tooltip'
 
@@ -12,6 +12,7 @@ export default function Accounts() {
   const { accounts, providers, loadingAccounts, accountsError, loadAccounts, accountStore } = useAccounts()
   const [loading, setLoading] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [testingAccounts, setTestingAccounts] = useState<Set<number>>(() => new Set())
   const [deleteError, setDeleteError] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editingAccount, setEditingAccount] = useState<EmailAccount | null>(null)
@@ -29,6 +30,7 @@ export default function Accounts() {
   const [error, setError] = useState('')
   const [usernameEdited, setUsernameEdited] = useState(false)
   const deletePending = useRef(false)
+  const testPending = useRef(new Set<number>())
   const submission = useRef<number | null>(null)
   const formInstance = useRef(0)
   const mounted = useRef(false)
@@ -219,7 +221,10 @@ export default function Accounts() {
   }
 
   const handleTest = async (id: number) => {
+    if (testPending.current.has(id)) return
     const generation = lifecycle.current
+    testPending.current.add(id)
+    setTestingAccounts(new Set(testPending.current))
     try {
       await accountApi.test(id)
       if (mounted.current && lifecycle.current === generation) showToast('连接测试通过', 'success')
@@ -227,6 +232,11 @@ export default function Accounts() {
       if (!mounted.current || lifecycle.current !== generation) return
       const message = axios.isAxiosError(err) ? err.response?.data?.error : undefined
       showToast(message || '连接失败', 'error')
+    } finally {
+      if (mounted.current && lifecycle.current === generation) {
+        testPending.current.delete(id)
+        setTestingAccounts(new Set(testPending.current))
+      }
     }
   }
 
@@ -328,10 +338,10 @@ export default function Accounts() {
 
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-tertiary)]">
                     <span>{providers.find(p => p.id === account.provider)?.label || account.provider}</span>
-                    <span className="inline-flex items-center gap-2">
-                      <span className={`status-dot ${account.status === 'active' ? 'status-dot-success' : 'status-dot-warning'}`} />
-                      <span className={account.status === 'active' ? 'text-[var(--text-secondary)]' : ''}>
-                        {account.status === 'active' ? '已连接' : '未连接'}
+                    <span id={`account-connection-status-${account.id}`} role="status" aria-live="polite" aria-atomic="true" className="inline-flex items-center gap-2">
+                      {!testingAccounts.has(account.id) && <span aria-hidden="true" className={`status-dot ${account.status === 'active' ? 'status-dot-success' : 'status-dot-warning'}`} />}
+                      <span className={testingAccounts.has(account.id) || account.status === 'active' ? 'text-[var(--text-secondary)]' : ''}>
+                        {testingAccounts.has(account.id) ? '正在测试连接…' : account.status === 'active' ? '已连接' : '未连接'}
                       </span>
                     </span>
                     <span className="font-mono tabular-nums">
@@ -343,14 +353,19 @@ export default function Accounts() {
 
               <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
                 <div className="flex items-center gap-1">
-                  <Tooltip content="测试连接">
+                  <Tooltip content={testingAccounts.has(account.id) ? '正在测试连接' : '测试连接'}>
                     <button
                       type="button"
                       onClick={() => handleTest(account.id)}
+                      disabled={testingAccounts.has(account.id)}
+                      aria-busy={testingAccounts.has(account.id)}
+                      aria-describedby={testingAccounts.has(account.id) ? `account-connection-status-${account.id}` : undefined}
                       className="btn btn-ghost w-9 h-9 p-0"
-                      aria-label="测试连接"
+                      aria-label={testingAccounts.has(account.id) ? '正在测试连接' : '测试连接'}
                     >
-                      <Plug className="w-4 h-4 text-[var(--text-tertiary)]" strokeWidth={1.5} />
+                      {testingAccounts.has(account.id)
+                        ? <Loader2 aria-hidden="true" className="w-4 h-4 animate-spin text-[var(--text-secondary)]" strokeWidth={1.5} />
+                        : <Plug aria-hidden="true" className="w-4 h-4 text-[var(--text-tertiary)]" strokeWidth={1.5} />}
                     </button>
                   </Tooltip>
                   <Tooltip content="编辑账户">

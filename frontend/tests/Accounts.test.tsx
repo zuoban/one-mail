@@ -82,6 +82,67 @@ describe('account request lifecycle', () => {
     expect(screen.getAllByRole('button', { name: '删除账户' })).toHaveLength(2)
   })
 
+  it.each(['success', 'failure'] as const)('shows connection test progress and restores the button after %s', async outcome => {
+    const pending = Promise.withResolvers<AxiosResponse>()
+    const test = vi.spyOn(accountApi, 'test').mockReturnValueOnce(pending.promise).mockResolvedValue({ data: {} } as AxiosResponse)
+    renderAccounts()
+    const button = await screen.findByRole('button', { name: '测试连接' }) as HTMLButtonElement
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(button.disabled).toBe(true)
+    expect(button.getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByText('正在测试连接…').closest('[role="status"]')).toBeTruthy()
+    expect(test).toHaveBeenCalledExactlyOnceWith(account.id)
+    await act(async () => {
+      if (outcome === 'success') pending.resolve({ data: {} } as AxiosResponse)
+      else pending.reject(new Error('offline'))
+    })
+    expect(button.disabled).toBe(false)
+    expect(button.getAttribute('aria-busy')).toBe('false')
+    expect(screen.queryByText('正在测试连接…')).toBeNull()
+    expect(screen.getByText(outcome === 'success' ? '连接测试通过' : '连接失败')).toBeTruthy()
+    await act(async () => { fireEvent.click(button) })
+    expect(test).toHaveBeenCalledTimes(2)
+    expect(button.disabled).toBe(false)
+  })
+
+  it('tracks simultaneous connection tests independently for each account', async () => {
+    const firstTest = Promise.withResolvers<AxiosResponse>()
+    const secondTest = Promise.withResolvers<AxiosResponse>()
+    vi.mocked(accountApi.list).mockResolvedValue({ data: [account, second] })
+    vi.spyOn(accountApi, 'test').mockImplementation(id => id === account.id ? firstTest.promise : secondTest.promise)
+    renderAccounts()
+    await screen.findByText(second.email)
+    const [firstButton, secondButton] = screen.getAllByRole('button', { name: '测试连接' }) as HTMLButtonElement[]
+    fireEvent.click(firstButton)
+    expect(firstButton.disabled).toBe(true)
+    expect(secondButton.disabled).toBe(false)
+    fireEvent.click(secondButton)
+    expect(screen.getAllByText('正在测试连接…')).toHaveLength(2)
+    await act(async () => firstTest.resolve({ data: {} } as AxiosResponse))
+    expect(firstButton.disabled).toBe(false)
+    expect(secondButton.disabled).toBe(true)
+    expect(screen.getAllByText('正在测试连接…')).toHaveLength(1)
+    await act(async () => secondTest.reject(new Error('offline')))
+    expect(secondButton.disabled).toBe(false)
+    expect(screen.queryByText('正在测试连接…')).toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain('连接失败')
+  })
+
+  it('ignores a connection test result after leaving the account page', async () => {
+    const pending = Promise.withResolvers<AxiosResponse>()
+    vi.spyOn(accountApi, 'test').mockReturnValue(pending.promise)
+    const first = renderAccounts()
+    fireEvent.click(await screen.findByRole('button', { name: '测试连接' }))
+    first.unmount()
+    renderAccounts()
+    const button = await screen.findByRole('button', { name: '测试连接' }) as HTMLButtonElement
+    await act(async () => pending.resolve({ data: {} } as AxiosResponse))
+    expect(button.disabled).toBe(false)
+    expect(screen.queryByText('连接测试通过')).toBeNull()
+    expect(screen.queryByText('正在测试连接…')).toBeNull()
+  })
+
   it('keeps a saved account distinct from a failed list GET and retries without another submit', async () => {
     const add = vi.spyOn(accountApi, 'add').mockResolvedValue({ data: account })
     vi.mocked(accountApi.list).mockResolvedValueOnce({ data: [account] }).mockRejectedValueOnce(new Error('read offline'))

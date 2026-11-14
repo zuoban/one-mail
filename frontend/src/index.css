@@ -378,8 +378,8 @@ textarea:disabled {
     transition-duration: 0s !important;
   }
 
-  /* Keep ongoing refresh feedback visible, with a slower rotation. */
-  .refresh-button[aria-busy="true"] .animate-spin {
+  /* Keep pending-operation feedback visible, with a slower rotation. */
+  [aria-busy="true"] .animate-spin {
     animation-duration: 1.6s !important;
     animation-iteration-count: infinite !important;
   }
