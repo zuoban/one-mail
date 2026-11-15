@@ -314,14 +314,14 @@ export default function Accounts() {
         <div className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] shadow-[var(--shadow-sm)] empty-state">
           <Mail className="empty-state-icon" strokeWidth={1.5} />
           <p className="text-base font-medium text-[var(--text-primary)]">暂无邮箱账户</p>
-          <p className="text-sm mt-1 text-[var(--text-tertiary)]">点击右上角添加你的第一个邮箱账户</p>
+          <p className="text-sm mt-1 text-[var(--text-tertiary)]">使用「添加账户」接入你的第一个邮箱</p>
         </div>
       )) : (
         <div className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] shadow-[var(--shadow-sm)] divide-y divide-[var(--border-light)] overflow-hidden">
           {accounts.map(account => (
             <div
               key={account.id}
-              className="account-row p-4 md:p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between hover:bg-[var(--bg-nav-hover)] transition-colors"
+              className="account-row hover:bg-[var(--bg-nav-hover)]"
             >
               <div className="flex items-center gap-4 min-w-0">
                 <div
@@ -338,22 +338,22 @@ export default function Accounts() {
                     </p>
                   </div>
 
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-tertiary)]">
-                    <span>{providers.find(p => p.id === account.provider)?.label || account.provider}</span>
+                  <div className="account-meta">
+                    <span className="truncate">{providers.find(p => p.id === account.provider)?.label || account.provider}</span>
                     <span id={`account-connection-status-${account.id}`} role="status" aria-live="polite" aria-atomic="true" className="inline-flex items-center gap-2">
                       {!testingAccounts.has(account.id) && <span aria-hidden="true" className={`status-dot ${account.status === 'active' ? 'status-dot-success' : 'status-dot-warning'}`} />}
                       <span className={testingAccounts.has(account.id) || account.status === 'active' ? 'text-[var(--text-secondary)]' : ''}>
                         {testingAccounts.has(account.id) ? '正在测试连接…' : account.status === 'active' ? '已连接' : '未连接'}
                       </span>
                     </span>
-                    <span className="font-mono tabular-nums">
+                    <span className="account-sync font-mono tabular-nums">
                       上次刷新: {formatTime(account.last_sync_time)}
                     </span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
+              <div className="account-actions flex flex-wrap items-center gap-2 flex-shrink-0">
                 <div className="flex items-center gap-1">
                   <Tooltip content={testingAccounts.has(account.id) ? '正在测试连接' : '测试连接'}>
                     <button

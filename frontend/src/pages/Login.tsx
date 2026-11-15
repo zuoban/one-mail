@@ -59,7 +59,7 @@ export default function Login() {
             alt="One-Mail"
             className="w-9 h-9 rounded-[8px] mb-4"
           />
-          <h1 className="text-xl font-medium tracking-[-0.015em] text-[var(--text-primary)]">
+          <h1 className="text-2xl leading-8 font-medium text-[var(--text-primary)]">
             登录 One-Mail
           </h1>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">
@@ -76,7 +76,7 @@ export default function Login() {
           )}
 
           <div>
-            <label htmlFor="admin-password" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
+            <label htmlFor="admin-password" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
               管理员密码
             </label>
             <div className="relative flex items-center">

@@ -244,7 +244,7 @@ export default function Dashboard() {
       <section aria-label="邮件列表" className="mail-list-pane min-w-0 border-r border-[var(--border-light)] bg-[var(--bg-primary)] flex-col min-h-0">
         {/* Inbox header */}
         <div data-refreshing={refreshing} className="mail-list-header h-16 px-4 border-b border-[var(--border-light)] flex items-center justify-between gap-2 flex-shrink-0">
-          <div className="flex flex-col gap-1 min-w-0">
+          <div className="mail-list-heading flex flex-wrap items-baseline gap-x-3 gap-y-1 min-w-0">
             <h2 className="text-lg font-medium text-[var(--text-primary)]">收件箱</h2>
             <span id="inbox-refresh-status" role="status" className={`text-xs tabular-nums ${refreshing ? 'text-[var(--primary-600)]' : 'font-mono text-[var(--text-tertiary)]'}`}>
               {refreshing ? `正在获取最近 ${emailLimit} 封邮件` : `${filteredEmails.length} 封`}
@@ -267,7 +267,7 @@ export default function Dashboard() {
         </div>
 
         {/* Search & Filter Controls */}
-        <div className="mail-list-controls px-4 py-4 border-b border-[var(--border-light)] space-y-3 flex-shrink-0">
+        <div className="mail-list-controls px-4 py-3 border-b border-[var(--border-light)] space-y-2 flex-shrink-0">
           {accounts.length > 0 && (
             <div className="relative flex items-center">
               <Inbox aria-hidden="true" className="absolute left-3 w-4 h-4 text-[var(--text-secondary)] pointer-events-none" strokeWidth={1.5} />
@@ -309,7 +309,7 @@ export default function Dashboard() {
                 className="absolute right-2 p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
                 aria-label="清空搜索"
               >
-                <X className="w-3.5 h-3.5" strokeWidth={1.5} />
+                <X className="w-4 h-4" strokeWidth={1.5} />
               </button>
             ) : (
               <kbd className="kbd hidden md:inline-flex absolute right-2 pointer-events-none">/</kbd>

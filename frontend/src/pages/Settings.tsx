@@ -108,15 +108,15 @@ export default function Settings() {
         </p>
       </div>
 
-      <section aria-labelledby="reading-settings-title" className="mb-6 rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-4 md:p-6 shadow-[var(--shadow-sm)]">
-        <div className="pb-4 mb-5 border-b border-[var(--border-light)]">
+      <section aria-labelledby="reading-settings-title" className="settings-panel">
+        <div className="panel-heading">
           <h2 id="reading-settings-title" className="text-base font-medium text-[var(--text-primary)]">邮件阅读</h2>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">偏好会自动保存到当前浏览器</p>
         </div>
-        <div className="mb-5 pb-5 border-b border-[var(--border-light)] flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="setting-row setting-row-select">
           <div className="min-w-0">
             <label htmlFor="email-limit" className="block text-sm font-medium text-[var(--text-primary)]">默认加载邮件数</label>
-            <p id="email-limit-help" className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">列表和手动刷新使用此数量，调大后点击刷新可拉取更多邮件。</p>
+            <p id="email-limit-help" className="mt-1 text-sm text-[var(--text-secondary)]">列表和手动刷新使用此数量，调大后点击刷新可拉取更多邮件</p>
           </div>
           <select
             id="email-limit"
@@ -128,10 +128,10 @@ export default function Settings() {
             {EMAIL_LIMIT_OPTIONS.map(limit => <option key={limit} value={limit}>{limit} 封{limit === DEFAULT_EMAIL_LIMIT ? '（默认）' : ''}</option>)}
           </select>
         </div>
-        <div className="flex items-center justify-between gap-4">
+        <div className="setting-row">
           <div className="min-w-0">
             <span className="block text-sm font-medium text-[var(--text-primary)]">阻止远程图片</span>
-            <p id="remote-images-help" className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">默认显示远程图片。开启后阻止自动加载，减少邮件跟踪；仍可逐封临时加载。</p>
+            <p id="remote-images-help" className="mt-1 text-sm text-[var(--text-secondary)]">默认显示远程图片；开启后阻止自动加载，减少邮件跟踪，仍可逐封临时加载</p>
           </div>
           <button
             type="button"
@@ -154,10 +154,10 @@ export default function Settings() {
         </div>
       </section>
 
-        <section className="rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-4 md:p-6 shadow-[var(--shadow-sm)]">
-          <div className="pb-4 mb-6 border-b border-[var(--border-light)]">
-            <h2 className="text-base font-medium text-[var(--text-primary)]">Telegram 通知</h2>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">手动刷新邮箱后发现新邮件，后台将摘要推送到指定会话，并重试临时失败的通知。</p>
+        <section aria-labelledby="telegram-settings-title" className="settings-panel">
+          <div className="panel-heading">
+            <h2 id="telegram-settings-title" className="text-base font-medium text-[var(--text-primary)]">Telegram 通知</h2>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">手动刷新发现新邮件后，将摘要推送到指定会话，临时失败会自动重试</p>
           </div>
 
           {telegramError && (
@@ -168,12 +168,12 @@ export default function Settings() {
             <button type="button" className="btn btn-secondary mb-4" onClick={() => { setConfigLoading(true); setTelegramError(''); setLoadAttempt(attempt => attempt + 1) }}>重新加载</button>
           )}
 
-          <form onSubmit={handleTelegramSubmit} className="max-w-2xl space-y-6">
+          <form onSubmit={handleTelegramSubmit} className="space-y-6">
             <fieldset disabled={configLoading || !configLoaded || telegramLoading || telegramTesting} className="min-w-0 space-y-6">
-            <div className="flex items-center justify-between gap-4 p-4 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-light)]">
+            <div className="setting-row pb-5 border-b border-[var(--border-light)]">
               <div>
                 <span className="block text-sm font-medium text-[var(--text-primary)]">启用自动推送</span>
-                <span id="telegram-enabled-help" className="block text-xs text-[var(--text-tertiary)] mt-1">
+                <span id="telegram-enabled-help" className="block text-sm text-[var(--text-secondary)] mt-1">
                   刷新发现新邮件后自动转发摘要到 Telegram
                 </span>
               </div>
@@ -233,7 +233,7 @@ export default function Settings() {
               <p id="telegram-chat-id-help" className="mt-2 text-xs text-[var(--text-tertiary)]">支持个人用户 ID、群组 ID 或频道 ID</p>
             </div>
 
-            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-between">
+            <div className="flex flex-col-reverse gap-2 pt-4 border-t border-[var(--border-light)] sm:flex-row sm:justify-end">
               <button
                 type="button"
                 onClick={handleTelegramTest}

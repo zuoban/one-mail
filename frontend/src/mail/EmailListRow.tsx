@@ -35,10 +35,9 @@ export const EmailListRow = memo(function EmailListRow({
         }
       }}
       onClick={() => onSelect(email)}
-      style={{ minHeight: accountEmail ? 96 : 72, marginBottom: 4 }}
-      className={`mail-row group px-3 py-3 rounded-[8px] border cursor-pointer transition-colors ${
+      className={`mail-row ${accountEmail ? 'mail-row-with-account' : ''} group px-3 py-2 rounded-[8px] border cursor-pointer transition-colors ${
         isSelected
-          ? 'bg-[var(--bg-accent-soft)] border-[var(--primary-200)]'
+          ? 'bg-[var(--bg-accent-soft)] border-[var(--border-light)]'
           : 'border-transparent hover:bg-[var(--bg-nav-hover)]'
       }`}
     >
@@ -47,7 +46,7 @@ export const EmailListRow = memo(function EmailListRow({
           <div className="flex h-5 items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <span
-                className="text-[13px] truncate text-[var(--text-secondary)]"
+                className="text-sm leading-5 font-medium truncate text-[var(--text-primary)]"
               >
                 {email.from_name || email.from}
               </span>
@@ -62,7 +61,7 @@ export const EmailListRow = memo(function EmailListRow({
 
           <div className="mt-1 flex items-center gap-2">
             <p
-              className="text-sm truncate flex-1 text-[var(--text-primary)]"
+              className="mail-subject text-sm leading-5 truncate flex-1 text-[var(--text-secondary)]"
             >
               {email.subject || '(无主题)'}
             </p>
@@ -71,7 +70,7 @@ export const EmailListRow = memo(function EmailListRow({
             )}
           </div>
           {accountEmail && (
-            <div id={`mail-account-${email.id}`} className="mt-1 flex items-center gap-1.5 min-w-0 text-xs text-[var(--text-secondary)]">
+            <div id={`mail-account-${email.id}`} className="mt-1 flex items-center gap-2 min-w-0 text-xs leading-4 text-[var(--text-tertiary)]">
               <span className="flex-shrink-0">收至</span>
               <span className="truncate" title={accountEmail}>{accountEmail}</span>
             </div>

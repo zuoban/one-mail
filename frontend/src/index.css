@@ -65,7 +65,7 @@
   /* Text */
   --text-primary: #171717;
   --text-secondary: #525252;
-  --text-tertiary: #737373;
+  --text-tertiary: #6B6B73;
   --text-inverse: #FFFFFF;
 
   /* Primary Button Fill */
@@ -187,7 +187,7 @@
   /* Text */
   --text-primary: #EDEDED;
   --text-secondary: #A1A1A6;
-  --text-tertiary: #85858B;
+  --text-tertiary: #92929B;
   --text-inverse: #141415;
 
   /* Primary Button Fill - Off-white on dark */
@@ -497,13 +497,13 @@ textarea:disabled {
 }
 
 .btn-secondary {
-  background-color: var(--bg-tertiary);
+  background-color: var(--bg-primary);
   color: var(--text-primary);
   border-color: var(--border-default);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background-color: var(--bg-primary);
+  background-color: var(--bg-tertiary);
   border-color: var(--border-hover);
 }
 
@@ -682,6 +682,91 @@ textarea:disabled {
   max-width: 25rem;
   margin-inline: auto;
 }
+
+.settings-panel {
+  padding: 24px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-primary);
+}
+
+.settings-panel + .settings-panel {
+  margin-top: 24px;
+}
+
+.panel-heading {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.setting-row + .setting-row {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-light);
+}
+
+.setting-row p {
+  max-width: 60ch;
+  line-height: 22px;
+}
+
+.delivery-summary {
+  margin-top: 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  padding: 20px 24px;
+  transition: background-color var(--transition-fast);
+}
+
+.account-meta {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-tertiary);
+}
+
+.account-sync {
+  grid-column: 1 / -1;
+}
+
+.account-drawer {
+  height: 100dvh;
+}
+
+.account-drawer-header {
+  flex-shrink: 0;
+  min-height: 64px;
+  padding: calc(12px + env(safe-area-inset-top)) 24px 12px;
+}
+
+.account-drawer-footer {
+  flex-shrink: 0;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+}
 }
 
 /* Workspace proportions keep the message readable at every viewport size. */
@@ -693,6 +778,32 @@ textarea:disabled {
 
 .app-sidebar {
   width: 240px;
+}
+
+.sidebar-link,
+.mobile-nav-link {
+  position: relative;
+}
+
+.sidebar-link[aria-current="page"]::before {
+  position: absolute;
+  inset-block: 8px;
+  left: -1px;
+  width: 2px;
+  border-radius: 2px;
+  background-color: var(--primary-600);
+  content: '';
+}
+
+.mobile-nav-link[aria-current="page"]::before {
+  position: absolute;
+  top: -1px;
+  left: calc(50% - 8px);
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background-color: var(--primary-600);
+  content: '';
 }
 
 .app-main {
@@ -743,6 +854,14 @@ textarea:disabled {
   letter-spacing: 0;
 }
 
+.page-heading p {
+  max-width: 60ch;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 22px;
+}
+
 .mail-list-pane {
   display: flex;
   width: 100%;
@@ -758,8 +877,46 @@ textarea:disabled {
   display: flex;
 }
 
+.mail-row {
+  position: relative;
+  min-height: 72px;
+  margin-bottom: 4px;
+}
+
+.mail-row-with-account {
+  min-height: 84px;
+}
+
+.mail-row[aria-current="true"]::before {
+  position: absolute;
+  inset-block: 8px;
+  left: -1px;
+  width: 2px;
+  border-radius: 2px;
+  background-color: var(--primary-600);
+  content: '';
+}
+
+.mail-row[aria-current="true"] .mail-subject {
+  color: var(--text-primary);
+}
+
 .mail-row:focus-visible {
   outline-offset: -2px;
+}
+
+.reading-canvas {
+  padding: 16px;
+}
+
+.mail-letter-header,
+.mail-letter-body {
+  padding: 24px;
+}
+
+.email-paper {
+  margin: 16px;
+  padding: 20px;
 }
 
 .reading-toolbar .btn {
@@ -874,6 +1031,40 @@ textarea:disabled {
   }
 }
 
+@media (min-width: 1280px) {
+  .reading-canvas {
+    padding: 24px;
+  }
+
+  .account-meta {
+    grid-template-columns: 64px 96px minmax(0, 1fr);
+  }
+
+  .account-sync {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 639px) {
+  .account-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .account-actions {
+    justify-content: flex-end;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-light);
+  }
+
+  .setting-row-select {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+
 @media (max-width: 767px) {
   .workspace-page {
     padding: 24px 16px;
@@ -888,6 +1079,34 @@ textarea:disabled {
     line-height: 32px;
   }
 
+  .settings-panel {
+    padding: 16px;
+  }
+
+  .settings-panel + .settings-panel {
+    margin-top: 20px;
+  }
+
+  .panel-heading {
+    margin-bottom: 20px;
+  }
+
+  .setting-row {
+    gap: 16px;
+  }
+
+  .account-drawer-header {
+    padding-inline: 16px;
+  }
+
+  .account-drawer-fields {
+    padding: 16px;
+  }
+
+  .account-drawer-footer {
+    padding-inline: 16px;
+  }
+
   .mail-list-pane {
     border-right: 0;
   }
@@ -896,12 +1115,26 @@ textarea:disabled {
     height: 56px;
   }
 
-  .reading-canvas {
-    padding: 12px;
+  .mail-list-heading {
+    column-gap: 8px;
   }
 
-  .mail-letter > header {
-    padding: 20px;
+  .reading-toolbar {
+    height: 56px;
+  }
+
+  .reading-canvas {
+    padding: 8px;
+  }
+
+  .mail-letter-header,
+  .mail-letter-body {
+    padding: 16px;
+  }
+
+  .email-paper {
+    margin: 8px;
+    padding: 12px;
   }
 }
 

@@ -89,9 +89,9 @@ export default function MailReader({ selectedEmail, selectedDetail, selectedEmai
                       aria-label={paperLight ? '切换为深色阅读背景' : '切换为白底信笺模式'}
                     >
                       {paperLight ? (
-                        <Moon className="w-3.5 h-3.5" strokeWidth={1.5} />
+                        <Moon className="w-4 h-4" strokeWidth={1.5} />
                       ) : (
-                        <Sun className="w-3.5 h-3.5" strokeWidth={1.5} />
+                        <Sun className="w-4 h-4" strokeWidth={1.5} />
                       )}
                       <span className="hidden xl:inline">{paperLight ? '深色正文' : '白底信笺'}</span>
                     </button>
@@ -116,21 +116,21 @@ export default function MailReader({ selectedEmail, selectedDetail, selectedEmai
             </div>
 
             {/* Mail Body Canvas */}
-            <div ref={detailScrollRef} className="reading-canvas flex-1 overflow-auto thin-scrollbar p-4 xl:p-8">
+            <div ref={detailScrollRef} className="reading-canvas flex-1 overflow-auto thin-scrollbar">
               <article className="mail-letter max-w-3xl mx-auto rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] shadow-[var(--shadow-sm)] overflow-hidden">
-                <header className="p-6 xl:p-8 border-b border-[var(--border-light)]">
+                <header className="mail-letter-header border-b border-[var(--border-light)]">
                   <h1 className="text-xl xl:text-2xl font-medium text-[var(--text-primary)] break-words leading-snug">
                     {selectedEmail.subject || '(无主题)'}
                   </h1>
                   {selectedEmailAccount && (
                     <div className="mt-3 flex items-start gap-2 text-xs text-[var(--text-secondary)]">
-                      <Mail aria-hidden="true" className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" strokeWidth={1.5} />
+                      <Mail aria-hidden="true" className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
                       <span className="flex-shrink-0">收件账户</span>
                       <span className="break-all">{selectedEmailAccount.email}</span>
                     </div>
                   )}
 
-                  <div className="mt-6 flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
+                  <div className="mt-4 flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
                     <div className="flex items-start gap-3 min-w-0">
                       <div className="avatar">
                         {(selectedEmail.from_name || selectedEmail.from)?.[0]?.toUpperCase() || '?'}
@@ -165,7 +165,7 @@ export default function MailReader({ selectedEmail, selectedDetail, selectedEmai
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {selectedEmail.has_attachment && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] bg-[var(--bg-tertiary)] border border-[var(--border-light)] text-xs text-[var(--text-secondary)]">
-                          <Paperclip className="w-3 h-3" strokeWidth={1.5} />
+                          <Paperclip className="w-4 h-4" strokeWidth={1.5} />
                           <span>附件</span>
                         </span>
                       )}
@@ -179,8 +179,8 @@ export default function MailReader({ selectedEmail, selectedDetail, selectedEmai
                 <div
                   className={
                     useLightPaper && resolvedTheme === 'dark'
-                      ? 'email-paper m-4 xl:m-6 rounded-[8px] border border-[var(--border-default)] bg-[#FAFAFA] p-6'
-                      : 'p-6 xl:p-8'
+                      ? 'email-paper rounded-[8px] border border-[var(--border-default)] bg-[#FAFAFA]'
+                      : 'mail-letter-body'
                   }
                 >
                   {loadingDetail ? (

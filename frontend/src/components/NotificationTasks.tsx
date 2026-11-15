@@ -55,8 +55,8 @@ export default function NotificationTasks() {
   }
 
   return (
-    <section aria-labelledby="notification-tasks-title" className="mt-6 rounded-xl border border-[var(--border-light)] bg-[var(--bg-primary)] p-4 md:p-6 shadow-[var(--shadow-sm)]">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section aria-labelledby="notification-tasks-title" className="settings-panel">
+      <div className="panel-heading flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 id="notification-tasks-title" className="text-base font-medium text-[var(--text-primary)]">通知投递记录</h2>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">临时故障会自动重试。修正配置后，可重新投递失败任务或清理记录。</p>
@@ -67,7 +67,7 @@ export default function NotificationTasks() {
       {loading && <p aria-live="polite" className="mt-4 text-sm text-[var(--text-secondary)]">正在读取投递记录…</p>}
       {result && (
         <>
-          <p className="mt-4 text-sm text-[var(--text-secondary)]">待投递 {result.pending_count} 条 · 失败 {result.failed_count} 条</p>
+          <p className="delivery-summary">待投递 {result.pending_count} 条 · 失败 {result.failed_count} 条</p>
           {result.data.length === 0 ? (
             <p className="mt-3 text-sm text-[var(--text-tertiary)]">没有失败的通知任务</p>
           ) : (
@@ -76,8 +76,8 @@ export default function NotificationTasks() {
                 <li key={task.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0 text-sm">
                     <p className="break-all text-[var(--text-primary)]">{task.account_email}</p>
-                    <p className="mt-1 text-[var(--text-secondary)]">已尝试 {task.attempts} 次 · {new Date(task.created_at).toLocaleString('zh-CN')}</p>
-                    <p className="mt-1 break-words text-[var(--error-700)]">{task.last_error.replace(/^permanent: /, '')}</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-tertiary)]">已尝试 {task.attempts} 次 · <time className="font-mono tabular-nums" dateTime={task.created_at}>{new Date(task.created_at).toLocaleString('zh-CN')}</time></p>
+                    <p className="mt-2 break-words text-[var(--error-700)]">{task.last_error.replace(/^permanent: /, '')}</p>
                   </div>
                   <div className="flex flex-shrink-0 gap-2">
                     <button type="button" className="btn btn-secondary btn-sm" disabled={loading || pendingId !== null} onClick={() => void changeTask(task.id, false)}>{pendingId === task.id ? '处理中…' : '重试通知'}</button>

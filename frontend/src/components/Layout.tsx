@@ -22,14 +22,14 @@ export default function Layout() {
       {/* Mobile Header */}
       <header className="safe-area-top md:hidden sticky top-0 z-30 border-b border-[var(--border-light)] bg-[var(--bg-sidebar)]">
         <div className="flex h-14 items-center justify-between px-4">
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-3 min-w-0">
             <img
               src={resolvedTheme === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
               alt="One-Mail"
               className="w-7 h-7 rounded-[6px] flex-shrink-0"
             />
             <div className="min-w-0 flex items-baseline gap-2">
-              <span className="text-[15px] font-medium tracking-[-0.01em] text-[var(--text-primary)]">
+              <span className="text-base font-medium text-[var(--text-primary)]">
                 One-Mail
               </span>
               <span className="text-xs text-[var(--text-tertiary)] truncate">
@@ -69,7 +69,7 @@ export default function Layout() {
       {/* Desktop Sidebar */}
       <aside className="app-sidebar hidden md:flex flex-shrink-0 bg-[var(--bg-sidebar)] border-r border-[var(--border-light)] flex-col">
         <div className="sidebar-brand h-16 px-4 border-b border-[var(--border-light)] flex items-center">
-          <Link to="/inbox" className="flex items-center gap-2.5 text-[var(--text-primary)]">
+          <Link to="/inbox" className="flex items-center gap-3 text-[var(--text-primary)]">
             <img
               src={resolvedTheme === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
               alt="One-Mail"
@@ -91,7 +91,6 @@ export default function Layout() {
                   to={item.path}
                   aria-current={isActive ? 'page' : undefined}
                   title={item.label}
-                  style={isActive ? { boxShadow: 'var(--active-highlight)' } : undefined}
                   className={`sidebar-link flex h-9 items-center gap-3 px-3 rounded-[8px] text-sm border transition-colors ${
                     isActive
                       ? 'bg-[var(--bg-nav-active)] text-[var(--text-primary)] font-medium border-[var(--border-light)]'
@@ -100,7 +99,7 @@ export default function Layout() {
                 >
                   <span className="flex w-4 h-4 items-center justify-center flex-shrink-0">
                     <Icon
-                      className="w-4 h-4 text-[var(--text-secondary)]"
+                      className="w-4 h-4"
                       strokeWidth={1.5}
                     />
                   </span>
@@ -161,15 +160,14 @@ export default function Layout() {
                 key={item.path}
                 to={item.path}
                 aria-current={isActive ? 'page' : undefined}
-                style={isActive ? { boxShadow: 'var(--active-highlight)' } : undefined}
-                className={`flex min-h-12 flex-col items-center justify-center gap-1 rounded-[8px] px-2 py-2 text-xs border transition-colors ${
+                className={`mobile-nav-link flex min-h-12 flex-col items-center justify-center gap-1 rounded-[8px] px-2 py-2 text-xs border transition-colors ${
                   isActive
                     ? 'bg-[var(--bg-nav-active)] text-[var(--text-primary)] font-medium border-[var(--border-light)]'
                     : 'border-transparent text-[var(--text-secondary)]'
                 }`}
               >
                 <Icon
-                  className="w-4 h-4 text-[var(--text-secondary)]"
+                  className="w-4 h-4"
                   strokeWidth={1.5}
                 />
                 <span>{item.label}</span>

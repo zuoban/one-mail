@@ -44,9 +44,9 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
             aria-labelledby="account-drawer-title"
             aria-describedby="account-drawer-description"
             tabIndex={-1}
-            className="fixed inset-y-0 right-0 w-full sm:w-[480px] bg-[var(--bg-primary)] border-l border-[var(--border-default)] shadow-[var(--shadow-xl)] z-50 flex flex-col"
+            className="account-drawer fixed inset-y-0 right-0 w-full sm:w-[480px] bg-[var(--bg-primary)] border-l border-[var(--border-default)] shadow-[var(--shadow-xl)] z-50 flex flex-col"
           >
-            <div className="h-16 px-6 border-b border-[var(--border-light)] flex items-center justify-between">
+            <div className="account-drawer-header border-b border-[var(--border-light)] flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <h2 id="account-drawer-title" className="text-base font-medium text-[var(--text-primary)]">
                   {editingAccount ? '编辑邮箱账户' : '添加邮箱账户'}
@@ -66,8 +66,8 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} aria-busy={loading} className="flex-1 overflow-auto flex flex-col">
-              <fieldset disabled={loading} className="min-w-0 flex-1 overflow-auto p-6 space-y-6 thin-scrollbar">
+            <form onSubmit={handleSubmit} aria-busy={loading} className="min-h-0 flex-1 overflow-auto flex flex-col">
+              <fieldset disabled={loading} className="account-drawer-fields min-w-0 min-h-0 flex-1 overflow-auto p-6 space-y-6 thin-scrollbar">
                 <div>
                   <label htmlFor="account-email" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                     邮箱地址
@@ -140,7 +140,7 @@ export default function AccountDrawer({ drawerRef, editingAccount, loading, form
                 )}
               </fieldset>
 
-              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 px-6 py-4 border-t border-[var(--border-light)]">
+              <div className="account-drawer-footer flex flex-col-reverse sm:flex-row sm:justify-end gap-2 px-6 pt-4 border-t border-[var(--border-light)]">
                 <button
                   type="button"
                   onClick={closeModal}
